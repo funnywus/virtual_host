@@ -1,0 +1,35 @@
+.history
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env*.local
+frontend/*.log
+frontend/.DS_Store
+
+# Backend (Python)
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/.env
+backend/venv/
+backend/.venv/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/.mypy_cache/
+
+# General
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+*.swo
+node_modules/
+build/
+dist/
+yarn.lock
+.kiro
+归档.zip

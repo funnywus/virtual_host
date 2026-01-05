@@ -1,0 +1,1662 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>虚拟主机管理系统</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://unpkg.com/element-plus"></script>
+  <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #f5f7fa; }
+    .login-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .login-box { width: 400px; padding: 40px; background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+    .login-title { text-align: center; margin-bottom: 30px; color: #303133; }
+    .main-container { display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; background: #304156; color: #fff; }
+    .sidebar-header { padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid #3a4a5e; }
+    .sidebar-menu { padding: 10px 0; }
+    .menu-item { padding: 15px 20px; cursor: pointer; transition: background 0.3s; }
+    .menu-item:hover, .menu-item.active { background: #263445; }
+    .content { flex: 1; padding: 20px; overflow-y: auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 15px 20px; background: #fff; border-radius: 4px; }
+    .card { background: #fff; padding: 20px; border-radius: 4px; margin-bottom: 20px; }
+    .card-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+    .full-domain { color: #409eff; font-weight: bold; }
+    .copy-btn { cursor: pointer; color: #409eff; margin-left: 5px; }
+    .ftp-info { background: #f5f7fa; padding: 15px; border-radius: 4px; margin-top: 10px; }
+    .ftp-info p { margin: 5px 0; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 登录页面 -->
+    <div v-if="!token" class="login-container">
+      <div class="login-box">
+        <h2 class="login-title">{{ isRegister ? '用户注册' : '用户登录' }}</h2>
+        <el-form :model="loginForm" label-width="80px">
+          <el-form-item label="用户名">
+            <el-input v-model="loginForm.username" placeholder="请输入用户名"></el-input>
+          </el-form-item>
+          <el-form-item v-if="isRegister" label="邮箱">
+            <el-input v-model="loginForm.email" placeholder="请输入邮箱"></el-input>
+          </el-form-item>
+          <el-form-item label="密码">
+            <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" @keyup.enter="handleAuth"></el-input>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleAuth" style="width:100%">{{ isRegister ? '注册' : '登录' }}</el-button>
+          </el-form-item>
+          <el-form-item>
+            <el-link @click="isRegister = !isRegister">{{ isRegister ? '已有账号？去登录' : '没有账号？去注册' }}</el-link>
+          </el-form-item>
+        </el-form>
+      </div>
+    </div>
+
+    <!-- 主界面 -->
+    <div v-else class="main-container">
+      <div class="sidebar">
+        <div class="sidebar-header">虚拟主机管理</div>
+        <div class="sidebar-menu">
+          <div class="menu-item" :class="{active: currentMenu === 'domains'}" @click="currentMenu = 'domains'">域名管理</div>
+          <div class="menu-item" :class="{active: currentMenu === 'subdomains'}" @click="currentMenu = 'subdomains'">子域名管理</div>
+          <div class="menu-item" :class="{active: currentMenu === 'ftp'}" @click="currentMenu = 'ftp'; loadFtpAccounts()">FTP账号</div>
+          <div class="menu-item" :class="{active: currentMenu === 'servers'}" @click="currentMenu = 'servers'">服务器管理</div>
+          <div class="menu-item" :class="{active: currentMenu === 'aliyun'}" @click="currentMenu = 'aliyun'">DNS平台</div>
+          <div v-if="user.role === 'admin'" class="menu-item" :class="{active: currentMenu === 'users'}" @click="currentMenu = 'users'">用户管理</div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="header">
+          <span>欢迎, {{ user.username }} ({{ user.role === 'admin' ? '管理员' : '用户' }})</span>
+          <el-button @click="logout">退出登录</el-button>
+        </div>
+
+        <!-- 主域名管理 -->
+        <div v-if="currentMenu === 'domains'" class="card">
+          <div class="card-title">
+            <span>主域名列表</span>
+            <div>
+              <el-button size="small" @click="refreshAllSslStatus" :loading="refreshingSsl">刷新证书状态</el-button>
+              <el-button type="primary" size="small" @click="openDomainDialog()">添加域名</el-button>
+            </div>
+          </div>
+          <el-table :data="domains" stripe>
+            <el-table-column prop="domain" label="域名">
+              <template #default="scope">
+                <span class="full-domain">{{ scope.row.domain }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="aliyun_name" label="阿里云配置">
+              <template #default="scope">
+                <el-tag v-if="scope.row.aliyun_name" type="success">{{ scope.row.aliyun_name }}</el-tag>
+                <el-tag v-else type="info">未配置</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="SSL证书" width="200">
+              <template #default="scope">
+                <el-tag :type="scope.row.ssl_status === 'active' ? 'success' : scope.row.ssl_status === 'issuing' || scope.row.ssl_status === 'renewing' ? 'warning' : scope.row.ssl_status === 'error' ? 'danger' : 'info'" size="small">
+                  {{ scope.row.ssl_status === 'active' ? '已启用' : scope.row.ssl_status === 'issuing' ? '申请中' : scope.row.ssl_status === 'renewing' ? '续期中' : scope.row.ssl_status === 'error' ? '失败' : '未申请' }}
+                </el-tag>
+                <el-tag v-if="scope.row.ssl_expires" :type="getSslDaysType(scope.row.ssl_expires)" size="small" style="margin-left:5px">
+                  {{ formatSslDays(scope.row.ssl_expires) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.status === 'active' ? 'success' : 'info'">{{ scope.row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="添加时间" width="160">
+              <template #default="scope">
+                <span style="font-size:12px;color:#909399">{{ scope.row.created_at }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="300">
+              <template #default="scope">
+                <el-button type="warning" size="small" @click="openSslDialog(scope.row)">SSL证书</el-button>
+                <el-button type="primary" size="small" @click="viewSubdomains(scope.row)">子域名</el-button>
+                <el-button type="info" size="small" @click="editDomain(scope.row)">编辑</el-button>
+                <el-button type="danger" size="small" @click="deleteDomain(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!-- 子域名管理 -->
+        <div v-if="currentMenu === 'subdomains'" class="card">
+          <div class="card-title">
+            <span>
+              子域名列表
+              <el-tag v-if="currentDomain" type="info" style="margin-left:10px">{{ currentDomain.domain }}</el-tag>
+            </span>
+            <div>
+              <el-select v-model="filterDomainId" placeholder="筛选域名" clearable style="width:200px;margin-right:10px" @change="loadSubdomains">
+                <el-option v-for="d in domains" :key="d.id" :label="d.domain" :value="d.id"></el-option>
+              </el-select>
+              <el-button type="primary" size="small" @click="openSubdomainDialog()">添加子域名</el-button>
+              <el-button type="success" size="small" @click="openBatchDialog()">批量生成</el-button>
+            </div>
+          </div>
+          <el-table :data="subdomains" stripe>
+            <el-table-column label="完整域名" min-width="200">
+              <template #default="scope">
+                <span class="full-domain">{{ scope.row.subdomain }}.{{ scope.row.main_domain }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="record_type" label="类型" width="80"></el-table-column>
+            <el-table-column prop="record_value" label="记录值" min-width="120"></el-table-column>
+            <el-table-column prop="server_name" label="服务器"></el-table-column>
+            <el-table-column prop="status" label="DNS状态" width="100">
+              <template #default="scope">
+                <el-tag :type="scope.row.status === 'active' ? 'success' : scope.row.status === 'dns_error' ? 'danger' : 'warning'">
+                  {{ scope.row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="添加时间" width="160">
+              <template #default="scope">
+                <span style="font-size:12px;color:#909399">{{ scope.row.created_at }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="200">
+              <template #default="scope">
+                <el-button type="success" size="small" @click="openNginxDialog(scope.row)">Nginx</el-button>
+                <el-button type="primary" size="small" @click="editSubdomain(scope.row)">编辑</el-button>
+                <el-button type="danger" size="small" @click="deleteSubdomain(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!-- FTP账号管理 -->
+        <div v-if="currentMenu === 'ftp'" class="card">
+          <div class="card-title">
+            <span>FTP账号列表</span>
+            <el-button type="primary" size="small" @click="openFtpDialog()">添加FTP账号</el-button>
+          </div>
+          <el-table :data="ftpAccounts" stripe>
+            <el-table-column prop="full_domain" label="关联域名" min-width="180">
+              <template #default="scope">
+                <span class="full-domain">{{ scope.row.full_domain }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="server_name" label="服务器">
+              <template #default="scope">
+                {{ scope.row.server_name || '-' }} {{ scope.row.server_ip ? '(' + scope.row.server_ip + ')' : '' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="username" label="用户名">
+              <template #default="scope">
+                <span>{{ scope.row.username }}</span>
+                <el-icon class="copy-btn" @click="copyText(scope.row.username)"><DocumentCopy /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column prop="auth_code" label="授权码" width="280">
+              <template #default="scope">
+                <el-tooltip content="授权码 = 域名MD5" placement="top">
+                  <span style="font-family:monospace;font-size:11px;color:#e6a23c">{{ scope.row.auth_code }}</span>
+                </el-tooltip>
+                <el-icon class="copy-btn" @click="copyText(scope.row.auth_code)"><DocumentCopy /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column prop="password" label="密码">
+              <template #default="scope">
+                <span>{{ showPassword[scope.row.id] ? scope.row.password : '••••••••' }}</span>
+                <el-icon class="copy-btn" @click="togglePassword(scope.row.id)" style="margin-left:5px">
+                  <View v-if="!showPassword[scope.row.id]" /><Hide v-else />
+                </el-icon>
+                <el-icon class="copy-btn" @click="copyText(scope.row.password)"><DocumentCopy /></el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column prop="home_dir" label="目录" min-width="150">
+              <template #default="scope">
+                <span style="font-size:12px;color:#666">{{ scope.row.home_dir }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="max_upload_size" label="空间限制" width="100">
+              <template #default="scope">
+                <el-tag type="warning" size="small">{{ formatUploadSize(scope.row.max_upload_size) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="sync_status" label="同步状态" width="100">
+              <template #default="scope">
+                <el-tooltip :content="scope.row.sync_message || ''" placement="top" :disabled="!scope.row.sync_message">
+                  <el-tag :type="scope.row.sync_status === 'synced' ? 'success' : scope.row.sync_status === 'error' ? 'danger' : 'warning'">
+                    {{ scope.row.sync_status === 'synced' ? '已同步' : scope.row.sync_status === 'error' ? '失败' : '待同步' }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="添加时间" width="160">
+              <template #default="scope">
+                <span style="font-size:12px;color:#909399">{{ scope.row.created_at }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="260">
+              <template #default="scope">
+                <el-button type="success" size="small" @click="syncFtpAccount(scope.row)" :loading="scope.row.syncing" :disabled="!scope.row.server_ip">同步</el-button>
+                <el-button type="warning" size="small" @click="editFtpAccount(scope.row)">编辑</el-button>
+                <el-button type="info" size="small" @click="resetFtpPassword(scope.row.id)">重置密码</el-button>
+                <el-button type="danger" size="small" @click="deleteFtpAccount(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-alert type="info" :closable="false" style="margin-top:15px">
+            <p>客户上传地址: <a :href="uploadUrl" target="_blank" style="color:#409eff">{{ uploadUrl }}</a></p>
+            <p>同步功能会通过SSH连接服务器自动创建FTP用户，需要服务器已安装FTP服务（vsftpd/pure-ftpd）</p>
+          </el-alert>
+        </div>
+
+        <!-- 服务器管理 -->
+        <div v-if="currentMenu === 'servers'" class="card">
+          <div class="card-title">
+            <span>服务器列表</span>
+            <el-button type="primary" size="small" @click="openServerDialog()">添加服务器</el-button>
+          </div>
+          <el-table :data="servers" stripe>
+            <el-table-column prop="name" label="名称"></el-table-column>
+            <el-table-column prop="ip" label="IP地址"></el-table-column>
+            <el-table-column prop="port" label="端口" width="80"></el-table-column>
+            <el-table-column prop="username" label="用户名"></el-table-column>
+            <el-table-column label="密码" width="150">
+              <template #default="scope">
+                <span>{{ showServerPassword[scope.row.id] ? scope.row.password : '••••••••' }}</span>
+                <el-icon class="copy-btn" @click="toggleServerPassword(scope.row.id)" style="margin-left:5px">
+                  <View v-if="!showServerPassword[scope.row.id]" /><Hide v-else />
+                </el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="添加时间" width="160">
+              <template #default="scope">
+                <span style="font-size:12px;color:#909399">{{ scope.row.created_at }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="280">
+              <template #default="scope">
+                <el-button type="success" size="small" @click="testServer(scope.row)" :loading="scope.row.testing">测试</el-button>
+                <el-button type="primary" size="small" @click="viewServerDomains(scope.row)">域名</el-button>
+                <el-button type="warning" size="small" @click="editServer(scope.row)">编辑</el-button>
+                <el-button type="danger" size="small" @click="deleteServer(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!-- 服务器关联域名对话框 -->
+        <el-dialog v-model="showServerDomainsDialog" :title="'服务器关联域名 - ' + (currentServer?.name || '')" width="600px">
+          <el-table :data="serverDomains" stripe v-loading="loadingServerDomains">
+            <el-table-column prop="full_domain" label="完整域名">
+              <template #default="scope">
+                <span class="full-domain">{{ scope.row.full_domain }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="record_type" label="类型" width="80"></el-table-column>
+            <el-table-column prop="record_value" label="记录值"></el-table-column>
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="scope">
+                <el-tag :type="scope.row.status === 'active' ? 'success' : 'warning'">{{ scope.row.status }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!loadingServerDomains && serverDomains.length === 0" description="暂无关联域名"></el-empty>
+        </el-dialog>
+
+        <!-- DNS平台配置（多个厂商） -->
+        <div v-if="currentMenu === 'aliyun'" class="card">
+          <div class="card-title">
+            <span>DNS平台配置</span>
+            <el-button type="primary" size="small" @click="openAliyunDialog()">添加平台</el-button>
+          </div>
+          <el-table :data="aliyunConfigs" stripe>
+            <el-table-column prop="name" label="配置名称"></el-table-column>
+            <el-table-column prop="platform" label="平台" width="120">
+              <template #default="scope">
+                <el-tag :type="platformTypes[scope.row.platform]?.type || 'info'">
+                  {{ platformTypes[scope.row.platform]?.name || scope.row.platform }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="AccessKey/API Key" width="180">
+              <template #default="scope">
+                <span>{{ showDnsKey[scope.row.id] ? scope.row.access_key : scope.row.access_key.substring(0, 8) + '****' }}</span>
+                <el-icon class="copy-btn" @click="toggleDnsKey(scope.row.id)" style="margin-left:5px">
+                  <View v-if="!showDnsKey[scope.row.id]" /><Hide v-else />
+                </el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column label="Secret Key" width="180">
+              <template #default="scope">
+                <span>{{ showDnsSecret[scope.row.id] ? scope.row.secret_key : '••••••••••••' }}</span>
+                <el-icon class="copy-btn" @click="toggleDnsSecret(scope.row.id)" style="margin-left:5px">
+                  <View v-if="!showDnsSecret[scope.row.id]" /><Hide v-else />
+                </el-icon>
+              </template>
+            </el-table-column>
+            <el-table-column prop="remark" label="备注"></el-table-column>
+            <el-table-column prop="created_at" label="创建时间" width="160"></el-table-column>
+            <el-table-column label="操作" width="200">
+              <template #default="scope">
+                <el-button type="success" size="small" @click="testDnsConfig(scope.row)" :loading="scope.row.testing">测试</el-button>
+                <el-button type="primary" size="small" @click="editAliyunConfig(scope.row)">编辑</el-button>
+                <el-button type="danger" size="small" @click="deleteAliyunConfig(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!-- 用户管理 -->
+        <div v-if="currentMenu === 'users'" class="card">
+          <div class="card-title">用户列表</div>
+          <el-table :data="users" stripe>
+            <el-table-column prop="id" label="ID" width="80"></el-table-column>
+            <el-table-column prop="username" label="用户名"></el-table-column>
+            <el-table-column prop="email" label="邮箱"></el-table-column>
+            <el-table-column prop="role" label="角色">
+              <template #default="scope">
+                <el-select v-model="scope.row.role" @change="updateUserRole(scope.row)">
+                  <el-option label="用户" value="user"></el-option>
+                  <el-option label="管理员" value="admin"></el-option>
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="100">
+              <template #default="scope">
+                <el-button type="danger" size="small" @click="deleteUser(scope.row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 添加/编辑主域名对话框 -->
+    <el-dialog v-model="showDomainDialog" :title="domainForm.id ? '编辑域名' : '添加主域名'" width="450px">
+      <el-form :model="domainForm" label-width="100px">
+        <el-form-item label="域名">
+          <el-input v-model="domainForm.domain" placeholder="例如: example.com" :disabled="!!domainForm.id"></el-input>
+        </el-form-item>
+        <el-form-item label="阿里云配置">
+          <el-select v-model="domainForm.aliyun_config_id" placeholder="选择阿里云配置" clearable style="width:100%">
+            <el-option v-for="c in aliyunConfigs" :key="c.id" :label="c.name" :value="c.id"></el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showDomainDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveDomain" :loading="savingDomain">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加/编辑子域名对话框 -->
+    <el-dialog v-model="showSubdomainDialog" :title="subdomainForm.id ? '编辑子域名' : '添加子域名'" width="550px">
+      <el-form :model="subdomainForm" label-width="100px">
+        <el-form-item label="主域名">
+          <el-select v-model="subdomainForm.domain_id" placeholder="选择主域名" style="width:100%" :disabled="!!subdomainForm.id">
+            <el-option v-for="d in domains" :key="d.id" :label="d.domain" :value="d.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="子域名">
+          <div style="display:flex;align-items:center;width:100%">
+            <el-input v-model="subdomainForm.subdomain" placeholder="例如: lyxxxx" :disabled="!!subdomainForm.id" style="flex:1">
+              <template #append v-if="subdomainForm.domain_id">
+                .{{ domains.find(d => d.id === subdomainForm.domain_id)?.domain }}
+              </template>
+            </el-input>
+            <el-button v-if="!subdomainForm.id" type="primary" @click="refreshSubdomain" style="margin-left:10px" :loading="refreshingSubdomain">
+              随机生成
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="记录类型">
+          <el-select v-model="subdomainForm.record_type" style="width:100%">
+            <el-option label="A (IPv4地址)" value="A"></el-option>
+            <el-option label="CNAME (别名)" value="CNAME"></el-option>
+            <el-option label="MX (邮件)" value="MX"></el-option>
+            <el-option label="TXT (文本)" value="TXT"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="服务器" v-if="subdomainForm.record_type === 'A'">
+          <el-select v-model="subdomainForm.server_id" placeholder="选择服务器(自动填充IP)" clearable style="width:100%" @change="onServerChange">
+            <el-option v-for="s in servers" :key="s.id" :label="s.name + ' (' + s.ip + ')'" :value="s.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="记录值">
+          <el-input v-model="subdomainForm.record_value" placeholder="IP地址或CNAME目标"></el-input>
+        </el-form-item>
+        <el-form-item label="TTL">
+          <el-input-number v-model="subdomainForm.ttl" :min="60" :max="86400" :step="60"></el-input-number>
+          <span style="margin-left:10px;color:#999">秒</span>
+        </el-form-item>
+        <el-form-item label="自动创建FTP" v-if="!subdomainForm.id">
+          <el-switch v-model="subdomainForm.auto_ftp"></el-switch>
+          <span style="margin-left:10px;color:#999">添加后自动生成FTP账号</span>
+        </el-form-item>
+        <el-form-item label="自动配置Nginx" v-if="!subdomainForm.id">
+          <el-switch v-model="subdomainForm.auto_nginx"></el-switch>
+          <el-select v-model="subdomainForm.nginx_type" style="width:120px;margin-left:10px" v-if="subdomainForm.auto_nginx">
+            <el-option label="HTTPS" value="https"></el-option>
+            <el-option label="HTTP" value="http"></el-option>
+          </el-select>
+          <span style="margin-left:10px;color:#999">自动生成并同步Nginx配置</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSubdomainDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveSubdomain" :loading="savingSubdomain">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新增子域名成功后显示FTP信息 -->
+    <el-dialog v-model="showFtpResultDialog" title="子域名添加成功" width="500px">
+      <el-alert type="success" :closable="false" style="margin-bottom:15px">
+        子域名已添加，FTP账号和Nginx配置已自动同步到服务器
+      </el-alert>
+      <div class="ftp-info">
+        <p><strong>FTP用户名：</strong>{{ ftpResult.username }} <el-icon class="copy-btn" @click="copyText(ftpResult.username)"><DocumentCopy /></el-icon></p>
+        <p><strong>FTP密码：</strong>{{ ftpResult.password }} <el-icon class="copy-btn" @click="copyText(ftpResult.password)"><DocumentCopy /></el-icon></p>
+        <p><strong>授权码：</strong><span style="color:#e6a23c;font-weight:bold;font-size:16px">{{ ftpResult.auth_code }}</span> <el-icon class="copy-btn" @click="copyText(ftpResult.auth_code)"><DocumentCopy /></el-icon></p>
+        <p><strong>FTP目录：</strong>{{ ftpResult.home_dir }}</p>
+        <p><strong>同步状态：</strong>
+          <el-tag :type="ftpResult.sync_status === 'synced' ? 'success' : 'warning'" size="small">
+            {{ ftpResult.sync_status === 'synced' ? '已同步' : '待同步' }}
+          </el-tag>
+        </p>
+        <p style="margin-top:10px;color:#909399;font-size:12px">
+          客户上传地址: {{ uploadUrl }} (使用授权码登录)
+        </p>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="showFtpResultDialog = false">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加/编辑服务器对话框 -->
+    <el-dialog v-model="showServerDialog" :title="serverForm.id ? '编辑服务器' : '添加服务器'" width="500px">
+      <el-form :model="serverForm" label-width="100px">
+        <el-form-item label="名称">
+          <el-input v-model="serverForm.name" placeholder="服务器名称"></el-input>
+        </el-form-item>
+        <el-form-item label="IP地址">
+          <el-input v-model="serverForm.ip" placeholder="服务器IP"></el-input>
+        </el-form-item>
+        <el-form-item label="SSH端口">
+          <el-input-number v-model="serverForm.port" :min="1" :max="65535"></el-input-number>
+        </el-form-item>
+        <el-form-item label="用户名">
+          <el-input v-model="serverForm.username" placeholder="SSH用户名"></el-input>
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="serverForm.password" type="password" :placeholder="serverForm.id ? '留空则不修改' : 'SSH密码'" show-password></el-input>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showServerDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveServer" :loading="savingServer">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加/编辑DNS平台配置对话框 -->
+    <el-dialog v-model="showAliyunDialog" :title="aliyunForm.id ? '编辑DNS平台' : '添加DNS平台'" width="500px">
+      <el-form :model="aliyunForm" label-width="140px">
+        <el-form-item label="配置名称">
+          <el-input v-model="aliyunForm.name" placeholder="例如: 主账号、项目A"></el-input>
+        </el-form-item>
+        <el-form-item label="DNS平台">
+          <el-select v-model="aliyunForm.platform" style="width:100%">
+            <el-option v-for="(info, key) in platformTypes" :key="key" :label="info.name" :value="key"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="platformTypes[aliyunForm.platform]?.keyLabel || 'AccessKey ID'">
+          <el-input v-model="aliyunForm.access_key" :placeholder="platformTypes[aliyunForm.platform]?.keyPlaceholder || '请输入AccessKey ID'"></el-input>
+        </el-form-item>
+        <el-form-item :label="platformTypes[aliyunForm.platform]?.secretLabel || 'AccessKey Secret'">
+          <el-input v-model="aliyunForm.secret_key" type="password" :placeholder="aliyunForm.id ? '留空则不修改' : (platformTypes[aliyunForm.platform]?.secretPlaceholder || '请输入AccessKey Secret')" show-password></el-input>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="aliyunForm.remark" type="textarea" placeholder="可选备注信息"></el-input>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAliyunDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveAliyunConfig" :loading="savingAliyun">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加/编辑FTP账号对话框 -->
+    <el-dialog v-model="showFtpDialog" :title="ftpForm.id ? '编辑FTP账号' : '添加FTP账号'" width="500px">
+      <el-form :model="ftpForm" label-width="100px">
+        <el-form-item label="关联域名" v-if="!ftpForm.id">
+          <el-select v-model="ftpForm.subdomain_id" placeholder="选择域名" style="width:100%">
+            <el-option v-for="s in availableSubdomains" :key="s.id" :label="s.full_domain" :value="s.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="用户名">
+          <el-input v-model="ftpForm.username" placeholder="FTP用户名"></el-input>
+        </el-form-item>
+        <el-form-item label="密码" v-if="!ftpForm.id">
+          <el-input v-model="ftpForm.password" placeholder="留空自动生成"></el-input>
+        </el-form-item>
+        <el-form-item label="端口">
+          <el-input-number v-model="ftpForm.port" :min="1" :max="65535"></el-input-number>
+        </el-form-item>
+        <el-form-item label="主目录">
+          <el-input v-model="ftpForm.home_dir" placeholder="/www/wwwroot/ftp/用户名"></el-input>
+        </el-form-item>
+        <el-form-item label="空间限制">
+          <el-select v-model="ftpForm.max_upload_size" style="width:100%">
+            <el-option label="100 MB" :value="104857600"></el-option>
+            <el-option label="200 MB" :value="209715200"></el-option>
+            <el-option label="500 MB (默认)" :value="524288000"></el-option>
+            <el-option label="1 GB" :value="1073741824"></el-option>
+            <el-option label="2 GB" :value="2147483648"></el-option>
+            <el-option label="5 GB" :value="5368709120"></el-option>
+            <el-option label="10 GB" :value="10737418240"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态" v-if="ftpForm.id">
+          <el-select v-model="ftpForm.status">
+            <el-option label="启用" value="active"></el-option>
+            <el-option label="禁用" value="disabled"></el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFtpDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveFtpAccount" :loading="savingFtp">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量生成对话框 -->
+    <el-dialog v-model="showBatchDialog" title="批量生成子域名" width="600px">
+      <el-form :model="batchForm" label-width="100px">
+        <el-form-item label="主域名">
+          <el-select v-model="batchForm.domain_id" placeholder="选择主域名" style="width:100%">
+            <el-option v-for="d in domains" :key="d.id" :label="d.domain" :value="d.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="服务器">
+          <el-select v-model="batchForm.server_id" placeholder="选择服务器" style="width:100%">
+            <el-option v-for="s in servers" :key="s.id" :label="s.name + ' (' + s.ip + ')'" :value="s.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="生成数量">
+          <el-input-number v-model="batchForm.count" :min="1" :max="100" :step="5"></el-input-number>
+          <span style="margin-left:10px;color:#999">最多100个</span>
+        </el-form-item>
+        <el-form-item label="自动创建FTP">
+          <el-switch v-model="batchForm.auto_ftp"></el-switch>
+        </el-form-item>
+        <el-form-item label="自动配置Nginx">
+          <el-switch v-model="batchForm.auto_nginx"></el-switch>
+          <el-select v-model="batchForm.nginx_type" style="width:120px;margin-left:10px" v-if="batchForm.auto_nginx">
+            <el-option label="HTTPS" value="https"></el-option>
+            <el-option label="HTTP" value="http"></el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      
+      <!-- 批量生成结果 -->
+      <div v-if="batchResults.length > 0" style="margin-top:20px">
+        <el-divider>生成结果</el-divider>
+        <div style="max-height:300px;overflow-y:auto">
+          <el-table :data="batchResults" size="small" stripe>
+            <el-table-column prop="subdomain" label="域名" min-width="180"></el-table-column>
+            <el-table-column label="FTP用户" width="120">
+              <template #default="scope">
+                {{ scope.row.ftp?.username || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="授权码" width="100">
+              <template #default="scope">
+                <span style="color:#e6a23c;font-weight:bold">{{ scope.row.ftp?.auth_code || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.success ? 'success' : 'danger'" size="small">
+                  {{ scope.row.success ? '成功' : '失败' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div style="margin-top:10px;color:#67c23a">
+          成功: {{ batchResults.filter(r => r.success).length }} / 失败: {{ batchResults.filter(r => !r.success).length }}
+        </div>
+      </div>
+      
+      <template #footer>
+        <el-button @click="showBatchDialog = false">关闭</el-button>
+        <el-button type="primary" @click="startBatchCreate" :loading="batchCreating" :disabled="!batchForm.domain_id || !batchForm.server_id">
+          开始生成
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Nginx配置对话框 -->
+    <el-dialog v-model="showNginxDialog" title="Nginx配置" width="800px" top="5vh">
+      <div style="margin-bottom:15px">
+        <span style="margin-right:10px">域名: <strong class="full-domain">{{ nginxForm.domain }}</strong></span>
+        <el-tag v-if="nginxForm.synced" type="success">已同步</el-tag>
+        <el-tag v-else type="warning">未同步</el-tag>
+      </div>
+      <div style="margin-bottom:15px">
+        <el-radio-group v-model="nginxForm.type" @change="generateNginxConfig">
+          <el-radio-button value="http">HTTP</el-radio-button>
+          <el-radio-button value="https">HTTPS</el-radio-button>
+          <el-radio-button value="proxy">反向代理</el-radio-button>
+          <el-radio-button value="custom">自定义</el-radio-button>
+        </el-radio-group>
+        <el-button type="info" size="small" style="margin-left:15px" @click="fetchNginxConfig" :loading="nginxForm.fetching">从服务器获取</el-button>
+      </div>
+      <el-form :model="nginxForm" label-width="100px" v-if="nginxForm.type !== 'custom'">
+        <el-form-item label="网站目录" v-if="nginxForm.type !== 'proxy'">
+          <el-input v-model="nginxForm.root_path" placeholder="/www/wwwroot/ftp/domain.com" @change="generateNginxConfig"></el-input>
+        </el-form-item>
+        <el-form-item label="代理地址" v-if="nginxForm.type === 'proxy'">
+          <el-input v-model="nginxForm.proxy_pass" placeholder="http://127.0.0.1:3000" @change="generateNginxConfig"></el-input>
+        </el-form-item>
+      </el-form>
+      <el-input type="textarea" v-model="nginxForm.config" :rows="18" style="font-family:monospace;font-size:13px"></el-input>
+      <template #footer>
+        <el-button @click="showNginxDialog = false">取消</el-button>
+        <el-button type="danger" @click="removeNginxConfig" :disabled="!nginxForm.server_id">删除配置</el-button>
+        <el-button type="warning" @click="saveNginxConfig">仅保存</el-button>
+        <el-button type="primary" @click="syncNginxConfig" :loading="nginxForm.syncing" :disabled="!nginxForm.server_id">保存并同步</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- SSL证书对话框 -->
+    <el-dialog v-model="showSslDialog" title="SSL证书管理" width="750px">
+      <div style="margin-bottom:20px">
+        <span style="margin-right:10px">域名: <strong class="full-domain">{{ sslForm.domain }}</strong></span>
+        <el-tag v-if="sslForm.verify_method !== 'http' && sslForm.verify_method !== 'standalone'" type="info" style="margin-right:10px">*.{{ sslForm.domain }}</el-tag>
+        <el-tag :type="sslForm.status === 'active' ? 'success' : sslForm.status === 'issuing' || sslForm.status === 'renewing' ? 'warning' : sslForm.status === 'error' ? 'danger' : 'info'">
+          {{ sslForm.status === 'active' ? '已启用' : sslForm.status === 'issuing' ? '申请中' : sslForm.status === 'renewing' ? '续期中' : sslForm.status === 'error' ? '失败' : '未申请' }}
+        </el-tag>
+        <el-button type="text" size="small" @click="refreshSslStatus" :loading="sslForm.refreshing" style="margin-left:10px">刷新状态</el-button>
+      </div>
+      
+      <!-- 证书信息 -->
+      <div v-if="sslForm.exists" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <strong>证书信息</strong>
+          <div>
+            <el-button type="primary" size="small" @click="viewSslCert" :loading="sslForm.viewing">查看证书</el-button>
+            <el-button type="success" size="small" @click="downloadSslCert" :loading="sslForm.downloading">下载证书</el-button>
+            <el-button type="text" size="small" @click="sslForm.showCertInfo = !sslForm.showCertInfo">
+              {{ sslForm.showCertInfo ? '收起' : '展开' }}
+            </el-button>
+          </div>
+        </div>
+        <div v-show="sslForm.showCertInfo" class="ftp-info">
+          <p><strong>证书类型：</strong>{{ sslForm.san?.includes('*') ? '通配符证书 (Wildcard)' : '单域名证书' }}</p>
+          <p><strong>覆盖域名：</strong>{{ sslForm.san || sslForm.domain }}</p>
+          <p><strong>颁发机构：</strong>{{ sslForm.issuer || '-' }}</p>
+          <p><strong>生效时间：</strong>{{ sslForm.not_before || '-' }}</p>
+          <p><strong>过期时间：</strong>{{ sslForm.not_after || '-' }}</p>
+          <p><strong>证书路径：</strong><span style="font-size:12px;color:#666">{{ sslForm.paths?.fullchain }}</span></p>
+          <p><strong>私钥路径：</strong><span style="font-size:12px;color:#666">{{ sslForm.paths?.key }}</span></p>
+        </div>
+      </div>
+      
+      <!-- 证书内容查看对话框 -->
+      <el-dialog v-model="sslForm.showCertContent" title="证书内容" width="800px" append-to-body>
+        <el-tabs v-model="sslForm.certTab">
+          <el-tab-pane label="证书 (fullchain.crt)" name="cert">
+            <div style="background:#1e1e1e;color:#d4d4d4;padding:15px;border-radius:6px;font-family:monospace;font-size:12px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">{{ sslForm.certContent }}</div>
+          </el-tab-pane>
+          <el-tab-pane label="私钥 (key)" name="key">
+            <div style="background:#1e1e1e;color:#d4d4d4;padding:15px;border-radius:6px;font-family:monospace;font-size:12px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">{{ sslForm.keyContent }}</div>
+          </el-tab-pane>
+        </el-tabs>
+        <template #footer>
+          <el-button @click="copyText(sslForm.certTab === 'cert' ? sslForm.certContent : sslForm.keyContent)">复制内容</el-button>
+          <el-button type="primary" @click="sslForm.showCertContent = false">关闭</el-button>
+        </template>
+      </el-dialog>
+      
+      <!-- 申请表单 -->
+      <el-form :model="sslForm" label-width="100px">
+        <el-form-item label="验证方式">
+          <el-radio-group v-model="sslForm.verify_method">
+            <el-radio-button value="dns">DNS验证 (支持通配符)</el-radio-button>
+            <el-radio-button value="http">HTTP验证</el-radio-button>
+            <el-radio-button value="standalone">Standalone</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="证书类型">
+          <el-select v-model="sslForm.cert_type" style="width:100%">
+            <el-option v-for="(info, key) in sslTypes" :key="key" :label="info.name + ' - ' + info.desc" :value="key"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标服务器">
+          <el-select v-model="sslForm.server_id" placeholder="自动选择" clearable style="width:100%">
+            <el-option v-for="s in servers" :key="s.id" :label="s.name + ' (' + s.ip + ')'" :value="s.id"></el-option>
+          </el-select>
+          <div style="font-size:12px;color:#909399;margin-top:5px">留空则自动选择关联的服务器</div>
+        </el-form-item>
+        <el-form-item label="网站目录" v-if="sslForm.verify_method === 'http'">
+          <el-input v-model="sslForm.webroot" placeholder="/www/wwwroot/ftp/域名"></el-input>
+          <div style="font-size:12px;color:#909399;margin-top:5px">HTTP验证需要网站目录可访问</div>
+        </el-form-item>
+      </el-form>
+      
+      <!-- 申请日志 -->
+      <div v-if="sslForm.log" style="margin-bottom:15px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <strong>申请日志</strong>
+          <el-button type="text" size="small" @click="sslForm.showLog = !sslForm.showLog">
+            {{ sslForm.showLog ? '收起' : '展开' }}
+          </el-button>
+        </div>
+        <div v-show="sslForm.showLog" style="background:#1e1e1e;color:#d4d4d4;padding:15px;border-radius:6px;font-family:monospace;font-size:12px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">{{ sslForm.log }}</div>
+      </div>
+      
+      <el-alert v-if="sslForm.verify_method === 'dns'" type="info" :closable="false" style="margin-bottom:15px">
+        <p><strong>DNS验证说明：</strong></p>
+        <p>• 支持通配符证书 (*.{{ sslForm.domain }})</p>
+        <p>• 需要配置DNS平台（会自动添加TXT验证记录）</p>
+        <p>• 证书路径: /www/certs/{{ sslForm.domain }}/</p>
+      </el-alert>
+      
+      <el-alert v-if="sslForm.verify_method === 'http'" type="info" :closable="false" style="margin-bottom:15px">
+        <p><strong>HTTP验证说明：</strong></p>
+        <p>• 仅支持单域名证书（不支持通配符）</p>
+        <p>• 需要80端口可访问，网站目录存在</p>
+        <p>• 不需要DNS平台配置</p>
+      </el-alert>
+      
+      <el-alert v-if="sslForm.verify_method === 'standalone'" type="warning" :closable="false" style="margin-bottom:15px">
+        <p><strong>Standalone验证说明：</strong></p>
+        <p>• 仅支持单域名证书（不支持通配符）</p>
+        <p>• 会临时停止nginx占用80端口</p>
+        <p>• 不需要DNS平台配置和网站目录</p>
+      </el-alert>
+      
+      <el-alert v-if="sslForm.verify_method === 'dns' && !sslForm.has_dns_config" type="error" :closable="false" style="margin-bottom:15px">
+        DNS验证需要配置DNS平台（编辑域名选择DNS平台配置）
+      </el-alert>
+      
+      <el-alert v-if="!sslForm.has_server && servers.length === 0" type="error" :closable="false" style="margin-bottom:15px">
+        请先添加服务器
+      </el-alert>
+      
+      <template #footer>
+        <el-button @click="showSslDialog = false">关闭</el-button>
+        <el-button type="success" @click="renewSsl" :loading="sslForm.renewing" :disabled="!sslForm.exists">
+          续期证书
+        </el-button>
+        <el-button type="primary" @click="issueSsl" :loading="sslForm.issuing" :disabled="(sslForm.verify_method === 'dns' && !sslForm.has_dns_config) || (!sslForm.has_server && servers.length === 0)">
+          {{ sslForm.exists ? '重新申请' : '申请证书' }}
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
+
+  <script>
+    const { createApp, ref, reactive, computed, onMounted } = Vue;
+
+    const app = createApp({
+      setup() {
+        const token = ref(localStorage.getItem('token') || '');
+        const user = ref(JSON.parse(localStorage.getItem('user') || '{}'));
+        const isRegister = ref(false);
+        const currentMenu = ref('domains');
+        
+        const loginForm = reactive({ username: '', email: '', password: '' });
+        const domainForm = reactive({ id: null, domain: '', aliyun_config_id: null });
+        const subdomainForm = reactive({ id: null, domain_id: '', subdomain: '', server_id: null, record_type: 'A', record_value: '', ttl: 600, auto_ftp: true, auto_nginx: true, nginx_type: 'https' });
+        const serverForm = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '' });
+        const aliyunForm = reactive({ id: null, name: '', platform: 'aliyun', access_key: '', secret_key: '', remark: '' });
+        const ftpForm = reactive({ id: null, subdomain_id: '', username: '', password: '', port: 21, home_dir: '', max_upload_size: 524288000, status: 'active' });
+        const nginxForm = reactive({ subdomain_id: null, domain: '', type: 'http', config: '', root_path: '', proxy_pass: '', synced: false, syncing: false, fetching: false, server_id: null });
+        
+        const domains = ref([]);
+        const subdomains = ref([]);
+        const servers = ref([]);
+        const users = ref([]);
+        const aliyunConfigs = ref([]);
+        const ftpAccounts = ref([]);
+        const availableSubdomains = ref([]);
+        const currentDomain = ref(null);
+        const filterDomainId = ref('');
+        const currentServer = ref(null);
+        const serverDomains = ref([]);
+        const loadingServerDomains = ref(false);
+        const showPassword = ref({});
+        const showServerPassword = ref({});
+        const showDnsKey = ref({});
+        const showDnsSecret = ref({});
+        const ftpResult = ref({ username: '', password: '' });
+        const uploadUrl = computed(() => window.location.origin + '/upload.html');
+        const refreshingSubdomain = ref(false);
+        const refreshingSsl = ref(false);
+        
+        const showDomainDialog = ref(false);
+        const showSubdomainDialog = ref(false);
+        const showServerDialog = ref(false);
+        const showAliyunDialog = ref(false);
+        const showServerDomainsDialog = ref(false);
+        const showFtpDialog = ref(false);
+        const showFtpResultDialog = ref(false);
+        const showNginxDialog = ref(false);
+        const showBatchDialog = ref(false);
+        const showSslDialog = ref(false);
+        const batchForm = reactive({ domain_id: '', server_id: '', count: 10, auto_ftp: true, auto_nginx: true, nginx_type: 'https' });
+        const batchResults = ref([]);
+        const batchCreating = ref(false);
+        
+        // Loading 状态
+        const savingDomain = ref(false);
+        const savingSubdomain = ref(false);
+        const savingServer = ref(false);
+        const savingAliyun = ref(false);
+        const savingFtp = ref(false);
+        
+        // SSL相关
+        const sslForm = reactive({ 
+          domain_id: null, domain: '', status: 'none', cert_type: 'letsencrypt',
+          verify_method: 'dns', server_id: null, webroot: '',
+          exists: false, issuer: '', not_before: '', not_after: '', paths: null, san: '',
+          has_server: false, has_dns_config: false, log: '', showLog: false, showCertInfo: false,
+          issuing: false, renewing: false, refreshing: false,
+          viewing: false, downloading: false,
+          showCertContent: false, certTab: 'cert', certContent: '', keyContent: ''
+        });
+        const sslTypes = ref({});
+        
+        // DNS平台类型
+        const platformTypes = ref({
+          aliyun: { name: '阿里云', type: 'warning', keyLabel: 'AccessKey ID', secretLabel: 'AccessKey Secret', keyPlaceholder: '请输入AccessKey ID', secretPlaceholder: '请输入AccessKey Secret' },
+          tencent: { name: '腾讯云', type: 'primary', keyLabel: 'SecretId', secretLabel: 'SecretKey', keyPlaceholder: '请输入SecretId', secretPlaceholder: '请输入SecretKey' },
+          cloudflare: { name: 'Cloudflare', type: 'success', keyLabel: 'Email/API Token', secretLabel: 'API Key/Token', keyPlaceholder: '请输入Email或API Token', secretPlaceholder: '请输入Global API Key或Token' },
+          dnspod: { name: 'DNSPod', type: 'info', keyLabel: 'ID', secretLabel: 'Token', keyPlaceholder: '请输入ID', secretPlaceholder: '请输入Token' },
+          huawei: { name: '华为云', type: 'danger', keyLabel: 'Access Key', secretLabel: 'Secret Key', keyPlaceholder: '请输入Access Key', secretPlaceholder: '请输入Secret Key' },
+          godaddy: { name: 'GoDaddy', type: '', keyLabel: 'API Key', secretLabel: 'API Secret', keyPlaceholder: '请输入API Key', secretPlaceholder: '请输入API Secret' }
+        });
+
+        const api = async (url, method = 'GET', data = null) => {
+          const options = { method, headers: { 'Content-Type': 'application/json' } };
+          if (token.value) options.headers.Authorization = `Bearer ${token.value}`;
+          if (data) options.body = JSON.stringify(data);
+          const res = await fetch(`/api${url}`, options);
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error);
+          return json;
+        };
+
+        const handleAuth = async () => {
+          try {
+            if (isRegister.value) {
+              await api('/auth/register', 'POST', loginForm);
+              ElementPlus.ElMessage.success('注册成功，请登录');
+              isRegister.value = false;
+            } else {
+              const res = await api('/auth/login', 'POST', loginForm);
+              token.value = res.token;
+              user.value = res.user;
+              localStorage.setItem('token', res.token);
+              localStorage.setItem('user', JSON.stringify(res.user));
+              loadData();
+            }
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const logout = () => {
+          token.value = '';
+          user.value = {};
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+        };
+
+        const loadData = async () => {
+          if (!token.value) return;
+          try {
+            aliyunConfigs.value = await api('/dns/aliyun-configs');
+            domains.value = await api('/dns/domains');
+            servers.value = await api('/servers');
+            sslTypes.value = await api('/ssl/types');
+            loadSubdomains();
+            if (user.value.role === 'admin') {
+              users.value = await api('/users');
+            }
+          } catch (e) { if (e.message.includes('token')) logout(); }
+        };
+
+        const loadSubdomains = async () => {
+          const url = filterDomainId.value ? `/dns/subdomains?domain_id=${filterDomainId.value}` : '/dns/subdomains';
+          subdomains.value = await api(url);
+        };
+
+        const loadFtpAccounts = async () => {
+          ftpAccounts.value = await api('/ftp');
+        };
+
+        const loadAvailableSubdomains = async () => {
+          availableSubdomains.value = await api('/ftp/available-subdomains');
+        };
+
+        // 复制文本
+        const copyText = (text) => {
+          navigator.clipboard.writeText(text);
+          ElementPlus.ElMessage.success('已复制');
+        };
+
+        const togglePassword = (id) => {
+          showPassword.value[id] = !showPassword.value[id];
+        };
+
+        const toggleServerPassword = (id) => {
+          showServerPassword.value[id] = !showServerPassword.value[id];
+        };
+
+        const toggleDnsKey = (id) => {
+          showDnsKey.value[id] = !showDnsKey.value[id];
+        };
+
+        const toggleDnsSecret = (id) => {
+          showDnsSecret.value[id] = !showDnsSecret.value[id];
+        };
+
+        // 格式化上传大小
+        const formatUploadSize = (bytes) => {
+          if (!bytes) return '50MB';
+          if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
+          if (bytes < 1024 * 1024 * 1024) return Math.round(bytes / 1024 / 1024) + 'MB';
+          return (bytes / 1024 / 1024 / 1024).toFixed(1) + 'GB';
+        };
+
+        // 计算SSL证书剩余天数
+        const formatSslDays = (expiresStr) => {
+          if (!expiresStr) return '';
+          try {
+            const expires = new Date(expiresStr);
+            const now = new Date();
+            const diffMs = expires - now;
+            const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+            if (days < 0) return '已过期';
+            if (days === 0) return '今天过期';
+            return `剩余${days}天`;
+          } catch (e) {
+            return expiresStr;
+          }
+        };
+
+        // 根据剩余天数返回标签类型
+        const getSslDaysType = (expiresStr) => {
+          if (!expiresStr) return 'info';
+          try {
+            const expires = new Date(expiresStr);
+            const now = new Date();
+            const diffMs = expires - now;
+            const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+            if (days < 0) return 'danger';
+            if (days <= 7) return 'danger';
+            if (days <= 30) return 'warning';
+            return 'success';
+          } catch (e) {
+            return 'info';
+          }
+        };
+
+        // 刷新所有域名的SSL证书状态
+        const refreshAllSslStatus = async () => {
+          refreshingSsl.value = true;
+          try {
+            await api('/ssl/check-all', 'POST');
+            await loadData();
+            ElementPlus.ElMessage.success('证书状态已更新');
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            refreshingSsl.value = false;
+          }
+        };
+
+        // 域名操作
+        const openDomainDialog = () => {
+          Object.assign(domainForm, { id: null, domain: '', aliyun_config_id: null });
+          showDomainDialog.value = true;
+        };
+
+        const editDomain = (row) => {
+          Object.assign(domainForm, { id: row.id, domain: row.domain, aliyun_config_id: row.aliyun_config_id });
+          showDomainDialog.value = true;
+        };
+
+        const saveDomain = async () => {
+          savingDomain.value = true;
+          try {
+            if (domainForm.id) {
+              await api(`/dns/domains/${domainForm.id}`, 'PUT', { aliyun_config_id: domainForm.aliyun_config_id });
+            } else {
+              await api('/dns/domains', 'POST', domainForm);
+            }
+            ElementPlus.ElMessage.success('保存成功');
+            showDomainDialog.value = false;
+            loadData();
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+          finally { savingDomain.value = false; }
+        };
+
+        const deleteDomain = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('删除域名将同时删除所有子域名和FTP账号，确定？', '提示', { type: 'warning' });
+            await api(`/dns/domains/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadData();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const viewSubdomains = (domain) => {
+          currentDomain.value = domain;
+          filterDomainId.value = domain.id;
+          currentMenu.value = 'subdomains';
+          loadSubdomains();
+        };
+
+        // 子域名操作
+        const openSubdomainDialog = async () => {
+          Object.assign(subdomainForm, { id: null, domain_id: filterDomainId.value || '', subdomain: '', server_id: null, record_type: 'A', record_value: '', ttl: 600, auto_ftp: true, auto_nginx: true, nginx_type: 'https' });
+          showSubdomainDialog.value = true;
+          // 自动生成子域名
+          try {
+            const res = await api('/dns/generate-subdomain');
+            subdomainForm.subdomain = res.subdomain;
+          } catch (e) {}
+        };
+
+        const refreshSubdomain = async () => {
+          refreshingSubdomain.value = true;
+          try {
+            const res = await api('/dns/generate-subdomain');
+            subdomainForm.subdomain = res.subdomain;
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            refreshingSubdomain.value = false;
+          }
+        };
+
+        // 批量生成
+        const openBatchDialog = () => {
+          batchForm.domain_id = filterDomainId.value || '';
+          batchForm.server_id = '';
+          batchForm.count = 10;
+          batchForm.auto_ftp = true;
+          batchForm.auto_nginx = true;
+          batchForm.nginx_type = 'https';
+          batchResults.value = [];
+          showBatchDialog.value = true;
+        };
+
+        const startBatchCreate = async () => {
+          batchCreating.value = true;
+          batchResults.value = [];
+          try {
+            const res = await api('/dns/batch-create', 'POST', batchForm);
+            batchResults.value = res.results;
+            ElementPlus.ElMessage.success(`生成完成: 成功${res.success}个, 失败${res.failed}个`);
+            loadSubdomains();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            batchCreating.value = false;
+          }
+        };
+
+        const onServerChange = (serverId) => {
+          if (serverId && subdomainForm.record_type === 'A') {
+            const server = servers.value.find(s => s.id === serverId);
+            if (server) {
+              subdomainForm.record_value = server.ip;
+            }
+          }
+        };
+
+        const editSubdomain = (row) => {
+          Object.assign(subdomainForm, { ...row, id: row.id, auto_ftp: false });
+          showSubdomainDialog.value = true;
+        };
+
+        const saveSubdomain = async () => {
+          savingSubdomain.value = true;
+          try {
+            if (subdomainForm.id) {
+              await api(`/dns/subdomains/${subdomainForm.id}`, 'PUT', subdomainForm);
+              ElementPlus.ElMessage.success('保存成功');
+            } else {
+              const res = await api('/dns/subdomains', 'POST', subdomainForm);
+              if (res.ftp) {
+                ftpResult.value = res.ftp;
+                let msg = `FTP: ${res.ftp.sync_status === 'synced' ? '已同步' : '同步失败'}`;
+                msg += `, Nginx: ${res.nginx_synced ? '已同步' : '同步失败'}`;
+                showFtpResultDialog.value = true;
+              } else {
+                ElementPlus.ElMessage.success('添加成功');
+              }
+            }
+            showSubdomainDialog.value = false;
+            loadSubdomains();
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+          finally { savingSubdomain.value = false; }
+        };
+
+        const deleteSubdomain = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('删除子域名将同时删除关联的FTP账号和Nginx配置，确定？', '提示');
+            await api(`/dns/subdomains/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadSubdomains();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        // Nginx配置操作
+        const openNginxDialog = async (row) => {
+          const fullDomain = row.subdomain === '@' ? row.main_domain : `${row.subdomain}.${row.main_domain}`;
+          Object.assign(nginxForm, {
+            subdomain_id: row.id,
+            domain: fullDomain,
+            type: 'http',
+            config: row.nginx_config || '',
+            root_path: `/www/wwwroot/ftp/${fullDomain}`,
+            proxy_pass: 'http://127.0.0.1:3000',
+            synced: row.nginx_synced === 1,
+            syncing: false,
+            fetching: false,
+            server_id: row.server_id
+          });
+          
+          if (!row.nginx_config) {
+            await generateNginxConfig();
+          }
+          
+          showNginxDialog.value = true;
+        };
+
+        const generateNginxConfig = async () => {
+          if (nginxForm.type === 'custom') return;
+          
+          try {
+            const res = await api('/nginx/preview', 'POST', {
+              subdomain_id: nginxForm.subdomain_id,
+              type: nginxForm.type,
+              root_path: nginxForm.root_path,
+              proxy_pass: nginxForm.proxy_pass
+            });
+            nginxForm.config = res.config;
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          }
+        };
+
+        const fetchNginxConfig = async () => {
+          nginxForm.fetching = true;
+          try {
+            const res = await api(`/nginx/fetch/${nginxForm.subdomain_id}`);
+            if (res.exists && res.config) {
+              nginxForm.config = res.config;
+              nginxForm.type = 'custom';
+              ElementPlus.ElMessage.success('已获取服务器配置');
+            } else {
+              ElementPlus.ElMessage.info('服务器上暂无此配置');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            nginxForm.fetching = false;
+          }
+        };
+
+        const saveNginxConfig = async () => {
+          try {
+            await api('/nginx/save', 'POST', {
+              subdomain_id: nginxForm.subdomain_id,
+              config: nginxForm.config
+            });
+            nginxForm.synced = false;
+            ElementPlus.ElMessage.success('配置已保存');
+            loadSubdomains();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          }
+        };
+
+        const syncNginxConfig = async () => {
+          nginxForm.syncing = true;
+          try {
+            await api('/nginx/save', 'POST', {
+              subdomain_id: nginxForm.subdomain_id,
+              config: nginxForm.config
+            });
+            
+            const res = await api(`/nginx/sync/${nginxForm.subdomain_id}`, 'POST');
+            if (res.success) {
+              nginxForm.synced = true;
+              ElementPlus.ElMessage.success(res.message);
+            } else {
+              ElementPlus.ElMessage.error(res.message);
+            }
+            loadSubdomains();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            nginxForm.syncing = false;
+          }
+        };
+
+        const removeNginxConfig = async () => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定删除服务器上的Nginx配置？', '提示', { type: 'warning' });
+            const res = await api(`/nginx/remove/${nginxForm.subdomain_id}`, 'DELETE');
+            if (res.success) {
+              nginxForm.config = '';
+              nginxForm.synced = false;
+              ElementPlus.ElMessage.success(res.message);
+              showNginxDialog.value = false;
+              loadSubdomains();
+            }
+          } catch (e) {
+            if (e !== 'cancel') ElementPlus.ElMessage.error(e.message);
+          }
+        };
+
+        // SSL证书操作
+        const openSslDialog = async (row) => {
+          Object.assign(sslForm, {
+            domain_id: row.id,
+            domain: row.domain,
+            status: row.ssl_status || 'none',
+            cert_type: row.ssl_type || 'letsencrypt',
+            verify_method: 'dns',
+            server_id: null,
+            webroot: `/www/wwwroot/ftp/${row.domain}`,
+            exists: false,
+            issuer: '',
+            not_before: '',
+            not_after: '',
+            paths: null,
+            san: '',
+            has_server: false,
+            has_dns_config: !!row.aliyun_config_id,
+            log: '',
+            showLog: false,
+            showCertInfo: false,
+            issuing: false,
+            renewing: false,
+            refreshing: false
+          });
+          
+          showSslDialog.value = true;
+          await refreshSslStatus();
+        };
+
+        const refreshSslStatus = async () => {
+          sslForm.refreshing = true;
+          try {
+            const res = await api(`/ssl/status/${sslForm.domain_id}`);
+            sslForm.exists = res.exists;
+            sslForm.issuer = res.issuer;
+            sslForm.not_before = res.not_before;
+            sslForm.not_after = res.not_after;
+            sslForm.paths = res.paths;
+            sslForm.san = res.san || '';
+            sslForm.has_server = res.has_server;
+            sslForm.has_dns_config = res.has_dns_config;
+            sslForm.status = res.ssl_status || 'none';
+            sslForm.log = res.ssl_log || '';
+          } catch (e) {
+            console.error('获取证书状态失败:', e);
+          } finally {
+            sslForm.refreshing = false;
+          }
+        };
+
+        const issueSsl = async () => {
+          sslForm.issuing = true;
+          sslForm.showLog = true;
+          sslForm.log = '正在申请证书，请稍候...\n';
+          try {
+            const res = await api(`/ssl/issue/${sslForm.domain_id}`, 'POST', {
+              cert_type: sslForm.cert_type,
+              verify_method: sslForm.verify_method,
+              server_id: sslForm.server_id,
+              webroot: sslForm.webroot
+            });
+            sslForm.log = res.log || sslForm.log;
+            if (res.success) {
+              ElementPlus.ElMessage.success(res.message);
+              sslForm.exists = true;
+              sslForm.paths = res.paths;
+              sslForm.status = 'active';
+              loadData();
+            } else {
+              ElementPlus.ElMessage.error(res.message || '申请失败');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+            sslForm.log += `\n错误: ${e.message}`;
+          } finally {
+            sslForm.issuing = false;
+          }
+        };
+
+        const renewSsl = async () => {
+          sslForm.renewing = true;
+          sslForm.showLog = true;
+          sslForm.log = '正在续期证书，请稍候...\n';
+          try {
+            const res = await api(`/ssl/renew/${sslForm.domain_id}`, 'POST');
+            sslForm.log = res.log || sslForm.log;
+            if (res.success) {
+              ElementPlus.ElMessage.success(res.message);
+              sslForm.not_after = res.expires;
+              loadData();
+            } else {
+              ElementPlus.ElMessage.error(res.message || '续期失败');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+            sslForm.log += `\n错误: ${e.message}`;
+          } finally {
+            sslForm.renewing = false;
+          }
+        };
+
+        // 查看证书内容
+        const viewSslCert = async () => {
+          sslForm.viewing = true;
+          try {
+            const res = await api(`/ssl/view/${sslForm.domain_id}`);
+            sslForm.certContent = res.cert || '(无法读取证书内容)';
+            sslForm.keyContent = res.key || '(无法读取私钥内容)';
+            sslForm.certTab = 'cert';
+            sslForm.showCertContent = true;
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            sslForm.viewing = false;
+          }
+        };
+
+        // 下载证书
+        const downloadSslCert = async () => {
+          sslForm.downloading = true;
+          try {
+            const response = await fetch(`/api/ssl/download/${sslForm.domain_id}`, {
+              headers: { 'Authorization': `Bearer ${token.value}` }
+            });
+            if (!response.ok) {
+              const err = await response.json();
+              throw new Error(err.error || '下载失败');
+            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sslForm.domain}_ssl.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            ElementPlus.ElMessage.success('证书下载成功');
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            sslForm.downloading = false;
+          }
+        };
+
+        // 服务器操作
+        const openServerDialog = () => {
+          Object.assign(serverForm, { id: null, name: '', ip: '', port: 22, username: '', password: '' });
+          showServerDialog.value = true;
+        };
+
+        const editServer = (row) => {
+          Object.assign(serverForm, { id: row.id, name: row.name, ip: row.ip, port: row.port, username: row.username, password: '' });
+          showServerDialog.value = true;
+        };
+
+        const saveServer = async () => {
+          savingServer.value = true;
+          try {
+            if (serverForm.id) {
+              await api(`/servers/${serverForm.id}`, 'PUT', serverForm);
+              ElementPlus.ElMessage.success('修改成功');
+            } else {
+              await api('/servers', 'POST', serverForm);
+              ElementPlus.ElMessage.success('添加成功');
+            }
+            showServerDialog.value = false;
+            Object.assign(serverForm, { id: null, name: '', ip: '', port: 22, username: '', password: '' });
+            loadData();
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+          finally { savingServer.value = false; }
+        };
+
+        const deleteServer = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定删除此服务器？', '提示');
+            await api(`/servers/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadData();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const testServer = async (server) => {
+          server.testing = true;
+          try {
+            const result = await api(`/servers/${server.id}/test`, 'POST');
+            if (result.success) {
+              ElementPlus.ElMessage.success(result.message);
+            } else {
+              ElementPlus.ElMessage.error(result.message);
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            server.testing = false;
+          }
+        };
+
+        const viewServerDomains = async (server) => {
+          currentServer.value = server;
+          showServerDomainsDialog.value = true;
+          loadingServerDomains.value = true;
+          try {
+            serverDomains.value = await api(`/servers/${server.id}/domains`);
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            loadingServerDomains.value = false;
+          }
+        };
+
+        // DNS平台配置操作
+        const openAliyunDialog = () => {
+          Object.assign(aliyunForm, { id: null, name: '', platform: 'aliyun', access_key: '', secret_key: '', remark: '' });
+          showAliyunDialog.value = true;
+        };
+
+        const editAliyunConfig = (row) => {
+          Object.assign(aliyunForm, { id: row.id, name: row.name, platform: row.platform || 'aliyun', access_key: row.access_key, secret_key: '', remark: row.remark || '' });
+          showAliyunDialog.value = true;
+        };
+
+        const saveAliyunConfig = async () => {
+          savingAliyun.value = true;
+          try {
+            if (aliyunForm.id) {
+              await api(`/dns/aliyun-configs/${aliyunForm.id}`, 'PUT', aliyunForm);
+            } else {
+              await api('/dns/aliyun-configs', 'POST', aliyunForm);
+            }
+            ElementPlus.ElMessage.success('保存成功');
+            showAliyunDialog.value = false;
+            loadData();
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+          finally { savingAliyun.value = false; }
+        };
+
+        const deleteAliyunConfig = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定删除此配置？', '提示');
+            await api(`/dns/aliyun-configs/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadData();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const testDnsConfig = async (config) => {
+          config.testing = true;
+          try {
+            const result = await api(`/dns/aliyun-configs/${config.id}/test`, 'POST');
+            if (result.success) {
+              ElementPlus.ElMessage.success(result.message || '连接成功');
+            } else {
+              ElementPlus.ElMessage.error(result.message || '连接失败');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            config.testing = false;
+          }
+        };
+
+        // FTP账号操作
+        const openFtpDialog = async () => {
+          await loadAvailableSubdomains();
+          Object.assign(ftpForm, { id: null, subdomain_id: '', username: '', password: '', port: 21, home_dir: '', max_upload_size: 524288000, status: 'active' });
+          showFtpDialog.value = true;
+        };
+
+        const editFtpAccount = (row) => {
+          Object.assign(ftpForm, { 
+            id: row.id, 
+            subdomain_id: row.subdomain_id, 
+            username: row.username, 
+            port: row.port, 
+            home_dir: row.home_dir, 
+            max_upload_size: row.max_upload_size || 524288000,
+            status: row.status 
+          });
+          showFtpDialog.value = true;
+        };
+
+        const saveFtpAccount = async () => {
+          savingFtp.value = true;
+          try {
+            if (ftpForm.id) {
+              await api(`/ftp/${ftpForm.id}`, 'PUT', ftpForm);
+            } else {
+              const res = await api('/ftp', 'POST', ftpForm);
+              if (res.username && res.password) {
+                ftpResult.value = { username: res.username, password: res.password };
+                showFtpResultDialog.value = true;
+              }
+            }
+            ElementPlus.ElMessage.success('保存成功');
+            showFtpDialog.value = false;
+            loadFtpAccounts();
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+          finally { savingFtp.value = false; }
+        };
+
+        const resetFtpPassword = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定重置密码？将同步到服务器', '提示');
+            const res = await api(`/ftp/${id}/reset-password`, 'POST');
+            ftpResult.value = { username: '', password: res.password };
+            if (res.sync_status === 'synced') {
+              ElementPlus.ElMessage.success('密码已重置并同步: ' + res.password);
+            } else {
+              ElementPlus.ElMessage.warning('密码已重置但同步失败: ' + res.password);
+            }
+            loadFtpAccounts();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const syncFtpAccount = async (row) => {
+          row.syncing = true;
+          try {
+            const res = await api(`/ftp/${row.id}/sync`, 'POST');
+            if (res.success) {
+              ElementPlus.ElMessage.success(res.message);
+            } else {
+              ElementPlus.ElMessage.error(res.message);
+            }
+            loadFtpAccounts();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            row.syncing = false;
+          }
+        };
+
+        const deleteFtpAccount = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定删除此FTP账号？', '提示');
+            await api(`/ftp/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadFtpAccounts();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        // 用户操作
+        const updateUserRole = async (u) => {
+          try {
+            await api(`/users/${u.id}/role`, 'PUT', { role: u.role });
+            ElementPlus.ElMessage.success('更新成功');
+          } catch (e) { ElementPlus.ElMessage.error(e.message); }
+        };
+
+        const deleteUser = async (id) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm('确定删除此用户？', '提示');
+            await api(`/users/${id}`, 'DELETE');
+            ElementPlus.ElMessage.success('删除成功');
+            loadData();
+          } catch (e) { if (e !== 'cancel') ElementPlus.ElMessage.error(e.message); }
+        };
+
+        onMounted(loadData);
+
+        return {
+          token, user, isRegister, currentMenu, loginForm, domainForm, subdomainForm, serverForm, aliyunForm, ftpForm,
+          domains, subdomains, servers, users, aliyunConfigs, ftpAccounts, availableSubdomains,
+          currentDomain, filterDomainId, currentServer, serverDomains, loadingServerDomains,
+          showPassword, showServerPassword, showDnsKey, showDnsSecret, ftpResult, nginxForm, uploadUrl, refreshingSubdomain,
+          showDomainDialog, showSubdomainDialog, showServerDialog, showAliyunDialog, showServerDomainsDialog,
+          showFtpDialog, showFtpResultDialog, showNginxDialog, showBatchDialog, showSslDialog,
+          batchForm, batchResults, batchCreating,
+          savingDomain, savingSubdomain, savingServer, savingAliyun, savingFtp,
+          sslForm, sslTypes, platformTypes, refreshingSsl,
+          handleAuth, logout, copyText, togglePassword, toggleServerPassword, toggleDnsKey, toggleDnsSecret, formatUploadSize, formatSslDays, getSslDaysType,
+          refreshAllSslStatus, openDomainDialog, editDomain, saveDomain, deleteDomain, viewSubdomains,
+          openSubdomainDialog, refreshSubdomain, openBatchDialog, startBatchCreate, editSubdomain, saveSubdomain, deleteSubdomain, onServerChange,
+          openNginxDialog, generateNginxConfig, fetchNginxConfig, saveNginxConfig, syncNginxConfig, removeNginxConfig,
+          openSslDialog, issueSsl, renewSsl, refreshSslStatus, viewSslCert, downloadSslCert,
+          openServerDialog, editServer, saveServer, deleteServer, testServer, viewServerDomains,
+          openAliyunDialog, editAliyunConfig, saveAliyunConfig, deleteAliyunConfig, testDnsConfig,
+          openFtpDialog, editFtpAccount, saveFtpAccount, resetFtpPassword, deleteFtpAccount, syncFtpAccount, loadFtpAccounts,
+          updateUserRole, deleteUser, loadSubdomains
+        };
+      }
+    });
+    
+    // 注册所有图标
+    for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+      app.component(key, component);
+    }
+    
+    app.use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>

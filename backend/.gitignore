@@ -1,0 +1,17 @@
+.history/
+node_modules/
+!src/
+!src/index.js
+!src/index.html
+!src/index.css
+!src/App.js
+!src/App.css
+!src/App.test.js
+!src/logo.svg
+!src/registerServiceWorker.js
+!src/setupTests.js
+!src/robots.txt
+!src/manifest.json
+!src/robots.txt
+!src/robots.txt
+.DS_Store

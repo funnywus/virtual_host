@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文件上传</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://unpkg.com/element-plus"></script>
+  <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+    
+    .auth-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+    .auth-box { width: 420px; padding: 50px 40px; background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center; }
+    .auth-logo { font-size: 48px; margin-bottom: 10px; }
+    .auth-title { margin-bottom: 10px; color: #303133; font-size: 24px; }
+    .auth-subtitle { color: #909399; margin-bottom: 30px; font-size: 14px; }
+    
+    .main-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 20px 25px; background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    .header-left { display: flex; align-items: center; gap: 15px; }
+    .domain-info { font-size: 20px; font-weight: bold; color: #409eff; }
+    .header-actions { display: flex; gap: 10px; }
+    
+    .stats-row { display: flex; gap: 15px; margin-bottom: 20px; }
+    .stat-card { flex: 1; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
+    .stat-value { font-size: 28px; font-weight: bold; color: #409eff; }
+    .stat-label { color: #909399; font-size: 14px; margin-top: 5px; }
+    
+    .card { background: #fff; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    .card-title { font-size: 16px; font-weight: bold; color: #303133; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f0f0f0; }
+    .breadcrumb { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .breadcrumb-item { cursor: pointer; color: #409eff; padding: 4px 8px; border-radius: 4px; transition: background 0.2s; }
+    .breadcrumb-item:hover { background: #ecf5ff; }
+    .breadcrumb-sep { color: #c0c4cc; }
+    
+    .file-list { min-height: 300px; }
+    .file-item { display: flex; align-items: center; padding: 15px 20px; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; background: #fafafa; }
+    .file-item:hover { background: #ecf5ff; transform: translateX(5px); }
+    .file-icon { width: 50px; font-size: 32px; }
+    .file-info { flex: 1; }
+    .file-name { font-weight: 500; color: #303133; font-size: 15px; }
+    .file-meta { font-size: 12px; color: #909399; margin-top: 4px; }
+    .file-actions { opacity: 0; transition: opacity 0.2s; }
+    .file-item:hover .file-actions { opacity: 1; }
+    
+    .upload-area { border: 2px dashed #dcdfe6; border-radius: 12px; padding: 50px; text-align: center; cursor: pointer; transition: all 0.3s; background: #fafafa; }
+    .upload-area:hover { border-color: #409eff; background: #ecf5ff; }
+    .upload-area.dragover { border-color: #409eff; background: #ecf5ff; transform: scale(1.02); }
+    .upload-icon { font-size: 64px; margin-bottom: 15px; }
+    .upload-text { color: #606266; font-size: 16px; }
+    .upload-hint { color: #909399; font-size: 13px; margin-top: 10px; }
+    
+    .empty-tip { text-align: center; padding: 80px 0; color: #909399; }
+    .empty-icon { font-size: 64px; color: #dcdfe6; margin-bottom: 15px; }
+    
+    .quick-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: center; }
+    
+    .footer { text-align: center; padding: 20px; color: rgba(255,255,255,0.7); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 授权码验证页面 -->
+    <div v-if="!authorized" class="auth-container">
+      <div class="auth-box">
+        <div class="auth-logo">📁</div>
+        <h2 class="auth-title">文件上传系统</h2>
+        <p class="auth-subtitle">请输入授权码访问您的文件空间</p>
+        <el-input v-model="authCode" placeholder="请输入授权码" size="large" @keyup.enter="verifyAuth" style="margin-bottom:20px">
+          <template #prefix>
+            <el-icon><Key /></el-icon>
+          </template>
+        </el-input>
+        <el-button type="primary" size="large" @click="verifyAuth" :loading="verifying" style="width:100%;height:48px;font-size:16px">
+          验证并进入
+        </el-button>
+        <p style="margin-top:20px;color:#909399;font-size:12px">如没有授权码，请联系管理员获取</p>
+      </div>
+    </div>
+
+    <!-- 文件管理页面 -->
+    <div v-else class="main-container">
+      <div class="header">
+        <div class="header-left">
+          <span class="domain-info">{{ domain }}</span>
+          <el-tag type="success" size="small">已连接</el-tag>
+        </div>
+        <div class="header-actions">
+          <el-button type="primary" @click="openWebsite">
+            <el-icon style="margin-right:5px"><Link /></el-icon> 访问网站
+          </el-button>
+          <el-button @click="logout">退出</el-button>
+        </div>
+      </div>
+
+      <!-- 统计卡片 -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value">{{ files.filter(f => f.type === 'file').length }}</div>
+          <div class="stat-label">文件数量</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ files.filter(f => f.type === 'directory').length }}</div>
+          <div class="stat-label">文件夹数量</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" :style="{color: usedSize > maxUploadSize * 0.9 ? '#f56c6c' : '#409eff'}">{{ formatSize(usedSize) }}</div>
+          <div class="stat-label">已用空间</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:#67c23a">{{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
+          <div class="stat-label">剩余空间</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color:#e6a23c">{{ formatSize(maxUploadSize) }}</div>
+          <div class="stat-label">空间限制</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="breadcrumb">
+            <span class="breadcrumb-item" @click="navigateTo('')">
+              <el-icon style="vertical-align:middle"><HomeFilled /></el-icon> 根目录
+            </span>
+            <template v-for="(part, index) in pathParts" :key="index">
+              <span class="breadcrumb-sep">/</span>
+              <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
+            </template>
+          </div>
+          <div style="display:flex;gap:10px">
+            <el-button type="primary" @click="showUploadDialog = true">
+              <el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件
+            </el-button>
+            <el-button @click="showMkdirDialog = true">
+              <el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹
+            </el-button>
+            <el-button @click="loadFiles" :loading="loading">
+              <el-icon style="margin-right:5px"><Refresh /></el-icon> 刷新
+            </el-button>
+          </div>
+        </div>
+
+        <div class="file-list" v-loading="loading">
+          <div v-if="currentPath" class="file-item" @click="goBack">
+            <div class="file-icon">📁</div>
+            <div class="file-info">
+              <div class="file-name">..</div>
+              <div class="file-meta">返回上级目录</div>
+            </div>
+          </div>
+          
+          <div v-for="file in files" :key="file.name" class="file-item" @click="file.type === 'directory' && navigateTo(currentPath ? currentPath + '/' + file.name : file.name)">
+            <div class="file-icon">{{ file.type === 'directory' ? '📁' : getFileIcon(file.name) }}</div>
+            <div class="file-info">
+              <div class="file-name">{{ file.name }}</div>
+              <div class="file-meta">
+                <span v-if="file.type === 'file'">{{ formatSize(file.size) }} · </span>
+                {{ file.date }}
+              </div>
+            </div>
+            <div class="file-actions">
+              <el-button type="danger" size="small" @click.stop="deleteFile(file)">
+                <el-icon><Delete /></el-icon> 删除
+              </el-button>
+            </div>
+          </div>
+
+          <div v-if="!loading && files.length === 0" class="empty-tip">
+            <div class="empty-icon">📂</div>
+            <p style="font-size:16px;margin-bottom:10px">当前目录为空</p>
+            <p>点击上方按钮上传文件或创建文件夹</p>
+            <div class="quick-actions">
+              <el-button type="primary" @click="showUploadDialog = true">上传文件</el-button>
+              <el-button @click="showMkdirDialog = true">新建文件夹</el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        文件上传系统 · 当前目录: {{ homeDir }}{{ currentPath ? '/' + currentPath : '' }}
+      </div>
+
+      <!-- 上传对话框 -->
+      <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px">
+        <div class="upload-area" 
+             :class="{ dragover: isDragover }"
+             @click="$refs.fileInput.click()"
+             @dragover.prevent="isDragover = true"
+             @dragleave="isDragover = false"
+             @drop.prevent="handleDrop">
+          <div class="upload-icon">📤</div>
+          <div class="upload-text">点击选择文件或拖拽文件/文件夹到此处</div>
+          <div class="upload-hint">支持文件夹上传 · 剩余空间 {{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
+          <input ref="fileInput" type="file" multiple webkitdirectory hidden @change="handleFileSelect">
+        </div>
+        <div style="margin-top:15px;display:flex;gap:10px;justify-content:center">
+          <el-button @click="$refs.fileOnlyInput.click()">
+            <el-icon style="margin-right:5px"><Document /></el-icon> 选择文件
+          </el-button>
+          <el-button @click="$refs.folderInput.click()">
+            <el-icon style="margin-right:5px"><Folder /></el-icon> 选择文件夹
+          </el-button>
+          <input ref="fileOnlyInput" type="file" multiple hidden @change="handleFileOnlySelect">
+          <input ref="folderInput" type="file" webkitdirectory hidden @change="handleFolderSelect">
+        </div>
+        <div v-if="uploadQueue.length > 0" style="margin-top:20px">
+          <div style="margin-bottom:10px;color:#606266;display:flex;justify-content:space-between;align-items:center">
+            <span>待上传 ({{ uploadQueue.length }} 个文件，共 {{ formatSize(uploadQueue.reduce((s,f) => s + f.file.size, 0)) }})</span>
+            <el-button type="danger" size="small" text @click="uploadQueue = []">清空列表</el-button>
+          </div>
+          <div style="max-height:250px;overflow-y:auto">
+            <div v-for="(item, index) in uploadQueue" :key="index" style="display:flex;align-items:center;padding:10px;background:#fafafa;border-radius:6px;margin-bottom:8px">
+              <span style="font-size:20px;margin-right:10px">{{ getFileIcon(item.name) }}</span>
+              <div style="flex:1;overflow:hidden;min-width:0">
+                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ item.name }}</div>
+                <div v-if="item.relativePath" style="font-size:11px;color:#909399;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.relativePath }}</div>
+              </div>
+              <span style="color:#909399;font-size:12px;margin:0 10px;white-space:nowrap">{{ formatSize(item.file.size) }}</span>
+              <el-tag :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
+                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? '上传中' : '等待' }}
+              </el-tag>
+              <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px">
+                <el-icon><Close /></el-icon>
+              </el-button>
+            </div>
+          </div>
+        </div>
+        <template #footer>
+          <el-button @click="showUploadDialog = false; uploadQueue = []">关闭</el-button>
+          <el-button type="primary" @click="startUpload" :loading="uploading" :disabled="uploadQueue.filter(f => f.status === 'pending').length === 0">
+            开始上传 ({{ uploadQueue.filter(f => f.status === 'pending').length }})
+          </el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 新建文件夹对话框 -->
+      <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px">
+        <el-input v-model="newFolderName" placeholder="请输入文件夹名称" size="large" @keyup.enter="createFolder">
+          <template #prefix>
+            <el-icon><Folder /></el-icon>
+          </template>
+        </el-input>
+        <template #footer>
+          <el-button @click="showMkdirDialog = false">取消</el-button>
+          <el-button type="primary" @click="createFolder" :loading="creating">创建</el-button>
+        </template>
+      </el-dialog>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed } = Vue;
+
+    const app = createApp({
+      setup() {
+        const authCode = ref(localStorage.getItem('upload_auth_code') || '');
+        const authorized = ref(false);
+        const verifying = ref(false);
+        const domain = ref('');
+        const homeDir = ref('');
+        const ftpId = ref(null);
+        const maxUploadSize = ref(524288000);
+        
+        const currentPath = ref('');
+        const files = ref([]);
+        const loading = ref(false);
+        
+        const showUploadDialog = ref(false);
+        const showMkdirDialog = ref(false);
+        const uploadQueue = ref([]);
+        const uploading = ref(false);
+        const isDragover = ref(false);
+        const newFolderName = ref('');
+        const creating = ref(false);
+
+        const pathParts = computed(() => currentPath.value ? currentPath.value.split('/').filter(p => p) : []);
+        const totalSize = computed(() => files.value.filter(f => f.type === 'file').reduce((sum, f) => sum + f.size, 0));
+        const usedSize = ref(0);
+
+        const api = async (url, data = {}) => {
+          const res = await fetch(`/api/upload${url}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auth_code: authCode.value, ...data })
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error);
+          return json;
+        };
+
+        const verifyAuth = async () => {
+          if (!authCode.value) {
+            ElementPlus.ElMessage.warning('请输入授权码');
+            return;
+          }
+          verifying.value = true;
+          try {
+            const res = await api('/auth');
+            domain.value = res.domain;
+            homeDir.value = res.home_dir;
+            ftpId.value = res.ftp_id;
+            maxUploadSize.value = res.max_upload_size || 524288000;
+            authorized.value = true;
+            localStorage.setItem('upload_auth_code', authCode.value);
+            loadFiles();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            verifying.value = false;
+          }
+        };
+
+        const logout = () => {
+          authorized.value = false;
+          authCode.value = '';
+          localStorage.removeItem('upload_auth_code');
+        };
+
+        const openWebsite = () => {
+          window.open(`http://${domain.value}`, '_blank');
+        };
+
+        const loadFiles = async () => {
+          loading.value = true;
+          try {
+            const res = await api('/list', { path: currentPath.value });
+            files.value = res.files.sort((a, b) => {
+              if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
+            // 获取空间使用情况
+            const usage = await api('/usage');
+            usedSize.value = usage.used_size || 0;
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            loading.value = false;
+          }
+        };
+
+        const navigateTo = (path) => {
+          currentPath.value = path;
+          loadFiles();
+        };
+
+        const goBack = () => {
+          const parts = currentPath.value.split('/').filter(p => p);
+          parts.pop();
+          currentPath.value = parts.join('/');
+          loadFiles();
+        };
+
+        const handleFileSelect = (e) => {
+          addFilesToQueue(e.target.files);
+          e.target.value = '';
+        };
+
+        const handleFileOnlySelect = (e) => {
+          addFilesToQueue(e.target.files, false);
+          e.target.value = '';
+        };
+
+        const handleFolderSelect = (e) => {
+          addFilesToQueue(e.target.files, true);
+          e.target.value = '';
+        };
+
+        const addFilesToQueue = (fileList, keepPath = true) => {
+          const newFiles = Array.from(fileList).map(f => {
+            // webkitRelativePath 包含文件夹路径
+            const relativePath = keepPath && f.webkitRelativePath ? f.webkitRelativePath : f.name;
+            return { 
+              file: f, 
+              name: f.name, 
+              relativePath: relativePath !== f.name ? relativePath : '',
+              uploadPath: relativePath, // 完整上传路径（包含文件夹）
+              status: 'pending' 
+            };
+          });
+          uploadQueue.value.push(...newFiles);
+        };
+
+        const handleDrop = async (e) => {
+          isDragover.value = false;
+          const items = e.dataTransfer.items;
+          const files = [];
+          
+          // 递归读取文件夹
+          const readEntry = async (entry, path = '') => {
+            if (entry.isFile) {
+              return new Promise((resolve) => {
+                entry.file(file => {
+                  const relativePath = path ? path + '/' + file.name : file.name;
+                  files.push({ 
+                    file, 
+                    name: file.name, 
+                    relativePath: path ? relativePath : '',
+                    uploadPath: relativePath,
+                    status: 'pending' 
+                  });
+                  resolve();
+                });
+              });
+            } else if (entry.isDirectory) {
+              const dirReader = entry.createReader();
+              return new Promise((resolve) => {
+                const readEntries = () => {
+                  dirReader.readEntries(async (entries) => {
+                    if (entries.length === 0) {
+                      resolve();
+                    } else {
+                      for (const ent of entries) {
+                        await readEntry(ent, path ? path + '/' + entry.name : entry.name);
+                      }
+                      readEntries(); // 继续读取（可能有多批）
+                    }
+                  });
+                };
+                readEntries();
+              });
+            }
+          };
+          
+          // 处理拖拽的项目
+          const promises = [];
+          for (const item of items) {
+            const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+            if (entry) {
+              promises.push(readEntry(entry));
+            } else if (item.kind === 'file') {
+              const file = item.getAsFile();
+              if (file) {
+                files.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' });
+              }
+            }
+          }
+          
+          await Promise.all(promises);
+          uploadQueue.value.push(...files);
+        };
+
+        const startUpload = async () => {
+          // 检查总空间
+          const totalUploadSize = uploadQueue.value.filter(f => f.status === 'pending').reduce((sum, f) => sum + f.file.size, 0);
+          const remaining = maxUploadSize.value - usedSize.value;
+          
+          if (totalUploadSize > remaining) {
+            ElementPlus.ElMessage.error(`空间不足！待上传 ${formatSize(totalUploadSize)}，剩余 ${formatSize(remaining)}`);
+            return;
+          }
+          
+          uploading.value = true;
+          for (const item of uploadQueue.value) {
+            if (item.status !== 'pending') continue;
+            item.status = 'uploading';
+            try {
+              const content = await fileToBase64(item.file);
+              // 计算上传路径（当前目录 + 文件相对路径）
+              let uploadDir = currentPath.value;
+              const filePath = item.uploadPath || item.name;
+              const pathParts = filePath.split('/');
+              const fileName = pathParts.pop();
+              
+              // 如果有子目录，拼接到当前路径
+              if (pathParts.length > 0) {
+                uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/');
+              }
+              
+              await api('/upload', {
+                path: uploadDir,
+                filename: fileName,
+                content,
+                filesize: item.file.size
+              });
+              item.status = 'done';
+              usedSize.value += item.file.size;
+            } catch (e) {
+              item.status = 'error';
+              item.errorMsg = e.message;
+            }
+          }
+          uploading.value = false;
+          loadFiles();
+          const success = uploadQueue.value.filter(f => f.status === 'done').length;
+          const failed = uploadQueue.value.filter(f => f.status === 'error').length;
+          if (failed === 0) {
+            ElementPlus.ElMessage.success(`上传完成，共${success}个文件`);
+          } else {
+            ElementPlus.ElMessage.warning(`上传完成: 成功${success}个, 失败${failed}个`);
+          }
+        };
+
+        const fileToBase64 = (file) => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        };
+
+        const createFolder = async () => {
+          if (!newFolderName.value) {
+            ElementPlus.ElMessage.warning('请输入文件夹名称');
+            return;
+          }
+          creating.value = true;
+          try {
+            await api('/mkdir', { path: currentPath.value, name: newFolderName.value });
+            ElementPlus.ElMessage.success('创建成功');
+            showMkdirDialog.value = false;
+            newFolderName.value = '';
+            loadFiles();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.message);
+          } finally {
+            creating.value = false;
+          }
+        };
+
+        const deleteFile = async (file) => {
+          try {
+            await ElementPlus.ElMessageBox.confirm(`确定删除 "${file.name}"？${file.type === 'directory' ? '文件夹内所有内容将被删除！' : ''}`, '确认删除', { 
+              type: 'warning',
+              confirmButtonText: '删除',
+              cancelButtonText: '取消'
+            });
+            const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name;
+            await api('/delete', { path: filePath });
+            ElementPlus.ElMessage.success('删除成功');
+            loadFiles();
+          } catch (e) {
+            if (e !== 'cancel') ElementPlus.ElMessage.error(e.message);
+          }
+        };
+
+        const formatSize = (bytes) => {
+          if (!bytes || bytes === 0) return '0 B';
+          if (bytes < 1024) return bytes + ' B';
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+          if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+          return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+        };
+
+        const getFileIcon = (name) => {
+          const ext = name.split('.').pop().toLowerCase();
+          const icons = {
+            'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'svg': '🖼️', 'webp': '🖼️', 'ico': '🖼️', 'bmp': '🖼️',
+            'mp4': '🎬', 'avi': '🎬', 'mov': '🎬', 'mkv': '🎬', 'wmv': '🎬', 'flv': '🎬',
+            'mp3': '🎵', 'wav': '🎵', 'flac': '🎵', 'aac': '🎵', 'ogg': '🎵',
+            'pdf': '📕', 'doc': '📘', 'docx': '📘', 'xls': '📗', 'xlsx': '📗', 'ppt': '📙', 'pptx': '📙',
+            'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦', 'bz2': '📦',
+            'html': '🌐', 'htm': '🌐', 'css': '🎨', 'js': '📜', 'json': '📋', 'xml': '📋', 'yaml': '📋', 'yml': '📋',
+            'php': '🐘', 'py': '🐍', 'java': '☕', 'go': '🔵', 'rb': '💎', 'rs': '🦀', 'ts': '📘', 'vue': '💚',
+            'txt': '📄', 'md': '📝', 'log': '📃', 'ini': '⚙️', 'conf': '⚙️', 'cfg': '⚙️',
+            'sql': '🗃️', 'db': '🗃️', 'sqlite': '🗃️',
+            'exe': '⚡', 'msi': '⚡', 'dmg': '⚡', 'app': '⚡',
+            'ttf': '🔤', 'otf': '🔤', 'woff': '🔤', 'woff2': '🔤'
+          };
+          return icons[ext] || '📄';
+        };
+
+        // 自动验证
+        if (authCode.value) {
+          verifyAuth();
+        }
+
+        return {
+          authCode, authorized, verifying, domain, homeDir, maxUploadSize, usedSize,
+          currentPath, pathParts, files, loading,
+          showUploadDialog, showMkdirDialog, uploadQueue, uploading, isDragover,
+          newFolderName, creating,
+          verifyAuth, logout, openWebsite, loadFiles, navigateTo, goBack,
+          handleFileSelect, handleFileOnlySelect, handleFolderSelect, handleDrop, startUpload, createFolder, deleteFile,
+          formatSize, getFileIcon
+        };
+      }
+    });
+    
+    // 注册所有图标
+    for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+      app.component(key, component);
+    }
+    
+    app.use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>
