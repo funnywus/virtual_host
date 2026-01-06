@@ -363,7 +363,7 @@ const statusForm = reactive({
 // 获取上传页面URL
 function getUploadUrl(row) {
   if (row.ftp_auth_code) {
-    return `${window.location.origin}/upload?code=${row.ftp_auth_code}`
+    return `${window.location.origin}?code=${row.ftp_auth_code}`
   }
   return null
 }
