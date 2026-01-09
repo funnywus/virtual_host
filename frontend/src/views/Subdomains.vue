@@ -31,21 +31,21 @@
     </div>
     <el-table :data="filteredSubdomains" stripe @selection-change="onSelectionChange">
       <el-table-column type="selection" width="45" />
-      <el-table-column label="完整域名" min-width="180">
+      <el-table-column label="完整域名" min-width="120">
         <template #default="{ row }">
           <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
           <span v-else class="full-domain" style="cursor:default">{{ row.subdomain }}.{{ row.main_domain }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="record_type" label="类型" width="70" />
-      <el-table-column prop="record_value" label="记录值" min-width="130" />
-      <el-table-column prop="server_name" label="服务器" width="90" />
+      <el-table-column prop="record_value" label="记录值" min-width="66" />
+      <el-table-column prop="server_name" label="服务器" width="120" show-overflow-tooltip />
       <el-table-column label="使用状态" width="90">
         <template #default="{ row }">
           <el-tag :type="getUseStatusType(row.use_status)" size="small">{{ getUseStatusText(row.use_status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="到期时间" width="120">
+      <el-table-column label="到期时间" width="100">
         <template #default="{ row }">
           <template v-if="row.expire_at">
             <span :style="{ color: isExpired(row.expire_at) ? '#f56c6c' : getRemainingDays(row.expire_at) <= 7 ? '#e6a23c' : '#67c23a', fontSize: '12px' }">
@@ -65,7 +65,7 @@
           <span style="font-size:12px;color:#909399">{{ row.created_at }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="remark" label="备注" min-width="100">
+      <el-table-column prop="remark" label="备注" min-width="120">
         <template #default="{ row }">
           <el-tooltip v-if="row.remark" :content="row.remark" placement="top">
             <span class="remark-text">{{ row.remark }}</span>
