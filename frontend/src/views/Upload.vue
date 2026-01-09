@@ -304,11 +304,11 @@
           <div class="help-right">
             <div class="help-step">
               <div class="help-step-num">1</div>
-              <div class="help-step-text">准备网站文件夹，确保包含 index.html</div>
+              <div class="help-step-text">准备网站文件，<strong style="color:#f56c6c">首页文件名必须是 index.html</strong>（注意是小写）</div>
             </div>
             <div class="help-step">
               <div class="help-step-num">2</div>
-              <div class="help-step-text">将文件夹拖拽到上传区域</div>
+              <div class="help-step-text">将文件或文件夹拖拽到上传区域</div>
             </div>
             <div class="help-step">
               <div class="help-step-num">3</div>
@@ -316,9 +316,13 @@
             </div>
             <div class="help-step">
               <div class="help-step-num">4</div>
-              <div class="help-step-text">上传完成后点击"访问网站"</div>
+              <div class="help-step-text">上传完成后点击"访问网站"查看效果</div>
             </div>
             <div class="help-tip">
+              <el-icon><InfoFilled /></el-icon>
+              <span><strong style="white-space:nowrap">重要：</strong>首页文件名必须是 index.html，否则网站无法正常访问！</span>
+            </div>
+            <div class="help-tip" style="background:#fef0f0;color:#f56c6c">
               <el-icon><InfoFilled /></el-icon>
               支持 HTML、CSS、JS、图片等常见文件
             </div>
@@ -340,8 +344,8 @@
             <div class="quick-step">
               <div class="quick-step-num">1</div>
               <div class="quick-step-content">
-                <div class="quick-step-title">准备网站文件夹</div>
-                <div class="quick-step-desc">确保文件夹中包含 index.html 作为首页</div>
+                <div class="quick-step-title">准备网站文件</div>
+                <div class="quick-step-desc"><strong style="color:#f56c6c">首页文件名必须是 index.html</strong>（注意是小写），这是网站入口</div>
               </div>
             </div>
             <div class="quick-step">
@@ -366,9 +370,13 @@
               </div>
             </div>
           </div>
+          <div class="quick-tip" style="background:#fef0f0;color:#f56c6c">
+            <el-icon><InfoFilled /></el-icon>
+            <span><strong style="white-space:nowrap">重要：</strong>首页文件名必须是 index.html，否则网站无法正常访问！</span>
+          </div>
           <div class="quick-tip">
             <el-icon><InfoFilled /></el-icon>
-            <span>提示：支持的文件类型包括 HTML、CSS、JS、图片等常见网页文件</span>
+            <span>支持的文件类型包括 HTML、CSS、JS、图片等常见网页文件</span>
           </div>
         </div>
         <template #footer>
