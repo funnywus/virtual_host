@@ -294,13 +294,17 @@
       <!-- 文件编辑对话框 -->
       <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile">
         <div v-loading="loadingFile" class="editor-container">
-          <codemirror
-            v-model="fileContent"
-            :style="{ height: '500px' }"
-            :autofocus="true"
-            :indent-with-tab="true"
-            :tab-size="2"
-            :extensions="editorExtensions"
+          <VueMonacoEditor
+            v-model:value="fileContent"
+            :language="getMonacoLanguage(editingFile?.name)"
+            theme="vs-dark"
+            :options="{ 
+              fontSize: 14, 
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              automaticLayout: true
+            }"
+            style="height: 500px"
           />
         </div>
         <template #footer>
@@ -447,17 +451,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled } from '@element-plus/icons-vue'
-import { Codemirror } from 'vue-codemirror'
-import { javascript } from '@codemirror/lang-javascript'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { php } from '@codemirror/lang-php'
-import { python } from '@codemirror/lang-python'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { markdown } from '@codemirror/lang-markdown'
-import { oneDark } from '@codemirror/theme-one-dark'
+import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
@@ -588,28 +582,25 @@ const isPreviewableFile = (name) => {
   return previewableExts.includes(ext)
 }
 
-// 根据文件类型获取CodeMirror语言扩展
-const getLanguageExtension = (filename) => {
+// 根据文件类型获取Monaco语言
+const getMonacoLanguage = (filename) => {
   const ext = filename?.split('.').pop().toLowerCase() || ''
   const langMap = {
-    js: javascript(), jsx: javascript({ jsx: true }), ts: javascript({ typescript: true }), tsx: javascript({ jsx: true, typescript: true }),
-    html: html(), htm: html(), vue: html(),
-    css: css(), scss: css(), less: css(),
-    json: json(),
-    php: php(),
-    py: python(),
-    sql: sql(),
-    xml: xml(),
-    md: markdown(),
+    js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+    html: 'html', htm: 'html', vue: 'html',
+    css: 'css', scss: 'scss', less: 'less',
+    json: 'json',
+    php: 'php',
+    py: 'python',
+    sql: 'sql',
+    xml: 'xml',
+    md: 'markdown',
+    sh: 'shell',
+    yaml: 'yaml', yml: 'yaml',
+    txt: 'plaintext'
   }
-  return langMap[ext] || []
+  return langMap[ext] || 'plaintext'
 }
-
-// 编辑器扩展
-const editorExtensions = computed(() => {
-  const lang = getLanguageExtension(editingFile.value?.name)
-  return [oneDark, lang].filter(Boolean)
-})
 
 // 计算是否即将过期（3天内）
 const isExpiringSoon = computed(() => {

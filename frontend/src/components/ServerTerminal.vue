@@ -14,7 +14,7 @@
       </div>
       <div ref="terminalRef" class="terminal-wrapper"></div>
       <div class="command-input">
-        <el-input v-model="command" placeholder="输入命令后按回车执行" @keyup.enter="executeCommand" :disabled="!connected || executing">
+        <el-input ref="commandInputRef" v-model="command" placeholder="输入命令后按回车执行" @keyup.enter="executeCommand" :disabled="!connected || executing">
           <template #prepend>$</template>
           <template #append>
             <el-button @click="executeCommand" :loading="executing" :disabled="!connected">执行</el-button>
@@ -38,6 +38,7 @@ const emit = defineEmits(['update:modelValue'])
 
 const visible = ref(false)
 const terminalRef = ref(null)
+const commandInputRef = ref(null)
 const connected = ref(false)
 const connecting = ref(false)
 const executing = ref(false)
@@ -120,6 +121,9 @@ async function connect() {
       terminal.writeln('')
       terminal.writeln('\x1b[36m提示: 在下方输入框输入命令，按回车执行\x1b[0m')
       terminal.writeln('')
+      // 连接成功后自动聚焦输入框
+      await nextTick()
+      commandInputRef.value?.focus()
     } else {
       connected.value = false
       terminal.writeln(`\x1b[31m✗ 连接失败: ${res.message}\x1b[0m`)
@@ -159,6 +163,9 @@ async function executeCommand() {
     terminal.writeln('')
   } finally {
     executing.value = false
+    // 执行完后自动聚焦输入框
+    await nextTick()
+    commandInputRef.value?.focus()
   }
 }
 
