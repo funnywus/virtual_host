@@ -1,35 +1,38 @@
 <template>
-  <div class="admin-layout">
+  <div class="admin-layout" :class="{ collapsed: isCollapsed }">
     <div class="sidebar">
       <div class="sidebar-header">
         <span class="logo-icon">🚀</span>
-        <span class="logo-text">虚拟主机管理</span>
+        <span class="logo-text" v-show="!isCollapsed">虚拟主机管理</span>
       </div>
       <div class="sidebar-menu">
         <router-link to="/admin-jm/subdomains" class="menu-item" :class="{ active: $route.path === '/admin-jm/subdomains' }">
-          <span class="menu-icon">📁</span>子域名管理
+          <span class="menu-icon">📁</span><span class="menu-text" v-show="!isCollapsed">子域名管理</span>
         </router-link>
         <router-link to="/admin-jm/domains" class="menu-item" :class="{ active: $route.path === '/admin-jm/domains' }">
-          <span class="menu-icon">🌐</span>域名管理
+          <span class="menu-icon">🌐</span><span class="menu-text" v-show="!isCollapsed">域名管理</span>
         </router-link>
         <router-link to="/admin-jm/servers" class="menu-item" :class="{ active: $route.path === '/admin-jm/servers' }">
-          <span class="menu-icon">🖥️</span>服务器管理
+          <span class="menu-icon">🖥️</span><span class="menu-text" v-show="!isCollapsed">服务器管理</span>
         </router-link>
         <router-link to="/admin-jm/ftp" class="menu-item" :class="{ active: $route.path === '/admin-jm/ftp' }">
-          <span class="menu-icon">📤</span>FTP账号
+          <span class="menu-icon">📤</span><span class="menu-text" v-show="!isCollapsed">FTP账号</span>
         </router-link>
         <router-link to="/admin-jm/dns-platforms" class="menu-item" :class="{ active: $route.path === '/admin-jm/dns-platforms' }">
-          <span class="menu-icon">⚙️</span>DNS平台
+          <span class="menu-icon">⚙️</span><span class="menu-text" v-show="!isCollapsed">DNS平台</span>
         </router-link>
         <router-link to="/admin-jm/tags" class="menu-item" :class="{ active: $route.path === '/admin-jm/tags' }">
-          <span class="menu-icon">🏷️</span>标签管理
+          <span class="menu-icon">🏷️</span><span class="menu-text" v-show="!isCollapsed">标签管理</span>
         </router-link>
         <router-link v-if="userStore.isAdmin" to="/admin-jm/users" class="menu-item" :class="{ active: $route.path === '/admin-jm/users' }">
-          <span class="menu-icon">👥</span>用户管理
+          <span class="menu-icon">👥</span><span class="menu-text" v-show="!isCollapsed">用户管理</span>
         </router-link>
       </div>
       <div class="sidebar-footer">
-        <div class="version">v1.0.0</div>
+        <div class="collapse-btn" @click="toggleCollapse">
+          <span>{{ isCollapsed ? '▶' : '◀' }}</span>
+        </div>
+        <div class="version" v-show="!isCollapsed">v1.0.0</div>
       </div>
     </div>
     <div class="main-area">
@@ -55,12 +58,18 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { SwitchButton } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
+const isCollapsed = ref(false)
+
+function toggleCollapse() {
+  isCollapsed.value = !isCollapsed.value
+}
 
 function handleLogout() {
   userStore.logout()
@@ -82,6 +91,11 @@ function handleLogout() {
   display: flex;
   flex-direction: column;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
+  transition: width 0.3s ease;
+}
+
+.admin-layout.collapsed .sidebar {
+  width: 70px;
 }
 
 .sidebar-header {
@@ -90,6 +104,13 @@ function handleLogout() {
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.admin-layout.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 25px 10px;
 }
 
 .logo-icon {
@@ -117,12 +138,23 @@ function handleLogout() {
   text-decoration: none;
   transition: all 0.3s ease;
   font-size: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.admin-layout.collapsed .menu-item {
+  justify-content: center;
+  padding: 14px 10px;
 }
 
 .menu-item:hover {
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
   transform: translateX(5px);
+}
+
+.admin-layout.collapsed .menu-item:hover {
+  transform: none;
 }
 
 .menu-item.active {
@@ -135,11 +167,33 @@ function handleLogout() {
 .menu-icon {
   margin-right: 12px;
   font-size: 18px;
+  flex-shrink: 0;
+}
+
+.admin-layout.collapsed .menu-icon {
+  margin-right: 0;
 }
 
 .sidebar-footer {
   padding: 15px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+  transition: all 0.3s;
+  margin-bottom: 10px;
+}
+
+.collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
 }
 
 .version {
