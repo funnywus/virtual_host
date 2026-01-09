@@ -68,9 +68,9 @@
       <el-table-column prop="remark" label="备注" min-width="120">
         <template #default="{ row }">
           <el-tooltip v-if="row.remark" :content="row.remark" placement="top">
-            <span class="remark-text">{{ row.remark }}</span>
+            <span class="remark-text" @dblclick="openRemarkDialog(row)">{{ row.remark }}</span>
           </el-tooltip>
-          <span v-else style="color:#999">-</span>
+          <span v-else style="color:#999;cursor:pointer" @dblclick="openRemarkDialog(row)">-</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
@@ -99,7 +99,7 @@
       <el-pagination
         :current-page="currentPage"
         :page-size="pageSize"
-        :page-sizes="[20, 50, 100]"
+        :page-sizes="[10, 20, 50, 100]"
         :total="dataStore.subdomainsTotal"
         layout="total, sizes, prev, pager, next, jumper"
         @size-change="onSizeChange"
@@ -366,7 +366,7 @@ const currentSubdomain = ref(null)
 const batchResults = ref([])
 const searchKeyword = ref('')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const selectedRows = ref([])
 
 const statusForm = reactive({
@@ -813,6 +813,10 @@ function handleShare(row) {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.remark-text:hover {
+  color: #409eff;
 }
 
 :deep(.el-table) {

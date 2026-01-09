@@ -155,6 +155,16 @@ body {
   overflow: hidden !important;
 }
 
+.el-overlay-dialog {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.el-dialog {
+  margin: 0 !important;
+}
+
 .el-dialog__header {
   background: linear-gradient(135deg, #f8f9fa 0%, #fff 100%) !important;
   border-bottom: 1px solid #f0f0f0 !important;

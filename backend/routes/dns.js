@@ -94,6 +94,125 @@ router.get('/domains', async (req, res) => {
   }
 });
 
+// 从DNS平台获取域名的解析记录列表
+router.get('/domains/:id/dns-records', async (req, res) => {
+  try {
+    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
+    
+    if (!domain) {
+      return res.status(404).json({ error: '域名不存在' });
+    }
+    
+    if (!domain.access_key || !domain.secret_key) {
+      return res.status(400).json({ error: '该域名未配置DNS平台' });
+    }
+    
+    const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+    
+    let records = [];
+    if (domain.platform === 'tencent') {
+      const result = await dns.request('DescribeRecordList', { Domain: domain.domain, Limit: 500 });
+      records = (result.RecordList || []).map(r => ({
+        id: r.RecordId,
+        name: r.Name,
+        type: r.Type,
+        value: r.Value,
+        ttl: r.TTL,
+        status: r.Status === 'ENABLE' ? 'active' : 'disabled',
+        line: r.Line
+      }));
+    } else {
+      const result = await dns.getRecords(domain.domain);
+      records = (result.DomainRecords?.Record || []).map(r => ({
+        id: r.RecordId,
+        name: r.RR,
+        type: r.Type,
+        value: r.Value,
+        ttl: r.TTL,
+        status: r.Status === 'ENABLE' ? 'active' : 'disabled',
+        line: r.Line
+      }));
+    }
+    
+    res.json({ domain: domain.domain, platform: domain.platform, records });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 添加DNS记录到平台
+router.post('/domains/:id/dns-records', async (req, res) => {
+  try {
+    const { name, type, value, ttl } = req.body;
+    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
+    
+    if (!domain || !domain.access_key) {
+      return res.status(400).json({ error: '域名未配置DNS平台' });
+    }
+    
+    const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+    const recordId = await dns.addRecord(domain.domain, name, value, type || 'A', ttl || 600);
+    
+    res.json({ success: true, recordId, message: '添加成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 删除DNS平台上的记录
+router.delete('/domains/:id/dns-records/:recordId', async (req, res) => {
+  try {
+    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
+    
+    if (!domain || !domain.access_key) {
+      return res.status(400).json({ error: '域名未配置DNS平台' });
+    }
+    
+    const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+    
+    if (domain.platform === 'tencent') {
+      await dns.deleteRecord(domain.domain, req.params.recordId);
+    } else {
+      await dns.deleteRecord(req.params.recordId);
+    }
+    
+    res.json({ success: true, message: '删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 修改DNS记录状态（启用/停用）
+router.put('/domains/:id/dns-records/:recordId/status', async (req, res) => {
+  try {
+    const { status } = req.body; // 'ENABLE' or 'DISABLE'
+    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
+    
+    if (!domain || !domain.access_key) {
+      return res.status(400).json({ error: '域名未配置DNS平台' });
+    }
+    
+    const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+    
+    if (domain.platform === 'tencent') {
+      await dns.request('ModifyRecordStatus', {
+        Domain: domain.domain,
+        RecordId: parseInt(req.params.recordId),
+        Status: status
+      });
+    } else {
+      await dns.request('SetDomainRecordStatus', {
+        RecordId: req.params.recordId,
+        Status: status
+      });
+    }
+    
+    res.json({ success: true, message: status === 'ENABLE' ? '已启用' : '已停用' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 添加主域名
 router.post('/domains', async (req, res) => {
   try {
