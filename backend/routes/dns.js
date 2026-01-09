@@ -631,6 +631,21 @@ router.post('/subdomains', async (req, res) => {
   }
 });
 
+// 只更新备注（不修改DNS解析）
+router.put('/subdomains/:id/remark', async (req, res) => {
+  try {
+    const { remark } = req.body;
+    const sub = await db.get('SELECT id FROM subdomains WHERE id = ?', [req.params.id]);
+    if (!sub) {
+      return res.status(404).json({ error: 'Subdomain not found' });
+    }
+    await db.run('UPDATE subdomains SET remark = ? WHERE id = ?', [remark || '', req.params.id]);
+    res.json({ message: 'Remark updated' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 更新子域名
 router.put('/subdomains/:id', async (req, res) => {
   try {

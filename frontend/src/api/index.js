@@ -20,11 +20,17 @@ api.interceptors.response.use(
   response => response.data,
   error => {
     const msg = error.response?.data?.error || error.message
-    ElMessage.error(msg)
-    if (error.response?.status === 401) {
+    const status = error.response?.status
+    
+    // 登录接口的 401 不跳转，只提示错误
+    const isLoginRequest = error.config?.url?.includes('/auth/login')
+    
+    if (status === 401 && !isLoginRequest) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/login'
+      window.location.href = '/admin-jm/login'
+    } else {
+      ElMessage.error(msg)
     }
     return Promise.reject(new Error(msg))
   }

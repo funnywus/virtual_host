@@ -8,6 +8,10 @@ const routes = [
     component: () => import('@/views/Upload.vue')
   },
   {
+    path: '/login',
+    redirect: '/admin-jm/login'
+  },
+  {
     path: '/admin-jm/login',
     name: 'Login',
     component: () => import('@/views/Login.vue')

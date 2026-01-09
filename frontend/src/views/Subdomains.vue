@@ -73,13 +73,15 @@
           <span v-else style="color:#999">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
+          <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
           <el-button type="success" size="small" @click="openNginxDialog(row)">Nginx</el-button>
           <el-dropdown trigger="click" style="margin-left:8px">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
                 <el-dropdown-item @click="openStatusDialog(row)">状态/续费</el-dropdown-item>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
                 <el-dropdown-item v-if="row.use_status !== 'disabled'" @click="handleDisable(row)">停用</el-dropdown-item>
@@ -296,6 +298,22 @@
       </template>
     </el-dialog>
 
+    <!-- 修改备注对话框 -->
+    <el-dialog v-model="remarkDialogVisible" title="修改备注" width="400px">
+      <el-form :model="remarkForm" label-width="80px">
+        <el-form-item label="域名">
+          <span class="full-domain">{{ remarkForm.fullDomain }}</span>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="remarkForm.remark" type="textarea" :rows="3" placeholder="请输入备注信息" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="remarkDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleRemarkSave" :loading="remarkSaving">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 批量续费对话框 -->
     <el-dialog v-model="batchRenewDialogVisible" title="批量续费" width="400px">
       <el-form label-width="100px">
@@ -459,6 +477,34 @@ function onSelectionChange(rows) {
 const batchRenewDialogVisible = ref(false)
 const batchRenewDuration = ref(null)
 const batchRenewing = ref(false)
+
+// 备注相关
+const remarkDialogVisible = ref(false)
+const remarkSaving = ref(false)
+const remarkForm = reactive({
+  id: null,
+  fullDomain: '',
+  remark: ''
+})
+
+function openRemarkDialog(row) {
+  remarkForm.id = row.id
+  remarkForm.fullDomain = `${row.subdomain}.${row.main_domain}`
+  remarkForm.remark = row.remark || ''
+  remarkDialogVisible.value = true
+}
+
+async function handleRemarkSave() {
+  remarkSaving.value = true
+  try {
+    await api.put(`/dns/subdomains/${remarkForm.id}/remark`, { remark: remarkForm.remark })
+    ElMessage.success('备注已更新')
+    remarkDialogVisible.value = false
+    loadData()
+  } finally {
+    remarkSaving.value = false
+  }
+}
 
 async function batchSetStatus(status) {
   if (selectedRows.value.length === 0) return
@@ -697,6 +743,25 @@ async function handleBatchCreate() {
   } finally {
     batchCreating.value = false
   }
+}
+
+// 分享功能
+function handleShare(row) {
+  const uploadUrl = `${window.location.origin}?code=${row.ftp_auth_code}`
+  const shareText = `上传地址：${uploadUrl}\n授权码：${row.ftp_auth_code}`
+  
+  navigator.clipboard.writeText(shareText).then(() => {
+    ElMessage.success('分享信息已复制到剪贴板')
+  }).catch(() => {
+    // 降级方案
+    const textarea = document.createElement('textarea')
+    textarea.value = shareText
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('分享信息已复制到剪贴板')
+  })
 }
 </script>
 
