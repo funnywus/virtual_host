@@ -319,6 +319,43 @@ router.post('/mkdir', async (req, res) => {
   }
 });
 
+// 创建文件
+router.post('/create-file', async (req, res) => {
+  try {
+    const { auth_code, path: dirPath, name, content } = req.body;
+    
+    const ftp = await findFtpByAuthCode(auth_code);
+    
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+    
+    const sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+    
+    const targetFile = dirPath ? path.join(ftp.home_dir, dirPath, name) : path.join(ftp.home_dir, name);
+    if (!targetFile.startsWith(ftp.home_dir)) {
+      return res.status(403).json({ error: '无权访问该目录' });
+    }
+    
+    // 使用 cat 写入文件内容，转义特殊字符
+    const escapedContent = (content || '').replace(/'/g, "'\\''");
+    const result = await sshService.exec(`cat > "${targetFile}" << 'EOFCONTENT'\n${escapedContent}\nEOFCONTENT`);
+    
+    // 设置权限 644 和所有者 www
+    await sshService.exec(`chmod 644 "${targetFile}"`);
+    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www "${targetFile}" 2>/dev/null`);
+    
+    res.json({ success: true, message: '创建成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 删除文件/目录
 router.post('/delete', async (req, res) => {
   try {

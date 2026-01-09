@@ -93,6 +93,7 @@
             </el-radio-group>
             <el-button type="primary" @click="showUploadDialog = true"><el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件</el-button>
             <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
+            <el-button @click="showNewFileDialog = true"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
             <el-button @click="loadFiles" :loading="loading"><el-icon style="margin-right:5px"><Refresh /></el-icon> 刷新</el-button>
           </div>
         </div>
@@ -118,10 +119,14 @@
               </div>
               <div class="file-date">{{ formatDate(file.date) }}</div>
               <div class="file-actions" @click.stop>
+                <el-button v-if="file.type === 'file'" type="primary" size="small" @click="openFileUrl(file)" style="margin-right:8px">访问</el-button>
                 <el-dropdown trigger="click">
                   <el-button size="small">操作<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
+                      <el-dropdown-item v-if="file.type === 'file'" @click="openFileUrl(file)">
+                        <el-icon><Link /></el-icon>访问地址
+                      </el-dropdown-item>
                       <el-dropdown-item v-if="file.type === 'file' && isEditableFile(file.name)" @click="openFile(file)">
                         <el-icon><Edit /></el-icon>编辑
                       </el-dropdown-item>
@@ -161,6 +166,9 @@
                   <el-button size="small" circle @click.stop><el-icon><MoreFilled /></el-icon></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
+                      <el-dropdown-item v-if="file.type === 'file'" @click="openFileUrl(file)">
+                        <el-icon><Link /></el-icon>访问地址
+                      </el-dropdown-item>
                       <el-dropdown-item v-if="file.type === 'file' && isEditableFile(file.name)" @click="openFile(file)">
                         <el-icon><Edit /></el-icon>编辑
                       </el-dropdown-item>
@@ -251,6 +259,24 @@
         <template #footer>
           <el-button @click="showMkdirDialog = false">取消</el-button>
           <el-button type="primary" @click="createFolder" :loading="creating">创建</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 新建文件对话框 -->
+      <el-dialog v-model="showNewFileDialog" title="新建文件" width="500px" :fullscreen="isMobile">
+        <el-form label-width="80px">
+          <el-form-item label="文件名">
+            <el-input v-model="newFileName" placeholder="例如: index.html" size="large">
+              <template #prefix><el-icon><Document /></el-icon></template>
+            </el-input>
+          </el-form-item>
+          <el-form-item label="文件内容">
+            <el-input v-model="newFileContent" type="textarea" :rows="8" placeholder="可选，留空创建空文件" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showNewFileDialog = false">取消</el-button>
+          <el-button type="primary" @click="createFile" :loading="creatingFile">创建</el-button>
         </template>
       </el-dialog>
 
@@ -448,7 +474,7 @@ const isMobile = computed(() => windowWidth.value < 768)
 const currentPath = ref('')
 const files = ref([])
 const loading = ref(false)
-const viewMode = ref('grid')
+const viewMode = ref('list')
 
 // 多选相关
 const selectedFiles = ref([])
@@ -602,12 +628,15 @@ const showRenewAlert = computed(() => isExpiringSoon.value || isExpired.value)
 
 const showUploadDialog = ref(false)
 const showMkdirDialog = ref(false)
+const showNewFileDialog = ref(false)
+const newFileName = ref('')
+const newFileContent = ref('')
+const creatingFile = ref(false)
 const showTutorialDialog = ref(false)
 const showQuickTutorial = ref(false)
 const showContactDialog = ref(false)
 const showRenameDialog = ref(false)
 const renamingFile = ref(null)
-const newFileName = ref('')
 const renaming = ref(false)
 const uploadQueue = ref([])
 const uploading = ref(false)
@@ -650,6 +679,10 @@ const verifyAuth = async () => {
 
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
 const openWebsite = () => window.open(`http://${domain.value}`, '_blank')
+const openFileUrl = (file) => {
+  const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+  window.open(`http://${domain.value}/${filePath}`, '_blank')
+}
 const copyWechat = () => {
   navigator.clipboard.writeText('feiyu3305')
   ElMessage.success('微信号已复制')
@@ -756,6 +789,20 @@ const createFolder = async () => {
   try { await api('/mkdir', { path: currentPath.value, name: newFolderName.value }); ElMessage.success('创建成功'); showMkdirDialog.value = false; newFolderName.value = ''; loadFiles() }
   catch (e) { ElMessage.error(e.message) }
   finally { creating.value = false }
+}
+
+const createFile = async () => {
+  if (!newFileName.value) { ElMessage.warning('请输入文件名'); return }
+  creatingFile.value = true
+  try {
+    await api('/create-file', { path: currentPath.value, name: newFileName.value, content: newFileContent.value || '' })
+    ElMessage.success('创建成功')
+    showNewFileDialog.value = false
+    newFileName.value = ''
+    newFileContent.value = ''
+    loadFiles()
+  } catch (e) { ElMessage.error(e.message) }
+  finally { creatingFile.value = false }
 }
 
 const deleteFile = async (file) => {
