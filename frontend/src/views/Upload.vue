@@ -236,8 +236,11 @@
                 <div v-if="item.relativePath" style="font-size:11px;color:#909399;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.relativePath }}</div>
               </div>
               <span style="color:#909399;font-size:12px;margin:0 10px;white-space:nowrap">{{ formatSize(item.file.size) }}</span>
+              <div v-if="item.status === 'uploading'" style="flex:1;max-width:150px;margin:0 10px">
+                <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" />
+              </div>
               <el-tag :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
-                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? '上传中' : '等待' }}
+                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (item.progress || 0) + '%' : '等待' }}
               </el-tag>
               <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px"><el-icon><Close /></el-icon></el-button>
             </div>
@@ -703,7 +706,7 @@ const handleUploadCommand = (cmd) => {
 const addFilesToQueue = (fileList, keepPath = false) => {
   const newFiles = Array.from(fileList).map(f => {
     const relativePath = keepPath && f.webkitRelativePath ? f.webkitRelativePath : f.name
-    return { file: f, name: f.name, relativePath: relativePath !== f.name ? relativePath : '', uploadPath: relativePath, status: 'pending' }
+    return { file: f, name: f.name, relativePath: relativePath !== f.name ? relativePath : '', uploadPath: relativePath, status: 'pending', progress: 0 }
   })
   uploadQueue.value.push(...newFiles)
 }
@@ -752,17 +755,50 @@ const startUpload = async () => {
   for (const item of uploadQueue.value) {
     if (item.status !== 'pending') continue
     item.status = 'uploading'
+    item.progress = 0
     try {
-      const content = await fileToBase64(item.file)
       let uploadDir = currentPath.value
       const filePath = item.uploadPath || item.name
       const pathParts = filePath.split('/')
       const fileName = pathParts.pop()
       if (pathParts.length > 0) uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/')
-      await api('/upload', { path: uploadDir, filename: fileName, content, filesize: item.file.size })
+      
+      // 使用 FormData 上传
+      const formData = new FormData()
+      formData.append('auth_code', authCode.value)
+      formData.append('path', uploadDir)
+      formData.append('filename', fileName)
+      formData.append('file', item.file)
+      
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            item.progress = Math.round((e.loaded / e.total) * 100)
+          }
+        })
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 200) {
+            const res = JSON.parse(xhr.responseText)
+            if (res.error) reject(new Error(res.error))
+            else resolve(res)
+          } else {
+            reject(new Error('上传失败'))
+          }
+        })
+        xhr.addEventListener('error', () => reject(new Error('网络错误')))
+        xhr.addEventListener('abort', () => reject(new Error('上传取消')))
+        xhr.open('POST', '/api/upload/upload-file')
+        xhr.send(formData)
+      })
+      
       item.status = 'done'
+      item.progress = 100
       usedSize.value += item.file.size
-    } catch (e) { item.status = 'error' }
+    } catch (e) { 
+      item.status = 'error'
+      console.error('Upload error:', e)
+    }
   }
   uploading.value = false
   loadFiles()

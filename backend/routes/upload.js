@@ -1,10 +1,18 @@
+
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const multer = require('multer');
 const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
 
 const router = express.Router();
+
+// 配置 multer 用于处理文件上传（存储在内存中）
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 * 1024 } // 1GB 限制
+});
 
 // 计算域名的授权码 (MD5完整32位小写)
 function getDomainAuthCode(domain) {
@@ -24,7 +32,7 @@ router.post('/auth', async (req, res) => {
     const ftpAccounts = await db.all(`
       SELECT f.*, s.id as subdomain_id, s.subdomain, s.expire_at, s.use_status, s.activated_at, s.duration_days,
              d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
              sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
@@ -100,7 +108,7 @@ router.post('/auth', async (req, res) => {
 async function findFtpByAuthCode(auth_code) {
   const ftpAccounts = await db.all(`
     SELECT f.*, s.subdomain, d.domain as main_domain,
-           CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain,
+           CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
            sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
     FROM ftp_accounts f
     LEFT JOIN subdomains s ON f.subdomain_id = s.id
@@ -281,6 +289,80 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
   return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
 }
+
+// 上传文件（FormData 方式，支持大文件和进度）
+router.post('/upload-file', upload.single('file'), async (req, res) => {
+  try {
+    const { auth_code, path: dirPath, filename } = req.body;
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ error: '未选择文件' });
+    }
+    
+    const ftp = await findFtpByAuthCode(auth_code);
+    
+    if (!ftp) {
+      return res.status(401).json({ error: '授权码无效' });
+    }
+    
+    if (!ftp.ip) {
+      return res.status(400).json({ error: '服务器未配置' });
+    }
+
+    const sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+
+    // 检查空间大小限制
+    const maxSize = ftp.max_upload_size || 524288000; // 默认500MB
+    const actualFileSize = file.size;
+    
+    // 获取当前目录总大小
+    const sizeResult = await sshService.exec(`du -sb "${ftp.home_dir}" 2>/dev/null | cut -f1`);
+    const currentSize = parseInt(sizeResult.output?.trim()) || 0;
+    
+    if (currentSize + actualFileSize > maxSize) {
+      return res.status(400).json({ 
+        error: `空间不足，已用 ${formatSize(currentSize)}，限制 ${formatSize(maxSize)}`,
+        current_size: currentSize,
+        max_size: maxSize
+      });
+    }
+    
+    // 确保路径在home_dir内
+    const targetDir = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
+    if (!targetDir.startsWith(ftp.home_dir)) {
+      return res.status(403).json({ error: '无权访问该目录' });
+    }
+    
+    const targetFile = path.join(targetDir, filename);
+    
+    // 先创建目录（如果不存在）
+    await sshService.exec(`mkdir -p "${targetDir}"`);
+    
+    // 使用SFTP上传文件（支持大文件）
+    try {
+      await sshService.uploadFile(file.buffer, targetFile);
+    } catch (uploadErr) {
+      return res.status(500).json({ error: '上传失败: ' + uploadErr.message });
+    }
+    
+    // 设置权限 644 和所有者 www
+    await sshService.exec(`chmod 644 "${targetFile}"`);
+    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www "${targetFile}" 2>/dev/null`);
+    // 同时设置目录权限
+    await sshService.exec(`chmod 755 "${targetDir}"`);
+    await sshService.exec(`chown www:www "${targetDir}" 2>/dev/null || chown www "${targetDir}" 2>/dev/null`);
+    
+    res.json({ success: true, message: '上传成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // 创建目录
 router.post('/mkdir', async (req, res) => {

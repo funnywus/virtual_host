@@ -27,9 +27,16 @@ const formatTime = (date = new Date()) => {
 const app = express();
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '200mb' }));
-app.use(bodyParser.urlencoded({ limit: '200mb', extended: true }));
+app.use(bodyParser.json({ limit: '500mb' }));
+app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// 设置超时时间为 10 分钟（支持大文件上传）
+app.use((req, res, next) => {
+  req.setTimeout(600000); // 10 分钟
+  res.setTimeout(600000);
+  next();
+});
 
 // 初始化数据库
 db.init();

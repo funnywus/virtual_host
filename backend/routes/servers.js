@@ -69,7 +69,7 @@ router.get('/:id/domains', async (req, res) => {
   try {
     const domains = await db.all(`
       SELECT s.subdomain, d.domain as main_domain, s.record_type, s.record_value, s.status,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id
       WHERE s.server_id = ?
@@ -97,7 +97,7 @@ router.post('/', async (req, res) => {
 // 更新服务器
 router.put('/:id', async (req, res) => {
   try {
-    const { name, ip, port, username, password, tags } = req.body;
+    const { name, ip, port, username, password, tags, nginx_path, ftp_path } = req.body;
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在' });
@@ -107,8 +107,8 @@ router.put('/:id', async (req, res) => {
     const newPassword = password || server.password;
     
     await db.run(
-      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ? WHERE id = ?',
-      [name, ip, port || 22, username, newPassword, tags || '', req.params.id]
+      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ? WHERE id = ?',
+      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', req.params.id]
     );
     res.json({ message: '更新成功' });
   } catch (err) {
@@ -283,6 +283,136 @@ router.post('/:id/exec', async (req, res) => {
       output: result.output || '', 
       error: result.error || '' 
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 检查软件安装状态
+router.get('/:id/software-status', async (req, res) => {
+  try {
+    const sshService = await getSshService(req.params.id);
+    
+    // 检查 nginx 及配置路径
+    const nginxResult = await sshService.exec('which nginx 2>/dev/null && nginx -v 2>&1 | head -1');
+    const nginxInstalled = nginxResult.output?.includes('nginx');
+    let nginxConfigPath = '/etc/nginx/nginx.conf';
+    if (nginxInstalled) {
+      const configResult = await sshService.exec('nginx -t 2>&1 | grep -oP "(?<=configuration file )\\S+" | head -1');
+      if (configResult.output?.trim()) {
+        nginxConfigPath = configResult.output.trim();
+      }
+    }
+    
+    // 检查 vsftpd 及配置路径
+    const ftpResult = await sshService.exec('which vsftpd 2>/dev/null && vsftpd -v 2>&1 | head -1');
+    const ftpInstalled = ftpResult.output?.includes('vsftpd');
+    let ftpConfigPath = '/etc/vsftpd.conf';
+    if (ftpInstalled) {
+      // 尝试多个常见路径
+      const configCheck = await sshService.exec('ls /etc/vsftpd.conf /etc/vsftpd/vsftpd.conf 2>/dev/null | head -1');
+      if (configCheck.output?.trim()) {
+        ftpConfigPath = configCheck.output.trim();
+      }
+    }
+    
+    // 检查 pure-ftpd
+    const pureFtpResult = await sshService.exec('which pure-ftpd 2>/dev/null');
+    const pureFtpInstalled = pureFtpResult.output?.includes('pure-ftpd');
+    
+    res.json({
+      nginx: { 
+        installed: nginxInstalled, 
+        version: nginxInstalled ? nginxResult.output.trim() : '',
+        configPath: nginxConfigPath
+      },
+      vsftpd: { 
+        installed: ftpInstalled, 
+        version: ftpInstalled ? ftpResult.output.trim() : '',
+        configPath: ftpConfigPath
+      },
+      pureFtpd: { installed: pureFtpInstalled }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 安装 Nginx
+router.post('/:id/install-nginx', async (req, res) => {
+  try {
+    const sshService = await getSshService(req.params.id);
+    
+    // 检测系统类型
+    const osResult = await sshService.exec('cat /etc/os-release 2>/dev/null | grep -i "^ID=" | cut -d= -f2 | tr -d \'"\'');
+    const os = osResult.output?.trim().toLowerCase();
+    
+    let installCmd = '';
+    if (os === 'ubuntu' || os === 'debian') {
+      installCmd = 'apt-get update && apt-get install -y nginx';
+    } else if (os === 'centos' || os === 'rhel' || os === 'fedora' || os === 'rocky' || os === 'almalinux') {
+      installCmd = 'yum install -y nginx || dnf install -y nginx';
+    } else {
+      return res.status(400).json({ error: `不支持的系统: ${os}` });
+    }
+    
+    const result = await sshService.exec(installCmd);
+    
+    // 启动并设置开机自启
+    await sshService.exec('systemctl start nginx && systemctl enable nginx');
+    
+    res.json({ success: true, message: 'Nginx 安装成功', output: result.output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 安装 FTP (vsftpd)
+router.post('/:id/install-ftp', async (req, res) => {
+  try {
+    const sshService = await getSshService(req.params.id);
+    
+    // 检测系统类型
+    const osResult = await sshService.exec('cat /etc/os-release 2>/dev/null | grep -i "^ID=" | cut -d= -f2 | tr -d \'"\'');
+    const os = osResult.output?.trim().toLowerCase();
+    
+    let installCmd = '';
+    if (os === 'ubuntu' || os === 'debian') {
+      installCmd = 'apt-get update && apt-get install -y vsftpd';
+    } else if (os === 'centos' || os === 'rhel' || os === 'fedora' || os === 'rocky' || os === 'almalinux') {
+      installCmd = 'yum install -y vsftpd || dnf install -y vsftpd';
+    } else {
+      return res.status(400).json({ error: `不支持的系统: ${os}` });
+    }
+    
+    const result = await sshService.exec(installCmd);
+    
+    // 启动并设置开机自启
+    await sshService.exec('systemctl start vsftpd && systemctl enable vsftpd');
+    
+    res.json({ success: true, message: 'FTP (vsftpd) 安装成功', output: result.output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 重启 Nginx
+router.post('/:id/restart-nginx', async (req, res) => {
+  try {
+    const sshService = await getSshService(req.params.id);
+    const result = await sshService.exec('nginx -t && systemctl reload nginx');
+    res.json({ success: result.success, message: result.success ? 'Nginx 重启成功' : result.output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 重启 FTP
+router.post('/:id/restart-ftp', async (req, res) => {
+  try {
+    const sshService = await getSshService(req.params.id);
+    const result = await sshService.exec('systemctl restart vsftpd');
+    res.json({ success: result.success, message: result.success ? 'FTP 重启成功' : result.output });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

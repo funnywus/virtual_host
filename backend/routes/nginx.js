@@ -24,7 +24,7 @@ router.post('/preview', async (req, res) => {
     
     const sub = await db.get(`
       SELECT s.subdomain, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id
       WHERE s.id = ?
@@ -68,7 +68,7 @@ router.post('/sync/:subdomain_id', async (req, res) => {
   try {
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
              sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id
@@ -158,7 +158,7 @@ router.get('/fetch/:subdomain_id', async (req, res) => {
   try {
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
              sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id
@@ -195,7 +195,7 @@ router.delete('/remove/:subdomain_id', async (req, res) => {
   try {
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
              sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id

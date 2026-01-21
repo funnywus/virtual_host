@@ -33,10 +33,30 @@ function generateUsername(subdomain, domain) {
 // 获取FTP账号列表
 router.get('/', async (req, res) => {
   try {
+    const { page = 1, pageSize = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(pageSize);
+    
     const userId = req.user.role === 'admin' ? null : req.user.id;
+    
+    // 获取总数
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM ftp_accounts f
+      LEFT JOIN subdomains s ON f.subdomain_id = s.id
+      LEFT JOIN domains d ON s.domain_id = d.id
+    `;
+    
+    if (userId) {
+      countSql += ' WHERE d.user_id = ?';
+    }
+    
+    const countResult = await db.get(countSql, userId ? [userId] : []);
+    const total = countResult?.total || 0;
+    
+    // 获取分页数据
     let sql = `
       SELECT f.*, s.subdomain, d.domain as main_domain, sv.name as server_name, sv.ip as server_ip,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
@@ -47,16 +67,22 @@ router.get('/', async (req, res) => {
       sql += ' WHERE d.user_id = ?';
     }
     
-    sql += ' ORDER BY f.created_at DESC';
+    sql += ' ORDER BY f.created_at DESC LIMIT ? OFFSET ?';
     
-    const accounts = await db.all(sql, userId ? [userId] : []);
+    const params = userId ? [userId, parseInt(pageSize), offset] : [parseInt(pageSize), offset];
+    const accounts = await db.all(sql, params);
     
     // 动态计算授权码 (域名MD5前8位)
     accounts.forEach(acc => {
       acc.auth_code = generateAuthCode(acc.full_domain);
     });
     
-    res.json(accounts);
+    res.json({ 
+      list: accounts, 
+      total, 
+      page: parseInt(page), 
+      pageSize: parseInt(pageSize) 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -204,7 +230,7 @@ router.post('/:id/reset-auth-code', async (req, res) => {
     // 获取域名信息
     const ftp = await db.get(`
       SELECT f.*, s.subdomain, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
@@ -312,7 +338,7 @@ router.get('/available-subdomains', async (req, res) => {
     const userId = req.user.role === 'admin' ? null : req.user.id;
     let sql = `
       SELECT s.id, s.subdomain, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE s.subdomain || '.' || d.domain END as full_domain
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM subdomains s
       LEFT JOIN domains d ON s.domain_id = d.id
       LEFT JOIN ftp_accounts f ON s.id = f.subdomain_id

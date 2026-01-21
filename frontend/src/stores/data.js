@@ -9,6 +9,7 @@ export const useDataStore = defineStore('data', () => {
   const servers = ref([])
   const aliyunConfigs = ref([])
   const ftpAccounts = ref([])
+  const ftpAccountsTotal = ref(0)
   const users = ref([])
   const serverTags = ref([])
 
@@ -33,8 +34,11 @@ export const useDataStore = defineStore('data', () => {
     aliyunConfigs.value = await api.get('/dns/aliyun-configs')
   }
 
-  async function loadFtpAccounts() {
-    ftpAccounts.value = await api.get('/ftp')
+  async function loadFtpAccounts(page = 1, pageSize = 20) {
+    const res = await api.get(`/ftp?page=${page}&pageSize=${pageSize}`)
+    ftpAccounts.value = res.list || []
+    ftpAccountsTotal.value = res.total || 0
+    return res
   }
 
   async function loadUsers() {
@@ -57,7 +61,7 @@ export const useDataStore = defineStore('data', () => {
   }
 
   return {
-    domains, subdomains, subdomainsTotal, servers, aliyunConfigs, ftpAccounts, users, serverTags,
+    domains, subdomains, subdomainsTotal, servers, aliyunConfigs, ftpAccounts, ftpAccountsTotal, users, serverTags,
     loadDomains, loadSubdomains, loadServers, loadAliyunConfigs, loadFtpAccounts, loadUsers, loadServerTags, loadAll
   }
 })

@@ -43,6 +43,7 @@
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="openSoftwareDialog(row)">软件管理</el-dropdown-item>
                 <el-dropdown-item @click="openFileManager(row)">文件管理</el-dropdown-item>
                 <el-dropdown-item @click="openTerminal(row)">终端</el-dropdown-item>
                 <el-dropdown-item @click="viewDomains(row)">查看域名</el-dropdown-item>
@@ -56,7 +57,7 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="500px">
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="550px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="服务器名称" />
@@ -72,6 +73,12 @@
         </el-form-item>
         <el-form-item label="密码">
           <el-input v-model="form.password" type="password" :placeholder="form.id ? '留空则不修改' : 'SSH密码'" show-password />
+        </el-form-item>
+        <el-form-item label="Nginx目录">
+          <el-input v-model="form.nginx_path" placeholder="/www/server/panel/vhost/nginx" />
+        </el-form-item>
+        <el-form-item label="FTP目录">
+          <el-input v-model="form.ftp_path" placeholder="/www/wwwroot/ftp" />
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="form.tagList" multiple filterable allow-create default-first-option placeholder="选择或输入标签" style="width:100%" @change="onTagChange">
@@ -90,6 +97,56 @@
     
     <!-- 终端 -->
     <ServerTerminal v-model="terminalVisible" :server="currentServer" />
+
+    <!-- 软件管理 -->
+    <el-dialog v-model="softwareDialogVisible" :title="'软件管理 - ' + currentServer?.name" width="550px">
+      <div v-loading="loadingSoftware">
+        <div class="software-item">
+          <div class="software-info">
+            <span class="software-name">🌐 Nginx</span>
+            <el-tag v-if="softwareStatus.nginx?.installed" type="success" size="small">已安装</el-tag>
+            <el-tag v-else type="info" size="small">未安装</el-tag>
+          </div>
+          <div class="software-actions">
+            <el-button v-if="softwareStatus.nginx?.installed" size="small" @click="viewNginxConfig">配置</el-button>
+            <el-button v-if="!softwareStatus.nginx?.installed" type="primary" size="small" @click="installNginx" :loading="installingNginx">安装</el-button>
+            <el-button v-else type="warning" size="small" @click="restartNginx" :loading="restartingNginx">重启</el-button>
+          </div>
+        </div>
+        <div class="software-item">
+          <div class="software-info">
+            <span class="software-name">📤 FTP (vsftpd)</span>
+            <el-tag v-if="softwareStatus.vsftpd?.installed" type="success" size="small">已安装</el-tag>
+            <el-tag v-else type="info" size="small">未安装</el-tag>
+          </div>
+          <div class="software-actions">
+            <el-button v-if="softwareStatus.vsftpd?.installed" size="small" @click="viewFtpConfig">配置</el-button>
+            <el-button v-if="!softwareStatus.vsftpd?.installed" type="primary" size="small" @click="installFtp" :loading="installingFtp">安装</el-button>
+            <el-button v-else type="warning" size="small" @click="restartFtp" :loading="restartingFtp">重启</el-button>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="softwareDialogVisible = false">关闭</el-button>
+        <el-button type="primary" @click="loadSoftwareStatus">刷新状态</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 配置文件编辑 -->
+    <el-dialog v-model="configDialogVisible" :title="configTitle" width="900px">
+      <div v-loading="loadingConfig" style="min-height:400px">
+        <el-input 
+          v-model="configContent" 
+          type="textarea" 
+          :rows="20" 
+          style="font-family: monospace; font-size: 13px;"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="configDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveConfig" :loading="savingConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -106,11 +163,24 @@ const dataStore = useDataStore()
 const dialogVisible = ref(false)
 const fileManagerVisible = ref(false)
 const terminalVisible = ref(false)
+const softwareDialogVisible = ref(false)
 const currentServer = ref(null)
 const saving = ref(false)
 const loading = ref(false)
+const loadingSoftware = ref(false)
+const installingNginx = ref(false)
+const installingFtp = ref(false)
+const restartingNginx = ref(false)
+const restartingFtp = ref(false)
 const showPassword = ref({})
-const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', tagList: [] })
+const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', nginx_path: '/www/server/panel/vhost/nginx', ftp_path: '/www/wwwroot/ftp', tagList: [] })
+const softwareStatus = reactive({ nginx: {}, vsftpd: {}, pureFtpd: {} })
+const configDialogVisible = ref(false)
+const configTitle = ref('')
+const configContent = ref('')
+const configPath = ref('')
+const loadingConfig = ref(false)
+const savingConfig = ref(false)
 
 onMounted(() => {
   loadData()
@@ -146,12 +216,16 @@ function openDialog(row = null) {
     Object.assign(form, { 
       id: row.id, name: row.name, ip: row.ip, port: row.port, 
       username: row.username, password: '', 
+      nginx_path: row.nginx_path || '/www/server/panel/vhost/nginx',
+      ftp_path: row.ftp_path || '/www/wwwroot/ftp',
       tagList: parseTags(row.tags)
     })
   } else {
     const defaultTag = dataStore.serverTags.find(t => t.is_default === 1)
     Object.assign(form, { 
       id: null, name: '', ip: '', port: 22, username: '', password: '', 
+      nginx_path: '/www/server/panel/vhost/nginx',
+      ftp_path: '/www/wwwroot/ftp',
       tagList: defaultTag ? [defaultTag.name] : [] 
     })
   }
@@ -220,6 +294,121 @@ async function setDefault(row) {
   ElMessage.success('已设为默认')
   dataStore.loadServers()
 }
+
+// 软件管理
+async function openSoftwareDialog(row) {
+  currentServer.value = row
+  softwareDialogVisible.value = true
+  await loadSoftwareStatus()
+}
+
+async function loadSoftwareStatus() {
+  if (!currentServer.value) return
+  loadingSoftware.value = true
+  try {
+    const res = await api.get(`/servers/${currentServer.value.id}/software-status`)
+    Object.assign(softwareStatus, res)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    loadingSoftware.value = false
+  }
+}
+
+async function installNginx() {
+  installingNginx.value = true
+  try {
+    const res = await api.post(`/servers/${currentServer.value.id}/install-nginx`)
+    ElMessage.success(res.message)
+    await loadSoftwareStatus()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    installingNginx.value = false
+  }
+}
+
+async function installFtp() {
+  installingFtp.value = true
+  try {
+    const res = await api.post(`/servers/${currentServer.value.id}/install-ftp`)
+    ElMessage.success(res.message)
+    await loadSoftwareStatus()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    installingFtp.value = false
+  }
+}
+
+async function restartNginx() {
+  restartingNginx.value = true
+  try {
+    const res = await api.post(`/servers/${currentServer.value.id}/restart-nginx`)
+    ElMessage.success(res.message)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    restartingNginx.value = false
+  }
+}
+
+async function restartFtp() {
+  restartingFtp.value = true
+  try {
+    const res = await api.post(`/servers/${currentServer.value.id}/restart-ftp`)
+    ElMessage.success(res.message)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    restartingFtp.value = false
+  }
+}
+
+// 查看配置文件
+async function viewNginxConfig() {
+  const path = softwareStatus.nginx?.configPath || '/etc/nginx/nginx.conf'
+  configTitle.value = 'Nginx 配置 - ' + path
+  configPath.value = path
+  await loadConfig()
+}
+
+async function viewFtpConfig() {
+  const path = softwareStatus.vsftpd?.configPath || '/etc/vsftpd.conf'
+  configTitle.value = 'FTP 配置 - ' + path
+  configPath.value = path
+  await loadConfig()
+}
+
+async function loadConfig() {
+  configDialogVisible.value = true
+  loadingConfig.value = true
+  try {
+    const res = await api.post(`/servers/${currentServer.value.id}/files/read`, { path: configPath.value })
+    configContent.value = res.content || ''
+  } catch (e) {
+    ElMessage.error('读取配置失败: ' + e.message)
+    configContent.value = ''
+  } finally {
+    loadingConfig.value = false
+  }
+}
+
+async function saveConfig() {
+  savingConfig.value = true
+  try {
+    await api.post(`/servers/${currentServer.value.id}/files/write`, { 
+      path: configPath.value, 
+      content: configContent.value 
+    })
+    ElMessage.success('配置已保存')
+    configDialogVisible.value = false
+  } catch (e) {
+    ElMessage.error('保存失败: ' + e.message)
+  } finally {
+    savingConfig.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -278,5 +467,31 @@ async function setDefault(row) {
 :deep(.el-dialog__footer) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
+}
+
+.software-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.software-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.software-name {
+  font-weight: 500;
+  font-size: 15px;
+}
+
+.software-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

@@ -73,6 +73,20 @@
         </template>
       </el-table-column>
     </el-table>
+    
+    <!-- 分页 -->
+    <div style="margin-top:15px;display:flex;justify-content:flex-end">
+      <el-pagination
+        :current-page="currentPage"
+        :page-size="pageSize"
+        :page-sizes="[20, 50, 100]"
+        :total="dataStore.ftpAccountsTotal"
+        layout="total, sizes, prev, pager, next, jumper"
+        @size-change="onSizeChange"
+        @current-change="onPageChange"
+      />
+    </div>
+    
     <el-alert type="info" :closable="false" style="margin-top:15px">
       <p>客户上传地址: <a :href="uploadUrl" target="_blank" style="color:#409eff">{{ uploadUrl }}</a></p>
     </el-alert>
@@ -121,6 +135,8 @@ const loading = ref(false)
 const showPassword = ref({})
 const availableSubdomains = ref([])
 const searchKeyword = ref('')
+const currentPage = ref(1)
+const pageSize = ref(20)
 const form = reactive({ id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 209715200, upload_size_value: 200, upload_size_unit: 'MB' })
 
 // 计算实际字节数
@@ -158,10 +174,21 @@ onMounted(() => loadData())
 async function loadData() {
   loading.value = true
   try {
-    await dataStore.loadFtpAccounts()
+    await dataStore.loadFtpAccounts(currentPage.value, pageSize.value)
   } finally {
     loading.value = false
   }
+}
+
+function onPageChange(page) {
+  currentPage.value = page
+  loadData()
+}
+
+function onSizeChange(size) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadData()
 }
 
 async function openDialog(row = null) {
