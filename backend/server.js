@@ -12,6 +12,7 @@ const userRoutes = require('./routes/users');
 const ftpRoutes = require('./routes/ftp');
 const nginxRoutes = require('./routes/nginx');
 const uploadRoutes = require('./routes/upload');
+const uploadChunkedRoutes = require('./routes/upload-chunked');
 const sslRoutes = require('./routes/ssl');
 const tagsRoutes = require('./routes/tags');
 const SshFtpService = require('./services/ssh-ftp');
@@ -49,6 +50,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/ftp', ftpRoutes);
 app.use('/api/nginx', nginxRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/upload-chunked', uploadChunkedRoutes);
 app.use('/api/ssl', sslRoutes);
 app.use('/api/tags', tagsRoutes);
 

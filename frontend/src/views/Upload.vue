@@ -240,9 +240,10 @@
                 <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" />
               </div>
               <el-tag :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
-                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (item.progress || 0) + '%' : '等待' }}
+                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (shouldUseChunkedUpload(item.file.size) ? (item.progress >= 90 ? '合并中...' : item.progress + '%') : (item.progress >= 50 ? '处理中...' : item.progress + '%')) : '等待' }}
               </el-tag>
               <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px"><el-icon><Close /></el-icon></el-button>
+              <el-button v-if="item.status === 'uploading' && item.uploader" type="danger" size="small" text @click="cancelUpload(item)" style="margin-left:5px" title="取消上传"><el-icon><Close /></el-icon></el-button>
             </div>
           </div>
         </div>
@@ -455,6 +456,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
+import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
 
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
@@ -752,10 +754,12 @@ const startUpload = async () => {
   const remaining = maxUploadSize.value - usedSize.value
   if (totalUploadSize > remaining) { ElMessage.error(`空间不足！待上传 ${formatSize(totalUploadSize)}，剩余 ${formatSize(remaining)}`); return }
   uploading.value = true
+  
   for (const item of uploadQueue.value) {
     if (item.status !== 'pending') continue
     item.status = 'uploading'
     item.progress = 0
+    
     try {
       let uploadDir = currentPath.value
       const filePath = item.uploadPath || item.name
@@ -763,43 +767,76 @@ const startUpload = async () => {
       const fileName = pathParts.pop()
       if (pathParts.length > 0) uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/')
       
-      // 使用 FormData 上传
-      const formData = new FormData()
-      formData.append('auth_code', authCode.value)
-      formData.append('path', uploadDir)
-      formData.append('filename', fileName)
-      formData.append('file', item.file)
-      
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            item.progress = Math.round((e.loaded / e.total) * 100)
+      // 判断是否使用分片上传（大于 5MB）
+      if (shouldUseChunkedUpload(item.file.size)) {
+        // 使用分片上传
+        const uploader = new ChunkedUploader(item.file, {
+          authCode: authCode.value,
+          path: uploadDir,
+          onProgress: (progress) => {
+            // 分片上传进度占 90%，合并占 10%
+            item.progress = Math.round(progress.percentage * 0.9)
+          },
+          onSuccess: () => {
+            item.progress = 100
+          },
+          onError: (err) => {
+            console.error('分片上传失败:', err)
           }
         })
-        xhr.addEventListener('load', () => {
-          if (xhr.status === 200) {
-            const res = JSON.parse(xhr.responseText)
-            if (res.error) reject(new Error(res.error))
-            else resolve(res)
-          } else {
-            reject(new Error('上传失败'))
-          }
+        
+        // 保存 uploader 实例以便取消
+        item.uploader = uploader
+        
+        await uploader.start()
+        item.status = 'done'
+        item.progress = 100
+        usedSize.value += item.file.size
+      } else {
+        // 使用普通上传（小文件）
+        const formData = new FormData()
+        formData.append('auth_code', authCode.value)
+        formData.append('path', uploadDir)
+        formData.append('filename', fileName)
+        formData.append('file', item.file)
+        
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+              // 上传到后端服务器占 50%，后端处理占 50%
+              item.progress = Math.round((e.loaded / e.total) * 50)
+            }
+          })
+          xhr.addEventListener('load', () => {
+            if (xhr.status === 200) {
+              const res = JSON.parse(xhr.responseText)
+              if (res.error) reject(new Error(res.error))
+              else {
+                // 后端处理完成，显示 100%
+                item.progress = 100
+                resolve(res)
+              }
+            } else {
+              reject(new Error('上传失败'))
+            }
+          })
+          xhr.addEventListener('error', () => reject(new Error('网络错误')))
+          xhr.addEventListener('abort', () => reject(new Error('上传取消')))
+          xhr.open('POST', '/api/upload/upload-file')
+          xhr.send(formData)
         })
-        xhr.addEventListener('error', () => reject(new Error('网络错误')))
-        xhr.addEventListener('abort', () => reject(new Error('上传取消')))
-        xhr.open('POST', '/api/upload/upload-file')
-        xhr.send(formData)
-      })
-      
-      item.status = 'done'
-      item.progress = 100
-      usedSize.value += item.file.size
+        
+        item.status = 'done'
+        item.progress = 100
+        usedSize.value += item.file.size
+      }
     } catch (e) { 
       item.status = 'error'
       console.error('Upload error:', e)
     }
   }
+  
   uploading.value = false
   loadFiles()
   const success = uploadQueue.value.filter(f => f.status === 'done').length
@@ -809,6 +846,15 @@ const startUpload = async () => {
 }
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = reject; reader.readAsDataURL(file) })
+
+// 取消上传
+const cancelUpload = async (item) => {
+  if (item.uploader) {
+    await item.uploader.abort()
+    item.status = 'error'
+    ElMessage.warning('已取消上传')
+  }
+}
 
 const createFolder = async () => {
   if (!newFolderName.value) { ElMessage.warning('请输入文件夹名称'); return }

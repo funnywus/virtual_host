@@ -38,7 +38,7 @@ router.post('/auth', async (req, res) => {
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
       LEFT JOIN servers sv ON s.server_id = sv.id
-      WHERE f.status = 'active'
+      WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
     `);
     
     // 查找匹配的FTP账号 (授权码 = 域名MD5)
@@ -114,7 +114,7 @@ async function findFtpByAuthCode(auth_code) {
     LEFT JOIN subdomains s ON f.subdomain_id = s.id
     LEFT JOIN domains d ON s.domain_id = d.id
     LEFT JOIN servers sv ON s.server_id = sv.id
-    WHERE f.status = 'active'
+    WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
   `);
   
   const inputCode = auth_code.toLowerCase();
