@@ -551,9 +551,9 @@ router.put('/subdomains/:id/status', async (req, res) => {
 // 续费子域名
 router.post('/subdomains/:id/renew', async (req, res) => {
   try {
-    const { duration_months } = req.body;
-    if (!duration_months || duration_months < 1) {
-      return res.status(400).json({ error: '请选择续费时长' });
+    const durationMonths = Number(req.body.duration_months);
+    if (!Number.isInteger(durationMonths) || durationMonths === 0) {
+      return res.status(400).json({ error: '请选择调整时长' });
     }
 
     const sub = await db.get('SELECT * FROM subdomains WHERE id = ?', [req.params.id]);
@@ -561,18 +561,36 @@ router.post('/subdomains/:id/renew', async (req, res) => {
       return res.status(404).json({ error: 'Subdomain not found' });
     }
 
-    // 计算新的到期时间（从当前到期时间或现在开始）
-    let baseDate = new Date();
-    if (sub.expire_at && new Date(sub.expire_at) > baseDate) {
-      baseDate = new Date(sub.expire_at);
+    if (durationMonths < 0 && !sub.expire_at) {
+      return res.status(400).json({ error: '当前未设置到期时间，无法扣减时长' });
     }
-    baseDate.setMonth(baseDate.getMonth() + duration_months);
+
+    let baseDate;
+    if (durationMonths > 0) {
+      // 续费时从当前到期时间或现在开始顺延
+      baseDate = new Date();
+      if (sub.expire_at && new Date(sub.expire_at) > baseDate) {
+        baseDate = new Date(sub.expire_at);
+      }
+    } else {
+      // 扣减时始终从当前到期时间回退
+      baseDate = new Date(sub.expire_at);
+      if (Number.isNaN(baseDate.getTime())) {
+        return res.status(400).json({ error: '当前到期时间无效，无法扣减时长' });
+      }
+    }
+
+    baseDate.setMonth(baseDate.getMonth() + durationMonths);
     const expireStr = baseDate.toISOString().slice(0, 19).replace('T', ' ');
 
     await db.run('UPDATE subdomains SET expire_at = ?, use_status = CASE WHEN use_status = ? THEN ? ELSE use_status END WHERE id = ?', 
       [expireStr, 'disabled', 'unused', req.params.id]);
 
-    res.json({ message: '续费成功', expire_at: expireStr });
+    res.json({
+      message: durationMonths > 0 ? '续费成功' : '扣减成功',
+      expire_at: expireStr,
+      duration_months: durationMonths
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

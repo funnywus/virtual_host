@@ -15,6 +15,9 @@
           <el-form-item>
             <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" prefix-icon="Lock" show-password @keyup.enter="handleAuth" />
           </el-form-item>
+          <div class="login-options">
+            <el-checkbox v-model="rememberUserInfo" @change="handleRememberChange">记住用户信息</el-checkbox>
+          </div>
           <el-form-item>
             <el-button type="primary" size="large" :loading="loading" @click="handleAuth" class="login-btn">
               登 录
@@ -37,16 +40,44 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const userStore = useUserStore()
+const REMEMBER_USER_INFO_KEY = 'remembered_user_info'
 
 const loading = ref(false)
 const form = reactive({ username: '', password: '' })
+const rememberUserInfo = ref(false)
+
+onMounted(() => {
+  try {
+    const rememberedInfo = JSON.parse(localStorage.getItem(REMEMBER_USER_INFO_KEY) || 'null')
+    if (rememberedInfo?.username) {
+      form.username = rememberedInfo.username
+      rememberUserInfo.value = true
+    }
+  } catch (error) {
+    localStorage.removeItem(REMEMBER_USER_INFO_KEY)
+  }
+})
+
+function saveRememberedUserInfo() {
+  localStorage.setItem(REMEMBER_USER_INFO_KEY, JSON.stringify({ username: form.username.trim() }))
+}
+
+function clearRememberedUserInfo() {
+  localStorage.removeItem(REMEMBER_USER_INFO_KEY)
+}
+
+function handleRememberChange(checked) {
+  if (!checked) {
+    clearRememberedUserInfo()
+  }
+}
 
 async function handleAuth() {
   if (!form.username || !form.password) {
@@ -56,6 +87,11 @@ async function handleAuth() {
   loading.value = true
   try {
     await userStore.login(form.username, form.password)
+    if (rememberUserInfo.value) {
+      saveRememberedUserInfo()
+    } else {
+      clearRememberedUserInfo()
+    }
     ElMessage.success('登录成功')
     router.push('/admin-jm')
   } catch (e) {
@@ -134,6 +170,13 @@ async function handleAuth() {
 
 .login-form {
   margin-bottom: 20px;
+}
+
+.login-options {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 18px;
+  color: #606266;
 }
 
 .login-form :deep(.el-input__wrapper) {

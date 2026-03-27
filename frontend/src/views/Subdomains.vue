@@ -19,7 +19,7 @@
               <el-dropdown-item @click="batchSetStatus('used')">批量设为已使用</el-dropdown-item>
               <el-dropdown-item @click="batchSetStatus('unused')">批量设为未使用</el-dropdown-item>
               <el-dropdown-item @click="batchSetStatus('disabled')">批量停用</el-dropdown-item>
-              <el-dropdown-item divided @click="openBatchRenewDialog">批量续费</el-dropdown-item>
+              <el-dropdown-item divided @click="openBatchRenewDialog">批量调整时长</el-dropdown-item>
               <el-dropdown-item divided @click="batchDelete" style="color:#f56c6c">批量删除</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -73,16 +73,17 @@
           <span v-else style="color:#999;cursor:pointer" @dblclick="openRemarkDialog(row)">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
+          <el-button type="warning" size="small" @click="openStatusDialog(row)">续费</el-button>
           <el-button type="success" size="small" @click="openNginxDialog(row)">Nginx</el-button>
           <el-dropdown trigger="click" style="margin-left:8px">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
-                <el-dropdown-item @click="openStatusDialog(row)">状态/续费</el-dropdown-item>
+                <el-dropdown-item @click="openStatusDialog(row)">状态/时长</el-dropdown-item>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
                 <el-dropdown-item v-if="row.use_status !== 'disabled'" @click="handleDisable(row)">停用</el-dropdown-item>
                 <el-dropdown-item v-if="row.use_status === 'disabled'" @click="handleEnable(row)">启用</el-dropdown-item>
@@ -255,8 +256,8 @@
     <!-- Nginx配置对话框 -->
     <NginxDialog v-model="nginxDialogVisible" :subdomain="currentSubdomain" @refresh="loadData" />
 
-    <!-- 状态/续费对话框 -->
-    <el-dialog v-model="statusDialogVisible" title="状态管理 / 续费" width="450px">
+    <!-- 状态/时长对话框 -->
+    <el-dialog v-model="statusDialogVisible" title="状态管理 / 时长调整" width="450px">
       <el-form :model="statusForm" label-width="100px">
         <el-form-item label="域名">
           <span class="full-domain">{{ statusForm.fullDomain }}</span>
@@ -279,21 +280,53 @@
             <el-radio-button value="disabled">停用</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-divider>续费</el-divider>
+        <el-divider>时长调整</el-divider>
+        <el-form-item label="快捷续费">
+          <div class="renew-quick-actions">
+            <el-button
+              v-for="option in renewIncreaseOptions"
+              :key="`single-${option.value}`"
+              size="small"
+              :type="statusForm.duration === option.value ? 'warning' : 'default'"
+              :plain="statusForm.duration !== option.value"
+              :disabled="renewing"
+              @click="handleAdjustDuration(option.value)"
+            >
+              {{ option.shortLabel }}
+            </el-button>
+          </div>
+          <div class="renew-quick-tip">点击快捷按钮可直接续费，也可以先选时长后再确认。</div>
+        </el-form-item>
+        <el-form-item label="快捷扣减">
+          <div class="renew-quick-actions">
+            <el-button
+              v-for="option in renewDecreaseOptions"
+              :key="`single-decrease-${option.value}`"
+              size="small"
+              :type="statusForm.duration === option.value ? 'danger' : 'default'"
+              :plain="statusForm.duration !== option.value"
+              :disabled="renewing || !statusForm.expire_at"
+              @click="handleAdjustDuration(option.value)"
+            >
+              {{ option.shortLabel }}
+            </el-button>
+          </div>
+          <div class="renew-quick-tip">扣减会把当前到期时间往前调整，未设置到期时间时不可扣减。</div>
+        </el-form-item>
         <el-form-item label="续费时长">
           <el-select v-model="statusForm.duration" placeholder="选择时长" style="width:100%">
-            <el-option label="1个月" :value="1" />
-            <el-option label="3个月" :value="3" />
-            <el-option label="6个月" :value="6" />
-            <el-option label="1年" :value="12" />
-            <el-option label="2年" :value="24" />
-            <el-option label="3年" :value="36" />
+            <el-option
+              v-for="option in renewDurationOptions"
+              :key="`single-select-${option.value}`"
+              :label="option.label"
+              :value="option.value"
+            />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="statusDialogVisible = false">取消</el-button>
-        <el-button type="warning" @click="handleRenew" :loading="renewing" :disabled="!statusForm.duration">续费</el-button>
+        <el-button type="warning" @click="handleAdjustDuration()" :loading="renewing" :disabled="!statusForm.duration">按所选时长调整</el-button>
         <el-button type="primary" @click="handleStatusChange" :loading="statusChanging">保存状态</el-button>
       </template>
     </el-dialog>
@@ -314,26 +347,58 @@
       </template>
     </el-dialog>
 
-    <!-- 批量续费对话框 -->
-    <el-dialog v-model="batchRenewDialogVisible" title="批量续费" width="400px">
+    <!-- 批量时长调整对话框 -->
+    <el-dialog v-model="batchRenewDialogVisible" title="批量时长调整" width="430px">
       <el-form label-width="100px">
         <el-form-item label="选中数量">
           <el-tag type="info">{{ selectedRows.length }} 个子域名</el-tag>
         </el-form-item>
+        <el-form-item label="快捷续费">
+          <div class="renew-quick-actions">
+            <el-button
+              v-for="option in renewIncreaseOptions"
+              :key="`batch-${option.value}`"
+              size="small"
+              :type="batchRenewDuration === option.value ? 'primary' : 'default'"
+              :plain="batchRenewDuration !== option.value"
+              :disabled="batchRenewing"
+              @click="handleBatchAdjustDuration(option.value)"
+            >
+              {{ option.shortLabel }}
+            </el-button>
+          </div>
+          <div class="renew-quick-tip">常用时长支持一键续费，适合批量处理即将到期的域名。</div>
+        </el-form-item>
+        <el-form-item label="快捷扣减">
+          <div class="renew-quick-actions">
+            <el-button
+              v-for="option in renewDecreaseOptions"
+              :key="`batch-decrease-${option.value}`"
+              size="small"
+              :type="batchRenewDuration === option.value ? 'danger' : 'default'"
+              :plain="batchRenewDuration !== option.value"
+              :disabled="batchRenewing"
+              @click="handleBatchAdjustDuration(option.value)"
+            >
+              {{ option.shortLabel }}
+            </el-button>
+          </div>
+          <div class="renew-quick-tip">批量扣减时，未设置到期时间的子域名会自动计为失败。</div>
+        </el-form-item>
         <el-form-item label="续费时长">
           <el-select v-model="batchRenewDuration" placeholder="选择时长" style="width:100%">
-            <el-option label="1个月" :value="1" />
-            <el-option label="3个月" :value="3" />
-            <el-option label="6个月" :value="6" />
-            <el-option label="1年" :value="12" />
-            <el-option label="2年" :value="24" />
-            <el-option label="3年" :value="36" />
+            <el-option
+              v-for="option in renewDurationOptions"
+              :key="`batch-select-${option.value}`"
+              :label="option.label"
+              :value="option.value"
+            />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="batchRenewDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleBatchRenew" :loading="batchRenewing" :disabled="!batchRenewDuration">确定续费</el-button>
+        <el-button type="primary" @click="handleBatchAdjustDuration()" :loading="batchRenewing" :disabled="!batchRenewDuration">按所选时长调整</el-button>
       </template>
     </el-dialog>
   </div>
@@ -368,6 +433,20 @@ const searchKeyword = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const selectedRows = ref([])
+const renewIncreaseOptions = [
+  { label: '1个月', shortLabel: '+1个月', value: 1 },
+  { label: '3个月', shortLabel: '+3个月', value: 3 },
+  { label: '6个月', shortLabel: '+6个月', value: 6 },
+  { label: '1年', shortLabel: '+1年', value: 12 },
+  { label: '2年', shortLabel: '+2年', value: 24 },
+  { label: '3年', shortLabel: '+3年', value: 36 }
+]
+const renewDecreaseOptions = [
+  { label: '扣减1个月', shortLabel: '-1个月', value: -1 },
+  { label: '扣减3个月', shortLabel: '-3个月', value: -3 },
+  { label: '扣减6个月', shortLabel: '-6个月', value: -6 }
+]
+const renewDurationOptions = [...renewIncreaseOptions, ...renewDecreaseOptions]
 
 const statusForm = reactive({
   id: null,
@@ -441,12 +520,23 @@ async function handleStatusChange() {
   }
 }
 
-async function handleRenew() {
-  if (!statusForm.duration) return
+function getDurationActionText(duration) {
+  return Number(duration) > 0 ? '续费' : '扣减'
+}
+
+async function handleAdjustDuration(duration = statusForm.duration) {
+  const targetDuration = Number(duration || statusForm.duration)
+  if (!targetDuration) return
+  if (targetDuration < 0 && !statusForm.expire_at) {
+    ElMessage.warning('当前未设置到期时间，无法扣减时长')
+    return
+  }
+
+  statusForm.duration = targetDuration
   renewing.value = true
   try {
-    const res = await api.post(`/dns/subdomains/${statusForm.id}/renew`, { duration_months: statusForm.duration })
-    ElMessage.success(`续费成功，到期时间: ${res.expire_at}`)
+    const res = await api.post(`/dns/subdomains/${statusForm.id}/renew`, { duration_months: targetDuration })
+    ElMessage.success(`${getDurationActionText(targetDuration)}成功，到期时间: ${res.expire_at}`)
     statusForm.expire_at = res.expire_at
     statusForm.duration = null
     loadData()
@@ -531,20 +621,23 @@ function openBatchRenewDialog() {
   batchRenewDialogVisible.value = true
 }
 
-async function handleBatchRenew() {
-  if (!batchRenewDuration.value || selectedRows.value.length === 0) return
+async function handleBatchAdjustDuration(duration = batchRenewDuration.value) {
+  const targetDuration = Number(duration || batchRenewDuration.value)
+  if (!targetDuration || selectedRows.value.length === 0) return
+
+  batchRenewDuration.value = targetDuration
   batchRenewing.value = true
   try {
     let success = 0, failed = 0
     for (const row of selectedRows.value) {
       try {
-        await api.post(`/dns/subdomains/${row.id}/renew`, { duration_months: batchRenewDuration.value })
+        await api.post(`/dns/subdomains/${row.id}/renew`, { duration_months: targetDuration })
         success++
       } catch (e) {
         failed++
       }
     }
-    ElMessage.success(`续费完成: 成功${success}个, 失败${failed}个`)
+    ElMessage.success(`${getDurationActionText(targetDuration)}完成: 成功${success}个, 失败${failed}个`)
     batchRenewDialogVisible.value = false
     selectedRows.value = []
     loadData()
@@ -789,6 +882,19 @@ function handleShare(row) {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.renew-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.renew-quick-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 .full-domain {
