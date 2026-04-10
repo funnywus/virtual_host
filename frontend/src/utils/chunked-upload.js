@@ -40,14 +40,18 @@ export class ChunkedUploader {
         })
       });
       
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+        throw new Error(data.error || `初始化失败: ${res.status}`);
+      }
       
+      const data = await res.json();
       this.uploadId = data.uploadId;
       return data;
     } catch (err) {
-      this.onError(err);
-      throw err;
+      const errorMsg = err.message || '初始化上传失败';
+      this.onError(new Error(errorMsg));
+      throw new Error(errorMsg);
     }
   }
   
@@ -64,22 +68,30 @@ export class ChunkedUploader {
     formData.append('chunk_index', chunkIndex);
     formData.append('chunk', chunk);
     
-    const res = await fetch('/api/upload-chunked/upload-chunk', {
-      method: 'POST',
-      body: formData
-    });
-    
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    
-    this.uploadedChunks.push(chunkIndex);
-    this.onProgress({
-      uploaded: this.uploadedChunks.length,
-      total: this.totalChunks,
-      percentage: Math.round((this.uploadedChunks.length / this.totalChunks) * 100)
-    });
-    
-    return data;
+    try {
+      const res = await fetch('/api/upload-chunked/upload-chunk', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+        throw new Error(data.error || `上传分片 ${chunkIndex} 失败`);
+      }
+      
+      const data = await res.json();
+      
+      this.uploadedChunks.push(chunkIndex);
+      this.onProgress({
+        uploaded: this.uploadedChunks.length,
+        total: this.totalChunks,
+        percentage: Math.round((this.uploadedChunks.length / this.totalChunks) * 100)
+      });
+      
+      return data;
+    } catch (err) {
+      throw new Error(`分片 ${chunkIndex} 上传失败: ${err.message}`);
+    }
   }
   
   // 并发上传所有分片
@@ -87,6 +99,23 @@ export class ChunkedUploader {
     const chunks = Array.from({ length: this.totalChunks }, (_, i) => i);
     const queue = [...chunks];
     const running = [];
+    const maxRetries = 3; // 最大重试次数
+    const retryDelay = 1000; // 重试延迟（毫秒）
+    
+    // 重试函数
+    const uploadWithRetry = async (chunkIndex, retries = 0) => {
+      try {
+        await this.uploadChunk(chunkIndex);
+      } catch (err) {
+        if (retries < maxRetries) {
+          console.log(`分片 ${chunkIndex} 上传失败，${retryDelay}ms 后重试 (${retries + 1}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          return uploadWithRetry(chunkIndex, retries + 1);
+        } else {
+          throw new Error(`分片 ${chunkIndex} 上传失败（已重试 ${maxRetries} 次）: ${err.message}`);
+        }
+      }
+    };
     
     while (queue.length > 0 || running.length > 0) {
       if (this.aborted) break;
@@ -94,14 +123,13 @@ export class ChunkedUploader {
       // 填充并发队列
       while (running.length < this.maxConcurrent && queue.length > 0) {
         const chunkIndex = queue.shift();
-        const promise = this.uploadChunk(chunkIndex)
+        const promise = uploadWithRetry(chunkIndex)
           .then(() => {
             const index = running.indexOf(promise);
             if (index > -1) running.splice(index, 1);
           })
           .catch(err => {
-            // 失败的分片重新加入队列
-            queue.push(chunkIndex);
+            // 失败的分片不再重新加入队列，直接抛出错误
             const index = running.indexOf(promise);
             if (index > -1) running.splice(index, 1);
             throw err;
@@ -126,14 +154,18 @@ export class ChunkedUploader {
         body: JSON.stringify({ uploadId: this.uploadId })
       });
       
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+        throw new Error(data.error || '合并分片失败');
+      }
       
+      const data = await res.json();
       this.onSuccess(data);
       return data;
     } catch (err) {
-      this.onError(err);
-      throw err;
+      const errorMsg = err.message || '合并分片失败';
+      this.onError(new Error(errorMsg));
+      throw new Error(errorMsg);
     }
   }
   

@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const http = require('http');
 require('dotenv').config();
 
 const db = require('./db/database');
@@ -17,6 +18,7 @@ const sslRoutes = require('./routes/ssl');
 const tagsRoutes = require('./routes/tags');
 const SshFtpService = require('./services/ssh-ftp');
 const sslCert = require('./services/ssl-cert');
+const WebSocketSFTPProxy = require('./services/ws-sftp-proxy');
 
 // 格式化时间为 YYYY-MM-DD HH:mm:ss
 const formatTime = (date = new Date()) => {
@@ -32,10 +34,10 @@ app.use(bodyParser.json({ limit: '500mb' }));
 app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 设置超时时间为 10 分钟（支持大文件上传）
+// 设置超时时间为 30 分钟（支持大文件上传和合并）
 app.use((req, res, next) => {
-  req.setTimeout(600000); // 10 分钟
-  res.setTimeout(600000);
+  req.setTimeout(1800000); // 30 分钟
+  res.setTimeout(1800000);
   next();
 });
 
@@ -193,8 +195,16 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+
+// 创建 HTTP 服务器
+const server = http.createServer(app);
+
+// 启动 WebSocket SFTP 代理
+new WebSocketSFTPProxy(server);
+
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`WebSocket SFTP Proxy available at ws://localhost:${PORT}/ws-upload`);
   // 启动SSL证书定时检查
   scheduleSslCheck();
   // 启动时也检查一次

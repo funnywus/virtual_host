@@ -15,6 +15,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:6002',
         changeOrigin: true
+      },
+      '/ws-upload': {
+        target: 'ws://localhost:6002',
+        ws: true,
+        changeOrigin: true
       }
     }
   },

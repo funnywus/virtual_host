@@ -80,11 +80,23 @@
               <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
             </span>
           </div>
-          <div style="display:flex;gap:10px;align-items:center">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <template v-if="files.length > 0">
+              <el-button size="small" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
+              <el-button size="small" @click="clearSelection" v-else>取消全选</el-button>
+            </template>
             <template v-if="selectedFiles.length > 0">
               <span style="color:#909399;font-size:13px">已选 {{ selectedFiles.length }} 项</span>
+              <el-button type="primary" size="small" @click="copyFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>复制</el-button>
+              <el-button type="warning" size="small" @click="cutFiles"><el-icon style="margin-right:5px"><Scissor /></el-icon>剪切</el-button>
+              <el-button type="success" size="small" @click="compressFiles"><el-icon style="margin-right:5px"><Files /></el-icon>压缩</el-button>
               <el-button type="danger" size="small" @click="deleteSelected"><el-icon style="margin-right:5px"><Delete /></el-icon>删除</el-button>
               <el-button size="small" @click="clearSelection">取消选择</el-button>
+              <el-divider direction="vertical" />
+            </template>
+            <template v-if="clipboard.files.length > 0">
+              <el-button type="success" size="small" @click="pasteFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>粘贴 ({{ clipboard.files.length }})</el-button>
+              <el-button size="small" text @click="clearClipboard">清空剪贴板</el-button>
               <el-divider direction="vertical" />
             </template>
             <el-radio-group v-model="viewMode" size="small">
@@ -98,7 +110,14 @@
           </div>
         </div>
 
-        <div class="file-list" v-loading="loading">
+        <div 
+          class="file-list" 
+          :class="{ 'drag-over': isFileDragOver, 'empty-list': files.length === 0 }"
+          v-loading="loading"
+          @dragover.prevent="handleFileDragOver"
+          @dragleave="handleFileDragLeave"
+          @drop.prevent="handleFileListDrop"
+        >
           <!-- 列表视图 -->
           <template v-if="viewMode === 'list'">
             <div v-if="currentPath" class="file-item" @click="goBack">
@@ -175,6 +194,18 @@
                       <el-dropdown-item v-if="file.type === 'file' && isPreviewableFile(file.name)" @click="previewFile(file)">
                         <el-icon><View /></el-icon>预览
                       </el-dropdown-item>
+                      <el-dropdown-item divided v-if="file.type === 'file' && isCompressedFile(file.name)" @click="extractFile(file)">
+                        <el-icon><FolderOpened /></el-icon>解压到当前目录
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="compressSingleFile(file)">
+                        <el-icon><Files /></el-icon>压缩
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="copySingleFile(file)">
+                        <el-icon><DocumentCopy /></el-icon>复制
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="cutSingleFile(file)">
+                        <el-icon><Scissor /></el-icon>剪切
+                      </el-dropdown-item>
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
@@ -204,7 +235,8 @@
 
       <!-- 上传对话框 -->
       <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px" :fullscreen="isMobile">
-        <div class="upload-area" :class="{ dragover: isDragover }" @dragover.prevent="isDragover = true" @dragleave="isDragover = false" @drop.prevent="handleDrop">
+        <!-- 上传区域 - 上传时自动折叠 -->
+        <div v-if="!uploading" class="upload-area" :class="{ dragover: isDragover }" @dragover.prevent="isDragover = true" @dragleave="isDragover = false" @drop.prevent="handleDrop">
           <div class="upload-icon">📤</div>
           <div class="upload-text">拖拽文件或文件夹到此处</div>
           <div class="upload-or">或</div>
@@ -223,6 +255,25 @@
           <input ref="fileInputRef" type="file" multiple hidden @change="handleFileSelect">
           <input ref="folderInputRef" type="file" webkitdirectory hidden @change="handleFolderSelect">
         </div>
+        
+        <!-- 上传统计信息 -->
+        <div v-if="uploading && uploadStats.startTime" class="upload-stats">
+          <div class="stats-row-upload">
+            <div class="stat-item-upload">
+              <span class="stat-label-upload">⏱️ 已用时间</span>
+              <span class="stat-value-upload">{{ formatDuration(uploadStats.duration) }}</span>
+            </div>
+            <div class="stat-item-upload">
+              <span class="stat-label-upload">📊 已上传</span>
+              <span class="stat-value-upload">{{ formatSize(uploadStats.uploadedBytes) }}</span>
+            </div>
+            <div class="stat-item-upload">
+              <span class="stat-label-upload">🚀 上传速度</span>
+              <span class="stat-value-upload">{{ formatSize(uploadStats.speed) }}/s</span>
+            </div>
+          </div>
+        </div>
+        
         <div v-if="uploadQueue.length > 0" style="margin-top:20px">
           <div style="margin-bottom:10px;color:#606266;display:flex;justify-content:space-between;align-items:center">
             <span>待上传 ({{ uploadQueue.length }} 个文件，共 {{ formatSize(uploadQueue.reduce((s,f) => s + f.file.size, 0)) }})</span>
@@ -234,6 +285,7 @@
               <div style="flex:1;overflow:hidden;min-width:0">
                 <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ item.name }}</div>
                 <div v-if="item.relativePath" style="font-size:11px;color:#909399;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.relativePath }}</div>
+                <div v-if="item.status === 'error' && item.errorMessage" style="font-size:11px;color:#f56c6c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.errorMessage }}</div>
               </div>
               <span style="color:#909399;font-size:12px;margin:0 10px;white-space:nowrap">{{ formatSize(item.file.size) }}</span>
               <div v-if="item.status === 'uploading'" style="flex:1;max-width:150px;margin:0 10px">
@@ -244,6 +296,7 @@
               </el-tag>
               <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px"><el-icon><Close /></el-icon></el-button>
               <el-button v-if="item.status === 'uploading' && item.uploader" type="danger" size="small" text @click="cancelUpload(item)" style="margin-left:5px" title="取消上传"><el-icon><Close /></el-icon></el-button>
+              <el-button v-if="item.status === 'error'" type="primary" size="small" text @click="retryUpload(item)" style="margin-left:5px" title="重试"><el-icon><Refresh /></el-icon></el-button>
             </div>
           </div>
         </div>
@@ -454,7 +507,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled } from '@element-plus/icons-vue'
+import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
 
@@ -478,6 +531,12 @@ const viewMode = ref('list')
 // 多选相关
 const selectedFiles = ref([])
 
+// 剪贴板相关
+const clipboard = ref({
+  files: [],
+  operation: '' // 'copy' 或 'cut'
+})
+
 const isSelected = (file) => {
   return selectedFiles.value.some(f => f.name === file.name)
 }
@@ -493,6 +552,11 @@ const toggleSelect = (file) => {
 
 const clearSelection = () => {
   selectedFiles.value = []
+}
+
+const selectAll = () => {
+  selectedFiles.value = [...files.value]
+  ElMessage.success(`已选中 ${files.value.length} 个项目`)
 }
 
 const handleFileClick = (event, file) => {
@@ -560,6 +624,138 @@ const deleteSelected = async () => {
   }
 }
 
+// 复制文件
+const copyFiles = () => {
+  if (selectedFiles.value.length === 0) return
+  clipboard.value = {
+    files: selectedFiles.value.map(f => ({
+      name: f.name,
+      type: f.type,
+      path: currentPath.value ? `${currentPath.value}/${f.name}` : f.name
+    })),
+    operation: 'copy'
+  }
+  ElMessage.success(`已复制 ${selectedFiles.value.length} 个项目到剪贴板`)
+  clearSelection()
+}
+
+// 剪切文件
+const cutFiles = () => {
+  if (selectedFiles.value.length === 0) return
+  clipboard.value = {
+    files: selectedFiles.value.map(f => ({
+      name: f.name,
+      type: f.type,
+      path: currentPath.value ? `${currentPath.value}/${f.name}` : f.name
+    })),
+    operation: 'cut'
+  }
+  ElMessage.success(`已剪切 ${selectedFiles.value.length} 个项目到剪贴板`)
+  clearSelection()
+}
+
+// 粘贴文件
+const pasteFiles = async () => {
+  if (clipboard.value.files.length === 0) return
+  
+  const loading = ElMessage({
+    message: `正在${clipboard.value.operation === 'copy' ? '复制' : '移动'}文件...`,
+    type: 'info',
+    duration: 0
+  })
+  
+  try {
+    let success = 0, failed = 0
+    
+    for (const file of clipboard.value.files) {
+      try {
+        const targetPath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+        
+        if (clipboard.value.operation === 'copy') {
+          await api('/copy', { source_path: file.path, target_path: targetPath })
+        } else {
+          await api('/cut', { source_path: file.path, target_path: targetPath })
+        }
+        success++
+      } catch (e) {
+        console.error('粘贴失败:', e)
+        failed++
+      }
+    }
+    
+    loading.close()
+    
+    if (failed === 0) {
+      ElMessage.success(`成功${clipboard.value.operation === 'copy' ? '复制' : '移动'} ${success} 个项目`)
+      if (clipboard.value.operation === 'cut') {
+        clearClipboard()
+      }
+    } else {
+      ElMessage.warning(`操作完成: 成功 ${success} 个, 失败 ${failed} 个`)
+    }
+    
+    loadFiles()
+  } catch (e) {
+    loading.close()
+    ElMessage.error(e.message)
+  }
+}
+
+// 清空剪贴板
+const clearClipboard = () => {
+  clipboard.value = { files: [], operation: '' }
+}
+
+// 压缩文件
+const compressFiles = async () => {
+  if (selectedFiles.value.length === 0) return
+  
+  try {
+    const { value: archiveName } = await ElMessageBox.prompt(
+      `将 ${selectedFiles.value.length} 个项目压缩为：`,
+      '压缩文件',
+      {
+        confirmButtonText: '压缩',
+        cancelButtonText: '取消',
+        inputPattern: /^.+\.(zip|tar\.gz)$/,
+        inputErrorMessage: '请输入有效的文件名（.zip 或 .tar.gz）',
+        inputValue: 'archive.zip'
+      }
+    )
+    
+    const loading = ElMessage({
+      message: '正在压缩文件...',
+      type: 'info',
+      duration: 0
+    })
+    
+    try {
+      const paths = selectedFiles.value.map(f => 
+        currentPath.value ? `${currentPath.value}/${f.name}` : f.name
+      )
+      
+      const format = archiveName.endsWith('.tar.gz') ? 'tar.gz' : 'zip'
+      const fullArchiveName = currentPath.value ? `${currentPath.value}/${archiveName}` : archiveName
+      
+      await api('/compress', { 
+        paths, 
+        archive_name: fullArchiveName,
+        format 
+      })
+      
+      loading.close()
+      ElMessage.success('压缩成功！')
+      clearSelection()
+      loadFiles()
+    } catch (e) {
+      loading.close()
+      ElMessage.error('压缩失败: ' + e.message)
+    }
+  } catch (e) {
+    // 用户取消
+  }
+}
+
 // 文件编辑相关
 const showEditDialog = ref(false)
 const editingFile = ref(null)
@@ -585,6 +781,13 @@ const previewableExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp
 const isPreviewableFile = (name) => {
   const ext = name.split('.').pop().toLowerCase()
   return previewableExts.includes(ext)
+}
+
+// 可解压的文件类型
+const compressedExts = ['zip', 'gz', 'tgz', 'tar', '7z']
+const isCompressedFile = (name) => {
+  const ext = name.split('.').pop().toLowerCase()
+  return compressedExts.includes(ext) || name.toLowerCase().endsWith('.tar.gz')
 }
 
 // 根据文件类型获取Monaco语言
@@ -637,8 +840,19 @@ const renaming = ref(false)
 const uploadQueue = ref([])
 const uploading = ref(false)
 const isDragover = ref(false)
+const isFileDragOver = ref(false)
 const newFolderName = ref('')
 const creating = ref(false)
+
+// 上传统计
+const uploadStats = ref({
+  startTime: null,
+  totalBytes: 0,
+  uploadedBytes: 0,
+  duration: 0,
+  speed: 0
+})
+const uploadStatsInterval = ref(null)
 
 const fileInputRef = ref(null)
 const folderInputRef = ref(null)
@@ -666,6 +880,7 @@ const verifyAuth = async () => {
     maxUploadSize.value = res.max_upload_size || 209715200
     expireAt.value = res.expire_at || null
     remainingDays.value = res.remaining_days
+    
     authorized.value = true
     localStorage.setItem('upload_auth_code', authCode.value)
     loadFiles()
@@ -698,11 +913,123 @@ const loadFiles = async () => {
 const navigateTo = (path) => { currentPath.value = path; selectedFiles.value = []; loadFiles() }
 const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); selectedFiles.value = []; loadFiles() }
 
-const handleFileSelect = (e) => { addFilesToQueue(e.target.files, false); e.target.value = '' }
-const handleFolderSelect = (e) => { addFilesToQueue(e.target.files, true); e.target.value = '' }
+const handleFileSelect = (e) => { checkAndAddFiles(e.target.files, false); e.target.value = '' }
+const handleFolderSelect = (e) => { checkAndAddFiles(e.target.files, true); e.target.value = '' }
 const handleUploadCommand = (cmd) => {
   if (cmd === 'file') fileInputRef.value?.click()
   else if (cmd === 'folder') folderInputRef.value?.click()
+}
+
+// 检查文件是否存在并添加到队列
+const checkAndAddFiles = async (fileList, keepPath = false) => {
+  const filesToAdd = Array.from(fileList).map(f => {
+    const relativePath = keepPath && f.webkitRelativePath ? f.webkitRelativePath : f.name
+    return { 
+      file: f, 
+      name: f.name, 
+      relativePath: relativePath !== f.name ? relativePath : '', 
+      uploadPath: relativePath, 
+      status: 'pending', 
+      progress: 0 
+    }
+  })
+  
+  // 检查哪些文件已存在
+  const existingFiles = []
+  for (const item of filesToAdd) {
+    const filePath = item.relativePath || item.name
+    const pathParts = filePath.split('/')
+    const fileName = pathParts[pathParts.length - 1]
+    
+    // 构建完整路径
+    let checkPath = currentPath.value
+    if (pathParts.length > 1) {
+      const dirs = pathParts.slice(0, -1).join('/')
+      checkPath = currentPath.value ? `${currentPath.value}/${dirs}` : dirs
+    }
+    
+    // 检查文件是否存在
+    const exists = files.value.some(f => {
+      if (f.type !== 'file') return false
+      // 如果在当前目录，直接比较文件名
+      if (!item.relativePath || pathParts.length === 1) {
+        return f.name === fileName && currentPath.value === checkPath
+      }
+      return false
+    })
+    
+    if (exists) {
+      existingFiles.push(item)
+    }
+  }
+  
+  // 如果有文件已存在，显示确认对话框
+  if (existingFiles.length > 0) {
+    await handleFileConflict(filesToAdd, existingFiles)
+  } else {
+    uploadQueue.value.push(...filesToAdd)
+  }
+}
+
+// 处理文件冲突
+const handleFileConflict = async (allFiles, existingFiles) => {
+  if (existingFiles.length === 1) {
+    // 单个文件冲突
+    try {
+      await ElMessageBox.confirm(
+        `文件 "${existingFiles[0].name}" 已存在，是否覆盖？`,
+        '文件已存在',
+        {
+          type: 'warning',
+          confirmButtonText: '覆盖',
+          cancelButtonText: '跳过'
+        }
+      )
+      // 用户选择覆盖，添加所有文件
+      uploadQueue.value.push(...allFiles)
+    } catch (e) {
+      // 用户选择跳过，只添加不存在的文件
+      const filesToAdd = allFiles.filter(f => !existingFiles.includes(f))
+      uploadQueue.value.push(...filesToAdd)
+      if (filesToAdd.length > 0) {
+        ElMessage.info(`已跳过 1 个文件，添加了 ${filesToAdd.length} 个文件`)
+      } else {
+        ElMessage.info('已跳过该文件')
+      }
+    }
+  } else {
+    // 多个文件冲突
+    try {
+      const action = await ElMessageBox.confirm(
+        `有 ${existingFiles.length} 个文件已存在，如何处理？`,
+        '批量文件冲突',
+        {
+          type: 'warning',
+          distinguishCancelAndClose: true,
+          confirmButtonText: '全部覆盖',
+          cancelButtonText: '全部跳过',
+          closeOnClickModal: false
+        }
+      )
+      // 用户选择全部覆盖
+      uploadQueue.value.push(...allFiles)
+      ElMessage.success(`已添加 ${allFiles.length} 个文件（将覆盖已存在的文件）`)
+    } catch (action) {
+      if (action === 'cancel') {
+        // 用户选择全部跳过
+        const filesToAdd = allFiles.filter(f => !existingFiles.includes(f))
+        uploadQueue.value.push(...filesToAdd)
+        if (filesToAdd.length > 0) {
+          ElMessage.info(`已跳过 ${existingFiles.length} 个文件，添加了 ${filesToAdd.length} 个文件`)
+        } else {
+          ElMessage.info(`已跳过所有文件`)
+        }
+      } else {
+        // 用户关闭对话框，不添加任何文件
+        ElMessage.info('已取消添加文件')
+      }
+    }
+  }
 }
 
 const addFilesToQueue = (fileList, keepPath = false) => {
@@ -746,103 +1073,292 @@ const handleDrop = async (e) => {
     else if (item.kind === 'file') { const file = item.getAsFile(); if (file) filesList.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' }) }
   }
   await Promise.all(promises)
-  uploadQueue.value.push(...filesList)
+  
+  // 检查文件冲突
+  const existingFiles = []
+  for (const item of filesList) {
+    const filePath = item.relativePath || item.name
+    const pathParts = filePath.split('/')
+    const fileName = pathParts[pathParts.length - 1]
+    
+    // 检查文件是否存在（只检查当前目录的文件）
+    if (!item.relativePath || pathParts.length === 1) {
+      const exists = files.value.some(f => f.type === 'file' && f.name === fileName)
+      if (exists) {
+        existingFiles.push(item)
+      }
+    }
+  }
+  
+  // 如果有文件已存在，显示确认对话框
+  if (existingFiles.length > 0) {
+    await handleFileConflict(filesList, existingFiles)
+  } else {
+    uploadQueue.value.push(...filesList)
+  }
+}
+
+// 文件列表区域拖拽处理
+const handleFileDragOver = (e) => {
+  e.preventDefault()
+  isFileDragOver.value = true
+}
+
+const handleFileDragLeave = (e) => {
+  // 只有当离开整个文件列表区域时才取消高亮
+  if (e.target.classList.contains('file-list')) {
+    isFileDragOver.value = false
+  }
+}
+
+const handleFileListDrop = async (e) => {
+  e.preventDefault()
+  isFileDragOver.value = false
+  
+  // 自动打开上传对话框
+  showUploadDialog.value = true
+  
+  // 处理拖拽的文件
+  const items = e.dataTransfer.items
+  const filesList = []
+  
+  const readEntry = async (entry, path = '') => {
+    if (entry.isFile) {
+      return new Promise((resolve) => {
+        entry.file(file => {
+          const relativePath = path ? path + '/' + file.name : file.name
+          filesList.push({ file, name: file.name, relativePath: path ? relativePath : '', uploadPath: relativePath, status: 'pending' })
+          resolve()
+        })
+      })
+    } else if (entry.isDirectory) {
+      const dirReader = entry.createReader()
+      return new Promise((resolve) => {
+        const readEntries = () => {
+          dirReader.readEntries(async (entries) => {
+            if (entries.length === 0) { resolve() }
+            else { 
+              for (const ent of entries) { 
+                await readEntry(ent, path ? path + '/' + entry.name : entry.name) 
+              }
+              readEntries() 
+            }
+          })
+        }
+        readEntries()
+      })
+    }
+  }
+  
+  const promises = []
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null
+    if (entry) { 
+      promises.push(readEntry(entry)) 
+    } else if (item.kind === 'file') { 
+      const file = item.getAsFile()
+      if (file) {
+        filesList.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' })
+      }
+    }
+  }
+  
+  await Promise.all(promises)
+  
+  if (filesList.length > 0) {
+    // 检查文件冲突
+    const existingFiles = []
+    for (const item of filesList) {
+      const filePath = item.relativePath || item.name
+      const pathParts = filePath.split('/')
+      const fileName = pathParts[pathParts.length - 1]
+      
+      // 检查文件是否存在（只检查当前目录的文件）
+      if (!item.relativePath || pathParts.length === 1) {
+        const exists = files.value.some(f => f.type === 'file' && f.name === fileName)
+        if (exists) {
+          existingFiles.push(item)
+        }
+      }
+    }
+    
+    // 如果有文件已存在，显示确认对话框
+    if (existingFiles.length > 0) {
+      await handleFileConflict(filesList, existingFiles)
+    } else {
+      uploadQueue.value.push(...filesList)
+    }
+    
+    ElMessage.success(`已添加 ${filesList.length} 个文件到上传队列`)
+  }
 }
 
 const startUpload = async () => {
   const totalUploadSize = uploadQueue.value.filter(f => f.status === 'pending').reduce((sum, f) => sum + f.file.size, 0)
   const remaining = maxUploadSize.value - usedSize.value
   if (totalUploadSize > remaining) { ElMessage.error(`空间不足！待上传 ${formatSize(totalUploadSize)}，剩余 ${formatSize(remaining)}`); return }
+  
   uploading.value = true
   
-  for (const item of uploadQueue.value) {
-    if (item.status !== 'pending') continue
-    item.status = 'uploading'
-    item.progress = 0
-    
-    try {
-      let uploadDir = currentPath.value
-      const filePath = item.uploadPath || item.name
-      const pathParts = filePath.split('/')
-      const fileName = pathParts.pop()
-      if (pathParts.length > 0) uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/')
+  // 初始化上传统计
+  uploadStats.value = {
+    startTime: Date.now(),
+    totalBytes: totalUploadSize,
+    uploadedBytes: 0,
+    duration: 0,
+    speed: 0
+  }
+  
+  // 启动统计更新定时器
+  uploadStatsInterval.value = setInterval(() => {
+    if (uploadStats.value.startTime) {
+      uploadStats.value.duration = Date.now() - uploadStats.value.startTime
+      // 计算已上传字节数
+      const uploaded = uploadQueue.value
+        .filter(f => f.status === 'done')
+        .reduce((sum, f) => sum + f.file.size, 0)
       
-      // 判断是否使用分片上传（大于 5MB）
-      if (shouldUseChunkedUpload(item.file.size)) {
-        // 使用分片上传
-        const uploader = new ChunkedUploader(item.file, {
-          authCode: authCode.value,
-          path: uploadDir,
-          onProgress: (progress) => {
-            // 分片上传进度占 90%，合并占 10%
-            item.progress = Math.round(progress.percentage * 0.9)
-          },
-          onSuccess: () => {
-            item.progress = 100
-          },
-          onError: (err) => {
-            console.error('分片上传失败:', err)
-          }
-        })
-        
-        // 保存 uploader 实例以便取消
-        item.uploader = uploader
-        
-        await uploader.start()
-        item.status = 'done'
-        item.progress = 100
-        usedSize.value += item.file.size
-      } else {
-        // 使用普通上传（小文件）
-        const formData = new FormData()
-        formData.append('auth_code', authCode.value)
-        formData.append('path', uploadDir)
-        formData.append('filename', fileName)
-        formData.append('file', item.file)
-        
-        await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          xhr.upload.addEventListener('progress', (e) => {
-            if (e.lengthComputable) {
-              // 上传到后端服务器占 50%，后端处理占 50%
-              item.progress = Math.round((e.loaded / e.total) * 50)
-            }
-          })
-          xhr.addEventListener('load', () => {
-            if (xhr.status === 200) {
-              const res = JSON.parse(xhr.responseText)
-              if (res.error) reject(new Error(res.error))
-              else {
-                // 后端处理完成，显示 100%
-                item.progress = 100
-                resolve(res)
-              }
-            } else {
-              reject(new Error('上传失败'))
-            }
-          })
-          xhr.addEventListener('error', () => reject(new Error('网络错误')))
-          xhr.addEventListener('abort', () => reject(new Error('上传取消')))
-          xhr.open('POST', '/api/upload/upload-file')
-          xhr.send(formData)
-        })
-        
-        item.status = 'done'
-        item.progress = 100
-        usedSize.value += item.file.size
+      // 加上正在上传的文件的进度
+      const uploading = uploadQueue.value
+        .filter(f => f.status === 'uploading')
+        .reduce((sum, f) => sum + (f.file.size * (f.progress || 0) / 100), 0)
+      
+      uploadStats.value.uploadedBytes = uploaded + uploading
+      
+      // 计算速度 (字节/秒)
+      if (uploadStats.value.duration > 0) {
+        uploadStats.value.speed = (uploadStats.value.uploadedBytes / uploadStats.value.duration) * 1000
       }
-    } catch (e) { 
-      item.status = 'error'
-      console.error('Upload error:', e)
     }
+  }, 500)
+  
+  // 使用并发上传
+  await startNormalUpload()
+  
+  // 清理定时器
+  if (uploadStatsInterval.value) {
+    clearInterval(uploadStatsInterval.value)
+    uploadStatsInterval.value = null
   }
   
   uploading.value = false
   loadFiles()
   const success = uploadQueue.value.filter(f => f.status === 'done').length
   const failed = uploadQueue.value.filter(f => f.status === 'error').length
-  if (failed === 0) ElMessage.success(`上传完成，共${success}个文件`)
-  else ElMessage.warning(`上传完成: 成功${success}个, 失败${failed}个`)
+  
+  // 显示上传完成信息（包含统计）
+  const duration = uploadStats.value.duration
+  const totalSize = uploadStats.value.uploadedBytes
+  const avgSpeed = duration > 0 ? (totalSize / duration) * 1000 : 0
+  
+  if (failed === 0) {
+    ElMessage.success(`上传完成！共 ${success} 个文件，${formatSize(totalSize)}，耗时 ${formatDuration(duration)}，平均速度 ${formatSize(avgSpeed)}/s`)
+  } else {
+    ElMessage.warning(`上传完成: 成功${success}个, 失败${failed}个`)
+  }
+}
+
+// 上传单个文件（提取出来以支持并发）
+const uploadSingleFile = async (item) => {
+  if (item.status !== 'pending') return
+  
+  item.status = 'uploading'
+  item.progress = 0
+  
+  try {
+    let uploadDir = currentPath.value
+    const filePath = item.uploadPath || item.name
+    const pathParts = filePath.split('/')
+    const fileName = pathParts.pop()
+    if (pathParts.length > 0) uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/')
+    
+    // 判断是否使用分片上传（大于 5MB）
+    if (shouldUseChunkedUpload(item.file.size)) {
+      // 使用分片上传
+      const uploader = new ChunkedUploader(item.file, {
+        authCode: authCode.value,
+        path: uploadDir,
+        onProgress: (progress) => {
+          // 分片上传进度占 90%，合并占 10%
+          item.progress = Math.round(progress.percentage * 0.9)
+        },
+        onSuccess: () => {
+          item.progress = 100
+        },
+        onError: (err) => {
+          console.error('分片上传失败:', err)
+          item.errorMessage = err.message || '分片上传失败'
+        }
+      })
+      
+      // 保存 uploader 实例以便取消
+      item.uploader = uploader
+      
+      try {
+        await uploader.start()
+        item.status = 'done'
+        item.progress = 100
+        usedSize.value += item.file.size
+      } catch (err) {
+        throw new Error(`分片上传失败: ${err.message}`)
+      }
+    } else {
+      // 使用普通上传（小文件）
+      const formData = new FormData()
+      formData.append('auth_code', authCode.value)
+      formData.append('path', uploadDir)
+      formData.append('filename', fileName)
+      formData.append('file', item.file)
+      
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            // 上传到后端服务器占 50%，后端处理占 50%
+            item.progress = Math.round((e.loaded / e.total) * 50)
+          }
+        })
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 200) {
+            const res = JSON.parse(xhr.responseText)
+            if (res.error) reject(new Error(res.error))
+            else {
+              // 后端处理完成，显示 100%
+              item.progress = 100
+              resolve(res)
+            }
+          } else {
+            reject(new Error('上传失败'))
+          }
+        })
+        xhr.addEventListener('error', () => reject(new Error('网络错误')))
+        xhr.addEventListener('abort', () => reject(new Error('上传取消')))
+        xhr.open('POST', '/api/upload/upload-file')
+        xhr.send(formData)
+      })
+      
+      item.status = 'done'
+      item.progress = 100
+      usedSize.value += item.file.size
+    }
+  } catch (e) { 
+    item.status = 'error'
+    item.errorMessage = e.message || '上传失败'
+    console.error('Upload error:', e)
+    ElMessage.error(`上传失败: ${item.name} - ${e.message}`)
+  }
+}
+
+// 普通上传（支持并发）
+const startNormalUpload = async () => {
+  const concurrency = 10 // 同时上传 10 个文件
+  const pending = uploadQueue.value.filter(f => f.status === 'pending')
+  
+  // 分批并发上传
+  for (let i = 0; i < pending.length; i += concurrency) {
+    const batch = pending.slice(i, i + concurrency)
+    await Promise.all(batch.map(item => uploadSingleFile(item)))
+  }
 }
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = reject; reader.readAsDataURL(file) })
@@ -854,6 +1370,16 @@ const cancelUpload = async (item) => {
     item.status = 'error'
     ElMessage.warning('已取消上传')
   }
+}
+
+// 重试上传
+const retryUpload = async (item) => {
+  item.status = 'pending'
+  item.errorMessage = ''
+  item.progress = 0
+  
+  // 重新开始上传
+  await startUpload()
 }
 
 const createFolder = async () => {
@@ -976,12 +1502,138 @@ const previewFile = async (file) => {
   }
 }
 
+// 解压文件
+const extractFile = async (file) => {
+  if (!isCompressedFile(file.name)) {
+    ElMessage.warning('该文件不是压缩包')
+    return
+  }
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要解压 "${file.name}" 到当前目录吗？`,
+      '解压文件',
+      { 
+        type: 'info',
+        confirmButtonText: '解压',
+        cancelButtonText: '取消'
+      }
+    )
+    
+    const loadingMsg = ElMessage({
+      message: '正在解压，请稍候...',
+      type: 'info',
+      duration: 0,
+      icon: 'Loading'
+    })
+    
+    try {
+      const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+      await api('/extract', { path: filePath })
+      loadingMsg.close()
+      ElMessage.success('解压成功！')
+      loadFiles()
+    } catch (e) {
+      loadingMsg.close()
+      ElMessage.error('解压失败: ' + e.message)
+    }
+  } catch (e) {
+    // 用户取消
+  }
+}
+
+// 压缩单个文件
+const compressSingleFile = async (file) => {
+  try {
+    const defaultName = file.name + '.zip'
+    const { value: archiveName } = await ElMessageBox.prompt(
+      `将 "${file.name}" 压缩为：`,
+      '压缩文件',
+      {
+        confirmButtonText: '压缩',
+        cancelButtonText: '取消',
+        inputPattern: /^.+\.(zip|tar\.gz)$/,
+        inputErrorMessage: '请输入有效的文件名（.zip 或 .tar.gz）',
+        inputValue: defaultName
+      }
+    )
+    
+    const loading = ElMessage({
+      message: '正在压缩文件...',
+      type: 'info',
+      duration: 0
+    })
+    
+    try {
+      const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+      const format = archiveName.endsWith('.tar.gz') ? 'tar.gz' : 'zip'
+      const fullArchiveName = currentPath.value ? `${currentPath.value}/${archiveName}` : archiveName
+      
+      await api('/compress', { 
+        paths: [filePath], 
+        archive_name: fullArchiveName,
+        format 
+      })
+      
+      loading.close()
+      ElMessage.success('压缩成功！')
+      loadFiles()
+    } catch (e) {
+      loading.close()
+      ElMessage.error('压缩失败: ' + e.message)
+    }
+  } catch (e) {
+    // 用户取消
+  }
+}
+
+// 复制单个文件
+const copySingleFile = (file) => {
+  clipboard.value = {
+    files: [{
+      name: file.name,
+      type: file.type,
+      path: currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+    }],
+    operation: 'copy'
+  }
+  ElMessage.success(`已复制 "${file.name}" 到剪贴板`)
+}
+
+// 剪切单个文件
+const cutSingleFile = (file) => {
+  clipboard.value = {
+    files: [{
+      name: file.name,
+      type: file.type,
+      path: currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+    }],
+    operation: 'cut'
+  }
+  ElMessage.success(`已剪切 "${file.name}" 到剪贴板`)
+}
+
 const formatSize = (bytes) => {
   if (!bytes || bytes === 0) return '0 B'
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
   return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB'
+}
+
+const formatDuration = (ms) => {
+  if (!ms || ms === 0) return '0秒'
+  const seconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  
+  if (hours > 0) {
+    return `${hours}小时${minutes % 60}分${seconds % 60}秒`
+  } else if (minutes > 0) {
+    return `${minutes}分${seconds % 60}秒`
+  } else {
+    return `${seconds}秒`
+  }
 }
 
 const getFileIcon = (name) => {
@@ -1054,7 +1706,54 @@ const handleResize = () => {
 .breadcrumb-item { cursor: pointer; color: #409eff; padding: 4px 8px; border-radius: 4px; transition: background 0.2s; }
 .breadcrumb-item:hover { background: #ecf5ff; }
 .breadcrumb-sep { color: #c0c4cc; }
-.file-list { height: 350px; overflow-y: auto; overflow-x: hidden; }
+.file-list { 
+  height: 350px; 
+  overflow-y: auto; 
+  overflow-x: hidden; 
+  position: relative;
+  transition: all 0.3s;
+}
+.file-list.drag-over {
+  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+  border: 2px dashed #409eff;
+  border-radius: 8px;
+}
+/* 只在空目录时显示大提示 */
+.file-list.drag-over.empty-list::before {
+  content: '📤 拖放文件到这里上传';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 18px;
+  color: #409eff;
+  font-weight: bold;
+  pointer-events: none;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 20px 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+/* 有文件时显示小提示 */
+.file-list.drag-over:not(.empty-list)::after {
+  content: '📤 松开鼠标上传文件';
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  font-size: 14px;
+  color: #fff;
+  background: #409eff;
+  padding: 12px 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.5);
+  z-index: 1000;
+  animation: bounce 0.5s ease-in-out infinite alternate;
+}
+@keyframes bounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-5px); }
+}
 .file-item { display: flex; align-items: center; padding: 8px 12px; border-radius: 6px; margin-bottom: 4px; cursor: pointer; transition: background 0.2s; background: #fafafa; }
 .file-item:hover { background: #ecf5ff; }
 .file-item.selected { background: #e6f0ff; border: 1px solid #409eff; }
@@ -1084,6 +1783,14 @@ const handleResize = () => {
 .upload-text { color: #606266; font-size: 15px; margin-bottom: 8px; }
 .upload-or { color: #c0c4cc; font-size: 13px; margin-bottom: 15px; }
 .upload-hint { color: #909399; font-size: 13px; margin-top: 15px; }
+
+/* 上传统计样式 */
+.upload-stats { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+.stats-row-upload { display: flex; gap: 15px; justify-content: space-around; }
+.stat-item-upload { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.stat-label-upload { color: rgba(255,255,255,0.9); font-size: 13px; }
+.stat-value-upload { color: #fff; font-size: 20px; font-weight: bold; }
+
 .empty-tip { text-align: center; color: #909399; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .empty-icon { font-size: 48px; color: #dcdfe6; margin-bottom: 10px; }
 .quick-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: center; }
@@ -1213,6 +1920,11 @@ const handleResize = () => {
   
   .upload-area { padding: 30px 15px; }
   .upload-icon { font-size: 36px; }
+  
+  /* 上传统计响应式 */
+  .stats-row-upload { flex-direction: column; gap: 10px; }
+  .stat-item-upload { flex-direction: row; justify-content: space-between; width: 100%; }
+  .stat-value-upload { font-size: 18px; }
   
   .empty-tip { padding: 30px 0; }
   .empty-icon { font-size: 40px; }

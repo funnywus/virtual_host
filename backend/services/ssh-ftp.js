@@ -336,6 +336,56 @@ EOF'`);
       });
     });
   }
+
+  // SFTP流式上传文件（避免内存溢出，适合大文件）
+  uploadFileStream(localPath, remotePath) {
+    return new Promise((resolve, reject) => {
+      const fs = require('fs');
+      const conn = new Client();
+
+      conn.on('ready', () => {
+        conn.sftp((err, sftp) => {
+          if (err) {
+            conn.end();
+            return reject(err);
+          }
+
+          const readStream = fs.createReadStream(localPath);
+          const writeStream = sftp.createWriteStream(remotePath);
+          
+          writeStream.on('close', () => {
+            conn.end();
+            resolve({ success: true, message: '上传成功' });
+          });
+
+          writeStream.on('error', (err) => {
+            conn.end();
+            reject(err);
+          });
+
+          readStream.on('error', (err) => {
+            conn.end();
+            reject(err);
+          });
+
+          // 流式传输
+          readStream.pipe(writeStream);
+        });
+      });
+
+      conn.on('error', (err) => {
+        reject(err);
+      });
+
+      conn.connect({
+        host: this.server.ip,
+        port: this.server.port || 22,
+        username: this.server.username,
+        password: this.server.password,
+        readyTimeout: 30000
+      });
+    });
+  }
 }
 
 module.exports = SshFtpService;
