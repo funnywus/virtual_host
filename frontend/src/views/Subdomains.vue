@@ -82,6 +82,7 @@
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="openRateLimitDialog(row)">限流配置</el-dropdown-item>
                 <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
                 <el-dropdown-item @click="openStatusDialog(row)">状态/时长</el-dropdown-item>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
@@ -401,6 +402,68 @@
         <el-button type="primary" @click="handleBatchAdjustDuration()" :loading="batchRenewing" :disabled="!batchRenewDuration">按所选时长调整</el-button>
       </template>
     </el-dialog>
+
+    <!-- 限流配置对话框 -->
+    <el-dialog v-model="rateLimitDialogVisible" title="限流配置" width="550px">
+      <el-alert type="info" :closable="false" style="margin-bottom:20px">
+        <template #title>
+          <div style="font-size:13px;line-height:1.6">
+            限流功能可以防止恶意请求和 DDoS 攻击，保护服务器资源。配置后会自动更新 Nginx 配置并重载。
+          </div>
+        </template>
+      </el-alert>
+      <el-form :model="rateLimitForm" label-width="120px">
+        <el-form-item label="域名">
+          <span class="full-domain">{{ rateLimitForm.fullDomain }}</span>
+        </el-form-item>
+        <el-form-item label="启用限流">
+          <el-switch v-model="rateLimitForm.enabled" />
+          <span style="margin-left:10px;color:#909399;font-size:12px">
+            {{ rateLimitForm.enabled ? '已启用' : '已禁用' }}
+          </span>
+        </el-form-item>
+        <template v-if="rateLimitForm.enabled">
+          <el-form-item label="请求速率">
+            <el-input v-model="rateLimitForm.rate" placeholder="例如: 10r/s" style="width:150px">
+              <template #append>请求/秒</template>
+            </el-input>
+            <div style="margin-top:5px;color:#909399;font-size:12px">
+              格式: 数字 + r/s (每秒) 或 r/m (每分钟)，例如: 10r/s 或 100r/m
+            </div>
+          </el-form-item>
+          <el-form-item label="突发请求数">
+            <el-input-number v-model="rateLimitForm.burst" :min="1" :max="1000" style="width:150px" />
+            <div style="margin-top:5px;color:#909399;font-size:12px">
+              允许的突发请求数量，超过速率限制时的缓冲区大小
+            </div>
+          </el-form-item>
+          <el-form-item label="无延迟处理">
+            <el-switch v-model="rateLimitForm.nodelay" />
+            <span style="margin-left:10px;color:#909399;font-size:12px">
+              {{ rateLimitForm.nodelay ? '立即处理突发请求' : '延迟处理突发请求' }}
+            </span>
+          </el-form-item>
+          <el-form-item label="并发连接数">
+            <el-input-number v-model="rateLimitForm.conn_limit" :min="1" :max="1000" style="width:150px" />
+            <div style="margin-top:5px;color:#909399;font-size:12px">
+              单个 IP 允许的最大并发连接数
+            </div>
+          </el-form-item>
+        </template>
+        <el-form-item label="推荐配置">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <el-button size="small" @click="applyRateLimitPreset('low')">低限制 (100r/s, 200突发)</el-button>
+            <el-button size="small" @click="applyRateLimitPreset('medium')">中限制 (50r/s, 100突发)</el-button>
+            <el-button size="small" @click="applyRateLimitPreset('high')">高限制 (10r/s, 20突发)</el-button>
+            <el-button size="small" @click="applyRateLimitPreset('strict')">严格限制 (5r/s, 10突发)</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rateLimitDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleRateLimitSave" :loading="rateLimitSaving">保存并应用</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -575,6 +638,19 @@ const remarkForm = reactive({
   id: null,
   fullDomain: '',
   remark: ''
+})
+
+// 限流配置相关
+const rateLimitDialogVisible = ref(false)
+const rateLimitSaving = ref(false)
+const rateLimitForm = reactive({
+  id: null,
+  fullDomain: '',
+  enabled: false,
+  rate: '10r/s',
+  burst: 20,
+  nodelay: true,
+  conn_limit: 10
 })
 
 function openRemarkDialog(row) {
@@ -855,6 +931,74 @@ function handleShare(row) {
     document.body.removeChild(textarea)
     ElMessage.success('分享信息已复制到剪贴板')
   })
+}
+
+// 限流配置功能
+function openRateLimitDialog(row) {
+  rateLimitForm.id = row.id
+  rateLimitForm.fullDomain = `${row.subdomain}.${row.main_domain}`
+  rateLimitForm.enabled = row.rate_limit_enabled === 1
+  rateLimitForm.rate = row.rate_limit_rate || '10r/s'
+  rateLimitForm.burst = row.rate_limit_burst || 20
+  rateLimitForm.nodelay = row.rate_limit_nodelay !== 0
+  rateLimitForm.conn_limit = row.rate_limit_conn || 10
+  rateLimitDialogVisible.value = true
+}
+
+function applyRateLimitPreset(preset) {
+  rateLimitForm.enabled = true
+  rateLimitForm.nodelay = true
+  
+  switch (preset) {
+    case 'low':
+      rateLimitForm.rate = '100r/s'
+      rateLimitForm.burst = 200
+      rateLimitForm.conn_limit = 50
+      break
+    case 'medium':
+      rateLimitForm.rate = '50r/s'
+      rateLimitForm.burst = 100
+      rateLimitForm.conn_limit = 30
+      break
+    case 'high':
+      rateLimitForm.rate = '10r/s'
+      rateLimitForm.burst = 20
+      rateLimitForm.conn_limit = 10
+      break
+    case 'strict':
+      rateLimitForm.rate = '5r/s'
+      rateLimitForm.burst = 10
+      rateLimitForm.conn_limit = 5
+      break
+  }
+}
+
+async function handleRateLimitSave() {
+  rateLimitSaving.value = true
+  try {
+    const res = await api.put(`/dns/subdomains/${rateLimitForm.id}/rate-limit`, {
+      enabled: rateLimitForm.enabled,
+      rate: rateLimitForm.rate,
+      burst: rateLimitForm.burst,
+      nodelay: rateLimitForm.nodelay,
+      conn_limit: rateLimitForm.conn_limit
+    })
+    
+    if (res.synced) {
+      ElMessage.success('限流配置已保存并同步到服务器')
+    } else if (res.error) {
+      ElMessage.warning(`限流配置已保存，但同步失败: ${res.error}`)
+    } else {
+      ElMessage.success('限流配置已保存')
+    }
+    
+    rateLimitDialogVisible.value = false
+    loadData()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '保存失败')
+  } finally {
+    rateLimitSaving.value = false
+  }
 }
 </script>
 

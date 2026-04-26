@@ -3,6 +3,33 @@
 const NGINX_PATH = '/www/server/panel/vhost/nginx';
 const CERT_PATH = '/www/certs';
 
+// 限流配置模板
+const rateLimitConfig = (options = {}) => {
+  const {
+    enabled = false,
+    rate = '10r/s',        // 每秒请求数
+    burst = 20,            // 突发请求数
+    nodelay = true,        // 是否延迟
+    conn_limit = 10        // 并发连接数限制
+  } = options;
+
+  if (!enabled) return '';
+
+  return `
+    # 限流配置
+    limit_req_zone $binary_remote_addr zone=one:10m rate=${rate};
+    limit_conn_zone $binary_remote_addr zone=addr:10m;
+    
+    # 应用限流
+    limit_req zone=one burst=${burst}${nodelay ? ' nodelay' : ''};
+    limit_conn addr ${conn_limit};
+    
+    # 限流错误页面
+    limit_req_status 429;
+    limit_conn_status 429;
+`;
+};
+
 // 获取证书路径 (使用主域名的通配符证书)
 function getCertPaths(domain) {
   const parts = domain.split('.');
@@ -14,7 +41,10 @@ function getCertPaths(domain) {
 }
 
 // HTTP基础模板
-const httpTemplate = (domain, rootPath) => `server {
+const httpTemplate = (domain, rootPath, rateLimitOpts = {}) => {
+  const rateLimitConf = rateLimitConfig(rateLimitOpts);
+  
+  return `server {
     listen 80;
     server_name ${domain};
     index index.php index.html index.htm;
@@ -23,7 +53,7 @@ const httpTemplate = (domain, rootPath) => `server {
     # 日志
     access_log /www/wwwlogs/${domain}.log;
     error_log /www/wwwlogs/${domain}.error.log;
-
+${rateLimitConf}
     # 禁止访问隐藏文件
     location ~ /\\. {
         deny all;
@@ -48,12 +78,14 @@ const httpTemplate = (domain, rootPath) => `server {
         access_log off;
     }
 }`;
+};
 
 // HTTPS模板
-const httpsTemplate = (domain, rootPath, sslCertPath, sslKeyPath) => {
+const httpsTemplate = (domain, rootPath, sslCertPath, sslKeyPath, rateLimitOpts = {}) => {
   const certPaths = getCertPaths(domain);
   const certPath = sslCertPath || certPaths.fullchain;
   const keyPath = sslKeyPath || certPaths.key;
+  const rateLimitConf = rateLimitConfig(rateLimitOpts);
   
   return `server {
     listen 80;
@@ -80,7 +112,7 @@ server {
     # 日志
     access_log /www/wwwlogs/${domain}.log;
     error_log /www/wwwlogs/${domain}.error.log;
-
+${rateLimitConf}
     # 禁止访问隐藏文件
     location ~ /\\. {
         deny all;
@@ -130,6 +162,7 @@ const proxyTemplate = (domain, proxyPass) => `server {
 // 生成配置
 function generateConfig(type, domain, options = {}) {
   const rootPath = options.rootPath || `/www/wwwroot/ftp/${domain}`;
+  const rateLimitOpts = options.rateLimit || {};
   
   // 如果提供了mainDomain，使用它来获取证书路径
   let sslCertPath = options.sslCertPath;
@@ -142,13 +175,13 @@ function generateConfig(type, domain, options = {}) {
   
   switch (type) {
     case 'http':
-      return httpTemplate(domain, rootPath);
+      return httpTemplate(domain, rootPath, rateLimitOpts);
     case 'https':
-      return httpsTemplate(domain, rootPath, sslCertPath, sslKeyPath);
+      return httpsTemplate(domain, rootPath, sslCertPath, sslKeyPath, rateLimitOpts);
     case 'proxy':
       return proxyTemplate(domain, options.proxyPass || 'http://127.0.0.1:3000');
     default:
-      return httpTemplate(domain, rootPath);
+      return httpTemplate(domain, rootPath, rateLimitOpts);
   }
 }
 
@@ -161,6 +194,7 @@ module.exports = {
   generateConfig,
   getConfigPath,
   getCertPaths,
+  rateLimitConfig,
   NGINX_PATH,
   CERT_PATH,
   templates: {

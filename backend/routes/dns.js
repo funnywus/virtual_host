@@ -783,6 +783,93 @@ router.put('/subdomains/:id/remark', async (req, res) => {
   }
 });
 
+// 更新子域名限流配置
+router.put('/subdomains/:id/rate-limit', async (req, res) => {
+  try {
+    const { enabled, rate, burst, nodelay, conn_limit } = req.body;
+    const sub = await db.get(`
+      SELECT s.*, d.domain as main_domain, sv.ip, sv.port, sv.username, sv.password
+      FROM subdomains s 
+      LEFT JOIN domains d ON s.domain_id = d.id 
+      LEFT JOIN servers sv ON s.server_id = sv.id 
+      WHERE s.id = ?
+    `, [req.params.id]);
+    
+    if (!sub) {
+      return res.status(404).json({ error: 'Subdomain not found' });
+    }
+
+    // 更新数据库中的限流配置
+    await db.run(
+      `UPDATE subdomains SET 
+        rate_limit_enabled = ?, 
+        rate_limit_rate = ?, 
+        rate_limit_burst = ?, 
+        rate_limit_nodelay = ?, 
+        rate_limit_conn = ? 
+      WHERE id = ?`,
+      [enabled ? 1 : 0, rate || '10r/s', burst || 20, nodelay ? 1 : 0, conn_limit || 10, req.params.id]
+    );
+
+    // 如果有关联服务器，重新生成并同步 Nginx 配置
+    if (sub.server_id && sub.ip) {
+      try {
+        const nginxConfigService = require('../services/nginx-config');
+        const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+        const ftpHomeDir = `/www/wwwroot/ftp/${fullDomain}`;
+        
+        // 确定配置类型（从现有配置中判断）
+        const configType = sub.nginx_config && sub.nginx_config.includes('listen 443') ? 'https' : 'http';
+        
+        // 生成新配置（包含限流设置）
+        const config = nginxConfigService.generateConfig(configType, fullDomain, { 
+          rootPath: ftpHomeDir,
+          mainDomain: sub.main_domain,
+          rateLimit: {
+            enabled: enabled,
+            rate: rate || '10r/s',
+            burst: burst || 20,
+            nodelay: nodelay !== false,
+            conn_limit: conn_limit || 10
+          }
+        });
+        
+        await db.run('UPDATE subdomains SET nginx_config = ? WHERE id = ?', [config, req.params.id]);
+
+        // 同步到服务器
+        const SshFtpService = require('../services/ssh-ftp');
+        const sshService = new SshFtpService({
+          ip: sub.ip,
+          port: sub.port,
+          username: sub.username,
+          password: sub.password
+        });
+
+        const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
+        const escapedConfig = config.replace(/'/g, "'\\''");
+        await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
+        
+        // 测试并重载 Nginx
+        const testResult = await sshService.exec('sudo nginx -t 2>&1');
+        if (testResult.success || testResult.output.includes('successful')) {
+          await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
+          await db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [req.params.id]);
+          res.json({ message: '限流配置已更新并同步到服务器', synced: true });
+        } else {
+          res.json({ message: '限流配置已保存，但 Nginx 配置测试失败', synced: false, error: testResult.output });
+        }
+      } catch (err) {
+        console.error('Nginx sync error:', err);
+        res.json({ message: '限流配置已保存，但同步到服务器失败', synced: false, error: err.message });
+      }
+    } else {
+      res.json({ message: '限流配置已更新', synced: false });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 更新子域名
 router.put('/subdomains/:id', async (req, res) => {
   try {
