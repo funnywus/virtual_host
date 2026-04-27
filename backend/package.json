@@ -1,6 +1,6 @@
 {
   "name": "virtual-host-manager",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Virtual Host Management System with DNS and FTP",
   "main": "server.js",
   "scripts": {

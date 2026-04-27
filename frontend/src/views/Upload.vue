@@ -13,6 +13,7 @@
           验证并进入
         </el-button>
         <p style="margin-top:20px;color:#909399;font-size:12px">如没有授权码，请联系管理员获取</p>
+        <div class="auth-version">v2.0</div>
       </div>
       <div class="auth-contact" @click="showContactDialog = true">
         <el-icon><Service /></el-icon>
@@ -82,11 +83,30 @@
           <div class="stat-value">{{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
           <div class="stat-label">剩余空间</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-value">
-            {{ remainingDays !== null ? (remainingDays <= 0 ? '已过期' : remainingDays + ' 天') : '永久' }}
+        <div class="stat-card stat-card-time" :class="{ 'expired': remainingDays !== null && remainingDays <= 0, 'warning': remainingDays !== null && remainingDays > 0 && remainingDays <= 7 }">
+          <div class="stat-icon">
+            <el-icon v-if="remainingDays !== null && remainingDays <= 0" style="font-size:24px;color:#FF3B30"><WarningFilled /></el-icon>
+            <el-icon v-else-if="remainingDays !== null && remainingDays <= 7" style="font-size:24px;color:#FF9500"><Clock /></el-icon>
+            <el-icon v-else style="font-size:24px;color:#34C759"><CircleCheck /></el-icon>
           </div>
-          <div class="stat-label">剩余时间</div>
+          <div class="stat-value stat-value-time">
+            <template v-if="remainingDays === null">
+              <span style="font-size:20px">∞</span>
+            </template>
+            <template v-else-if="remainingDays <= 0">
+              <span style="color:#FF3B30">已过期</span>
+            </template>
+            <template v-else>
+              <span class="days-number">{{ remainingDays }}</span>
+              <span class="days-unit">天</span>
+            </template>
+          </div>
+          <div class="stat-label">
+            <template v-if="remainingDays === null">永久有效</template>
+            <template v-else-if="remainingDays <= 0">服务已到期</template>
+            <template v-else-if="remainingDays <= 7">即将到期</template>
+            <template v-else>剩余时间</template>
+          </div>
         </div>
       </div>
 
@@ -113,7 +133,7 @@
               <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
               <el-button @click="openNewFileDialog"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
               <el-tooltip content="刷新文件列表" placement="top">
-                <el-button @click="loadFiles" :loading="loading" circle><el-icon><Refresh /></el-icon></el-button>
+                <el-button @click="loadFiles(false)" :loading="loading" circle><el-icon><Refresh /></el-icon></el-button>
               </el-tooltip>
             </div>
           </div>
@@ -274,7 +294,10 @@
         </div>
       </div>
 
-      <div class="footer">文件上传系统</div>
+      <div class="footer">
+        <span>文件上传系统</span>
+        <span class="version">v2.0</span>
+      </div>
 
       <!-- 上传对话框 -->
       <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px" :fullscreen="isMobile">
@@ -571,7 +594,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock } from '@element-plus/icons-vue'
+import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
 
@@ -2028,6 +2051,21 @@ const handleResize = () => {
 .auth-logo { font-size: 48px; margin-bottom: 10px; }
 .auth-title { margin-bottom: 10px; color: #1c1c1e; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; }
 .auth-subtitle { color: #8e8e93; margin-bottom: 30px; font-size: 14px; font-weight: 400; }
+.auth-version {
+  margin-top: 20px;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.1) 0%, rgba(0, 122, 255, 0.05) 100%);
+  border: 0.5px solid rgba(0, 122, 255, 0.2);
+  border-radius: 14px;
+  color: #007AFF;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  display: inline-block;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
+}
 .main-container { max-width: 1200px; margin: 0 auto; padding: 20px; position: relative; z-index: 1; }
 .header { 
   display: flex; 
@@ -2068,6 +2106,11 @@ const handleResize = () => {
   border: 0.5px solid rgba(0, 0, 0, 0.06);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
 }
 .stat-card::before {
   content: '';
@@ -2124,6 +2167,7 @@ const handleResize = () => {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  margin: 0;
 }
 .stat-card:nth-child(1) .stat-value {
   background: linear-gradient(135deg, #007AFF 0%, #0051D5 100%);
@@ -2134,13 +2178,80 @@ const handleResize = () => {
 .stat-label { 
   color: #6e6e73; 
   font-size: 12px; 
-  margin-top: 8px;
+  margin-top: 6px;
+  margin-bottom: 0;
   font-weight: 600;
   position: relative;
   z-index: 1;
   letter-spacing: 0.3px;
   text-transform: uppercase;
   opacity: 0.85;
+}
+
+/* 剩余时间卡片特殊样式 */
+.stat-card-time {
+  gap: 4px;
+}
+.stat-card-time .stat-value {
+  margin-top: 0 !important;
+}
+.stat-card-time .stat-label {
+  margin-top: 4px !important;
+}
+.stat-card-time.expired {
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.12) 0%, rgba(255, 59, 48, 0.06) 100%) !important;
+  border-color: rgba(255, 59, 48, 0.25) !important;
+}
+.stat-card-time.warning {
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.12) 0%, rgba(255, 149, 0, 0.06) 100%) !important;
+  border-color: rgba(255, 149, 0, 0.25) !important;
+}
+.stat-icon {
+  margin-bottom: 2px;
+  animation: iconPulse 2s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+@keyframes iconPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+.stat-value-time {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  background: none !important;
+  -webkit-text-fill-color: inherit !important;
+}
+.days-number {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+  background: linear-gradient(135deg, #1c1c1e 0%, #3c3c43 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-card-time.expired .days-number,
+.stat-card-time.expired .stat-value-time {
+  background: linear-gradient(135deg, #FF3B30 0%, #D70015 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-card-time.warning .days-number {
+  background: linear-gradient(135deg, #FF9500 0%, #FF6B00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.days-unit {
+  font-size: 16px;
+  font-weight: 600;
+  color: #6e6e73;
+  opacity: 0.8;
 }
 
 /* 续费提醒样式 */
@@ -2589,7 +2700,32 @@ const handleResize = () => {
 .empty-tip { text-align: center; color: #909399; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .empty-icon { font-size: 48px; color: #dcdfe6; margin-bottom: 10px; }
 .quick-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: center; }
-.footer { text-align: center; padding: 20px; color: rgba(255,255,255,0.7); font-size: 13px; }
+.footer { 
+  text-align: center; 
+  padding: 20px; 
+  color: #86868B; 
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+.footer .version {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.1) 0%, rgba(0, 122, 255, 0.05) 100%);
+  border: 0.5px solid rgba(0, 122, 255, 0.2);
+  border-radius: 12px;
+  color: #007AFF;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
+}
 .editor-container { border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden; }
 .editor-container :deep(.cm-editor) { font-size: 14px; }
 .editor-container :deep(.cm-scroller) { font-family: 'Fira Code', 'Monaco', 'Menlo', monospace; }

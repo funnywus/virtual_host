@@ -50,9 +50,22 @@
           </p>
         </template>
       </el-table-column>
-      <el-table-column prop="created_at" label="添加时间">
+      <el-table-column prop="created_at" label="添加时间" width="160">
         <template #default="{ row }">
-          <span style="font-size:12px;color:#909399">{{ row.created_at }}</span>
+          <span style="font-size:12px;color:#909399">{{ formatDateTime(row.created_at) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="expire_at" label="到期时间" width="180">
+        <template #default="{ row }">
+          <div v-if="row.expire_at" style="display:flex;flex-direction:column;gap:2px">
+            <span :style="{ fontSize: '12px', color: getExpireColor(row.expire_at), fontWeight: '500' }">
+              {{ formatDateTime(row.expire_at) }}
+            </span>
+            <span :style="{ fontSize: '11px', color: getExpireColor(row.expire_at) }">
+              {{ getExpireDaysText(row.expire_at) }}
+            </span>
+          </div>
+          <span v-else style="font-size:12px;color:#909399">永久</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
@@ -89,6 +102,17 @@
           <el-select v-model="form.tagList" multiple filterable allow-create default-first-option placeholder="选择或输入标签" style="width:100%" @change="onTagChange">
             <el-option v-for="t in dataStore.serverTags" :key="t.id" :label="t.name" :value="t.name" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="到期时间">
+          <el-date-picker
+            v-model="form.expire_at"
+            type="datetime"
+            placeholder="选择到期时间"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            style="width:100%"
+            clearable
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -226,7 +250,7 @@ const addingDnsRecord = ref(false)
 const currentDomain = ref(null)
 const searchKeyword = ref('')
 const dnsSearchKeyword = ref('')
-const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [] })
+const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [], expire_at: null })
 const dnsRecords = reactive({ platform: '', records: [] })
 const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
 const dnsCurrentPage = ref(1)
@@ -323,7 +347,13 @@ function getSslStatusText(status) {
 
 function openDialog(row = null) {
   if (row) {
-    Object.assign(form, { id: row.id, domain: row.domain, aliyun_config_id: row.aliyun_config_id, tagList: parseTags(row.tags) })
+    Object.assign(form, { 
+      id: row.id, 
+      domain: row.domain, 
+      aliyun_config_id: row.aliyun_config_id, 
+      tagList: parseTags(row.tags),
+      expire_at: row.expire_at || null
+    })
   } else {
     const defaultConfig = dataStore.aliyunConfigs.find(c => c.is_default === 1)
     const defaultTag = dataStore.serverTags.find(t => t.is_default === 1)
@@ -331,7 +361,8 @@ function openDialog(row = null) {
       id: null, 
       domain: '', 
       aliyun_config_id: defaultConfig?.id || null, 
-      tagList: defaultTag ? [defaultTag.name] : [] 
+      tagList: defaultTag ? [defaultTag.name] : [],
+      expire_at: null
     })
   }
   dialogVisible.value = true
@@ -349,11 +380,15 @@ function viewSubdomains(row) {
 async function handleSave() {
   saving.value = true
   try {
-    const data = { aliyun_config_id: form.aliyun_config_id, tags: form.tagList.join(',') }
+    const data = { 
+      aliyun_config_id: form.aliyun_config_id, 
+      tags: form.tagList.join(','),
+      expire_at: form.expire_at || null
+    }
     if (form.id) {
       await api.put(`/dns/domains/${form.id}`, data)
     } else {
-      await api.post('/dns/domains', { ...form, tags: form.tagList.join(',') })
+      await api.post('/dns/domains', { ...form, tags: form.tagList.join(','), expire_at: form.expire_at || null })
     }
     ElMessage.success('保存成功')
     dialogVisible.value = false
@@ -475,6 +510,50 @@ async function toggleDnsRecordStatus(row, status) {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+// 时间格式化函数
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return dateStr
+  
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  const s = String(date.getSeconds()).padStart(2, '0')
+  
+  return `${y}-${m}-${d} ${h}:${min}:${s}`
+}
+
+// 获取到期时间颜色
+function getExpireColor(expireAt) {
+  if (!expireAt) return '#909399'
+  
+  const now = new Date()
+  const expire = new Date(expireAt)
+  const daysLeft = Math.ceil((expire - now) / (1000 * 60 * 60 * 24))
+  
+  if (daysLeft < 0) return '#FF3B30' // 已过期 - 红色
+  if (daysLeft <= 7) return '#FF9500' // 7天内 - 橙色
+  if (daysLeft <= 30) return '#FFCC00' // 30天内 - 黄色
+  return '#34C759' // 正常 - 绿色
+}
+
+// 获取剩余天数文本
+function getExpireDaysText(expireAt) {
+  if (!expireAt) return ''
+  
+  const now = new Date()
+  const expire = new Date(expireAt)
+  const daysLeft = Math.ceil((expire - now) / (1000 * 60 * 60 * 24))
+  
+  if (daysLeft < 0) return `已过期 ${Math.abs(daysLeft)} 天`
+  if (daysLeft === 0) return '今天到期'
+  if (daysLeft === 1) return '明天到期'
+  return `还剩 ${daysLeft} 天`
 }
 </script>
 

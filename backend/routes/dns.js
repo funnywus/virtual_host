@@ -216,10 +216,10 @@ router.put('/domains/:id/dns-records/:recordId/status', async (req, res) => {
 // 添加主域名
 router.post('/domains', async (req, res) => {
   try {
-    const { domain, aliyun_config_id, tags } = req.body;
+    const { domain, aliyun_config_id, tags, expire_at } = req.body;
     const result = await db.run(
-      'INSERT INTO domains (domain, user_id, aliyun_config_id, tags) VALUES (?, ?, ?, ?)',
-      [domain, req.user.id, aliyun_config_id || null, tags || '']
+      'INSERT INTO domains (domain, user_id, aliyun_config_id, tags, expire_at) VALUES (?, ?, ?, ?, ?)',
+      [domain, req.user.id, aliyun_config_id || null, tags || '', expire_at || null]
     );
     res.json({ id: result.lastID, message: 'Domain added' });
   } catch (err) {
@@ -230,8 +230,8 @@ router.post('/domains', async (req, res) => {
 // 更新主域名
 router.put('/domains/:id', async (req, res) => {
   try {
-    const { aliyun_config_id, tags } = req.body;
-    await db.run('UPDATE domains SET aliyun_config_id = ?, tags = ? WHERE id = ?', [aliyun_config_id || null, tags || '', req.params.id]);
+    const { aliyun_config_id, tags, expire_at } = req.body;
+    await db.run('UPDATE domains SET aliyun_config_id = ?, tags = ?, expire_at = ? WHERE id = ?', [aliyun_config_id || null, tags || '', expire_at || null, req.params.id]);
     res.json({ message: 'Domain updated' });
   } catch (err) {
     res.status(500).json({ error: err.message });
