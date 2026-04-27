@@ -48,7 +48,7 @@
             </el-table-column>
             <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
-                <el-button type="success" size="small" @click="downloadBackup(row)">
+                <el-button type="success" size="small" @click="downloadBackup(row)" :loading="downloadingBackup === row.filename">
                   <el-icon style="margin-right:3px"><Download /></el-icon>
                   下载
                 </el-button>
@@ -90,6 +90,7 @@ import api from '@/api'
 const activeTab = ref('backup')
 const backing = ref(false)
 const loadingBackups = ref(false)
+const downloadingBackup = ref('')
 const backupList = ref([])
 const systemInfo = reactive({
   nodeVersion: '-',
@@ -110,7 +111,7 @@ async function handleBackup() {
     ElMessage.success(`备份成功！文件: ${res.filename}`)
     loadBackupList()
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '备份失败')
+    ElMessage.error(err.message || '备份失败')
   } finally {
     backing.value = false
   }
@@ -123,22 +124,34 @@ async function loadBackupList() {
     const res = await api.get('/system/backups')
     backupList.value = res.backups || []
   } catch (err) {
-    ElMessage.error('加载备份列表失败')
+    ElMessage.error(err.message || '加载备份列表失败')
   } finally {
     loadingBackups.value = false
   }
 }
 
 // 下载备份
-function downloadBackup(backup) {
-  const url = `/api/system/backup/download/${backup.filename}`
-  const link = document.createElement('a')
-  link.href = url
-  link.download = backup.filename
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  ElMessage.success('开始下载备份文件')
+async function downloadBackup(backup) {
+  downloadingBackup.value = backup.filename
+
+  try {
+    const blob = await api.get(`/system/backup/download/${encodeURIComponent(backup.filename)}`, {
+      responseType: 'blob'
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = backup.filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('开始下载备份文件')
+  } catch (err) {
+    ElMessage.error(err.message || '下载备份失败')
+  } finally {
+    downloadingBackup.value = ''
+  }
 }
 
 // 删除备份
@@ -147,12 +160,12 @@ async function deleteBackup(backup) {
     await ElMessageBox.confirm(`确定删除备份文件 "${backup.filename}"？`, '确认删除', {
       type: 'warning'
     })
-    await api.delete(`/system/backup/${backup.filename}`)
+    await api.delete(`/system/backup/${encodeURIComponent(backup.filename)}`)
     ElMessage.success('删除成功')
     loadBackupList()
   } catch (err) {
     if (err !== 'cancel') {
-      ElMessage.error(err.response?.data?.error || '删除失败')
+      ElMessage.error(err.message || '删除失败')
     }
   }
 }
