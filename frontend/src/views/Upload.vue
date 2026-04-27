@@ -92,7 +92,7 @@
               </el-radio-group>
               <el-button type="primary" @click="showUploadDialog = true"><el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件</el-button>
               <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
-              <el-button @click="showNewFileDialog = true"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
+              <el-button @click="openNewFileDialog"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
               <el-button @click="loadFiles" :loading="loading"><el-icon style="margin-right:5px"><Refresh /></el-icon> 刷新</el-button>
             </div>
           </div>
@@ -330,15 +330,36 @@
       </el-dialog>
 
       <!-- 新建文件对话框 -->
-      <el-dialog v-model="showNewFileDialog" title="新建文件" width="500px" :fullscreen="isMobile">
-        <el-form label-width="80px">
+      <el-dialog v-model="showNewFileDialog" title="新建文件" width="600px" :fullscreen="isMobile">
+        <el-form label-width="90px">
+          <el-form-item label="文件类型">
+            <el-select v-model="newFileType" placeholder="选择文件类型" size="large" style="width:100%" @change="handleFileTypeChange">
+              <el-option label="HTML 文件 (.html)" value="html" />
+              <el-option label="CSS 样式 (.css)" value="css" />
+              <el-option label="JavaScript (.js)" value="js" />
+              <el-option label="JSON 数据 (.json)" value="json" />
+              <el-option label="文本文件 (.txt)" value="txt" />
+              <el-option label="Markdown (.md)" value="md" />
+              <el-option label="PHP 文件 (.php)" value="php" />
+              <el-option label="Python (.py)" value="py" />
+              <el-option label="其他" value="other" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="文件名">
-            <el-input v-model="newFileName" placeholder="例如: index.html" size="large">
+            <el-input v-model="newFileName" placeholder="例如: index" size="large">
               <template #prefix><el-icon><Document /></el-icon></template>
+              <template #suffix v-if="newFileType !== 'other'">
+                <span style="color:#909399">.{{ newFileType }}</span>
+              </template>
             </el-input>
           </el-form-item>
+          <el-form-item label="使用模板">
+            <el-switch v-model="useTemplate" :disabled="!hasTemplate" />
+            <span style="margin-left:10px;color:#909399;font-size:12px" v-if="hasTemplate">使用 {{ newFileType.toUpperCase() }} 基础模板</span>
+            <span style="margin-left:10px;color:#c0c4cc;font-size:12px" v-else>该类型暂无模板</span>
+          </el-form-item>
           <el-form-item label="文件内容">
-            <el-input v-model="newFileContent" type="textarea" :rows="8" placeholder="可选，留空创建空文件" />
+            <el-input v-model="newFileContent" type="textarea" :rows="10" placeholder="可选，留空创建空文件" />
           </el-form-item>
         </el-form>
         <template #footer>
@@ -515,7 +536,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
@@ -793,6 +814,123 @@ const isPreviewableFile = (name) => {
   return previewableExts.includes(ext)
 }
 
+// 文件模板
+const fileTemplates = {
+  html: `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的网页</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f7;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1d1d1f;
+            margin-top: 0;
+        }
+        p {
+            color: #86868b;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>欢迎来到我的网站</h1>
+        <p>这是一个简单的 HTML 页面模板。</p>
+        <p>您可以在这里添加您的内容。</p>
+    </div>
+</body>
+</html>`,
+  css: `/* 基础样式重置 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+}
+
+/* 容器样式 */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}`,
+  js: `// JavaScript 文件
+'use strict';
+
+// 页面加载完成后执行
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('页面加载完成');
+    
+    // 在这里添加您的代码
+});`,
+  json: `{
+  "name": "my-project",
+  "version": "1.0.0",
+  "description": "项目描述"
+}`,
+  md: `# 标题
+
+## 副标题
+
+这是一个 Markdown 文档。
+
+### 功能列表
+
+- 项目 1
+- 项目 2
+- 项目 3
+
+### 代码示例
+
+\`\`\`javascript
+console.log('Hello World');
+\`\`\``,
+  php: `<?php
+// PHP 文件
+header('Content-Type: text/html; charset=utf-8');
+
+echo "Hello World";
+?>`,
+  py: `#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+def main():
+    print("Hello World")
+
+if __name__ == "__main__":
+    main()`
+}
+
+// 处理文件类型变化
+const handleFileTypeChange = () => {
+  // 如果有模板且开启了使用模板，则填充模板内容
+  if (useTemplate.value && fileTemplates[newFileType.value]) {
+    newFileContent.value = fileTemplates[newFileType.value]
+  } else {
+    newFileContent.value = ''
+  }
+}
+
 // 可解压的文件类型
 const compressedExts = ['zip', 'gz', 'tgz', 'tar', '7z']
 const isCompressedFile = (name) => {
@@ -839,8 +977,24 @@ const showUploadDialog = ref(false)
 const showMkdirDialog = ref(false)
 const showNewFileDialog = ref(false)
 const newFileName = ref('')
+const newFileType = ref('html')
+const useTemplate = ref(true)
 const newFileContent = ref('')
 const creatingFile = ref(false)
+
+// 检查是否有模板
+const hasTemplate = computed(() => {
+  return fileTemplates.hasOwnProperty(newFileType.value)
+})
+
+// 监听模板开关变化
+watch(useTemplate, (val) => {
+  if (val && fileTemplates[newFileType.value]) {
+    newFileContent.value = fileTemplates[newFileType.value]
+  } else if (!val) {
+    newFileContent.value = ''
+  }
+})
 const showTutorialDialog = ref(false)
 const showQuickTutorial = ref(false)
 const showContactDialog = ref(false)
@@ -1406,13 +1560,36 @@ const createFolder = async () => {
 const createFile = async () => {
   if (!newFileName.value) { ElMessage.warning('请输入文件名'); return }
   creatingFile.value = true
-  await api('/create-file', { path: currentPath.value, name: newFileName.value, content: newFileContent.value || '' })
+  
+  // 构建完整文件名（添加扩展名）
+  const fullFileName = newFileType.value === 'other' 
+    ? newFileName.value 
+    : newFileName.value.endsWith(`.${newFileType.value}`)
+      ? newFileName.value
+      : `${newFileName.value}.${newFileType.value}`
+  
+  await api('/create-file', { path: currentPath.value, name: fullFileName, content: newFileContent.value || '' })
   ElMessage.success('创建成功')
   showNewFileDialog.value = false
+  
+  // 重置表单
   newFileName.value = ''
+  newFileType.value = 'html'
+  useTemplate.value = true
   newFileContent.value = ''
+  
   await loadFiles()
   creatingFile.value = false
+}
+
+// 打开新建文件对话框
+const openNewFileDialog = () => {
+  // 重置表单
+  newFileName.value = ''
+  newFileType.value = 'html'
+  useTemplate.value = true
+  newFileContent.value = fileTemplates.html
+  showNewFileDialog.value = true
 }
 
 const deleteFile = async (file) => {
