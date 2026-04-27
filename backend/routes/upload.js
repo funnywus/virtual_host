@@ -204,7 +204,23 @@ router.post('/list', async (req, res) => {
       
       const permissions = parts[0];
       const size = parseInt(parts[4]) || 0;
-      const date = `${parts[5]} ${parts[6]} ${parts[7]}`;
+      // ls -la 输出格式: 月 日 时间/年份
+      // 例如: Jan 15 10:30 或 Jan 15  2024
+      const month = parts[5];
+      const day = parts[6];
+      const timeOrYear = parts[7];
+      
+      // 构建标准日期字符串
+      let dateStr;
+      if (timeOrYear.includes(':')) {
+        // 包含时间，说明是今年的文件
+        const currentYear = new Date().getFullYear();
+        dateStr = `${currentYear} ${month} ${day} ${timeOrYear}`;
+      } else {
+        // 是年份，说明是去年或更早的文件
+        dateStr = `${timeOrYear} ${month} ${day} 00:00`;
+      }
+      
       const name = parts.slice(8).join(' ');
       
       if (name === '.' || name === '..') return null;
@@ -213,7 +229,7 @@ router.post('/list', async (req, res) => {
         name,
         type: permissions.startsWith('d') ? 'directory' : 'file',
         size,
-        date,
+        date: new Date(dateStr).toISOString(),
         permissions
       };
     }).filter(f => f);
