@@ -182,6 +182,18 @@
                       <el-dropdown-item v-if="file.type === 'file' && isPreviewableFile(file.name)" @click="previewFile(file)">
                         <el-icon><View /></el-icon>预览
                       </el-dropdown-item>
+                      <el-dropdown-item divided v-if="file.type === 'file' && isCompressedFile(file.name)" @click="extractFile(file)">
+                        <el-icon><FolderOpened /></el-icon>解压到当前目录
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="compressSingleFile(file)">
+                        <el-icon><Files /></el-icon>压缩
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="copySingleFile(file)">
+                        <el-icon><DocumentCopy /></el-icon>复制
+                      </el-dropdown-item>
+                      <el-dropdown-item @click="cutSingleFile(file)">
+                        <el-icon><Scissor /></el-icon>剪切
+                      </el-dropdown-item>
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
@@ -1083,20 +1095,38 @@ const copyWechat = () => {
   ElMessage.success('微信号已复制')
 }
 
-const loadFiles = async () => {
+const loadFiles = async (skipUsage = false) => {
   loading.value = true
-  const res = await api('/list', { path: currentPath.value })
-  files.value = res.files.sort((a, b) => { 
-    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
-    return a.name.localeCompare(b.name) 
-  })
-  const usage = await api('/usage')
-  usedSize.value = usage.used_size || 0
-  loading.value = false
+  try {
+    // 并行请求文件列表和空间使用情况
+    const promises = [api('/list', { path: currentPath.value })]
+    
+    // 空间使用情况不需要每次都获取，只在必要时获取
+    if (!skipUsage) {
+      promises.push(api('/usage'))
+    }
+    
+    const results = await Promise.all(promises)
+    
+    // 处理文件列表
+    files.value = results[0].files.sort((a, b) => { 
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      return a.name.localeCompare(b.name) 
+    })
+    
+    // 处理空间使用情况（如果有）
+    if (results[1]) {
+      usedSize.value = results[1].used_size || 0
+    }
+  } catch (err) {
+    ElMessage.error('加载失败: ' + err.message)
+  } finally {
+    loading.value = false
+  }
 }
 
-const navigateTo = (path) => { currentPath.value = path; selectedFiles.value = []; loadFiles() }
-const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); selectedFiles.value = []; loadFiles() }
+const navigateTo = (path) => { currentPath.value = path; selectedFiles.value = []; loadFiles(true) } // 导航时跳过空间检查
+const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); selectedFiles.value = []; loadFiles(true) } // 返回时跳过空间检查
 
 const handleFileSelect = (e) => { checkAndAddFiles(e.target.files, false); e.target.value = '' }
 const handleFolderSelect = (e) => { checkAndAddFiles(e.target.files, true); e.target.value = '' }

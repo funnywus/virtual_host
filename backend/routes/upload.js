@@ -6,6 +6,7 @@ const multer = require('multer');
 const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
 const WorkerPool = require('../utils/worker-pool');
+const sshPool = require('../utils/ssh-connection-pool');
 
 const router = express.Router();
 
@@ -133,7 +134,7 @@ async function findFtpByAuthCode(auth_code) {
   return ftpAccounts.find(f => getDomainAuthCode(f.full_domain) === inputCode);
 }
 
-// 获取空间使用情况
+// 获取空间使用情况（使用连接池优化）
 router.post('/usage', async (req, res) => {
   try {
     const { auth_code } = req.body;
@@ -144,14 +145,14 @@ router.post('/usage', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
     
-    const sshService = new SshFtpService({
+    const config = {
       ip: ftp.ip,
       port: ftp.ssh_port,
       username: ftp.ssh_user,
       password: ftp.ssh_pass
-    });
+    };
     
-    const result = await sshService.exec(`du -sb "${ftp.home_dir}" 2>/dev/null | cut -f1`);
+    const result = await sshPool.exec(config, `du -sb "${ftp.home_dir}" 2>/dev/null | cut -f1`);
     const usedSize = parseInt(result.output?.trim()) || 0;
     
     res.json({
@@ -164,7 +165,7 @@ router.post('/usage', async (req, res) => {
   }
 });
 
-// 获取文件列表
+// 获取文件列表（使用连接池优化）
 router.post('/list', async (req, res) => {
   try {
     const { auth_code, path: dirPath } = req.body;
@@ -179,20 +180,21 @@ router.post('/list', async (req, res) => {
       return res.status(400).json({ error: '服务器未配置' });
     }
     
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-    
     // 确保路径在home_dir内
     const targetPath = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     
-    const result = await sshService.exec(`ls -la "${targetPath}" 2>/dev/null | tail -n +2`);
+    // 使用连接池执行命令
+    const config = {
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    };
+    
+    const result = await sshPool.exec(config, `ls -la "${targetPath}" 2>/dev/null | tail -n +2`);
     
     if (!result.success) {
       return res.json({ files: [], current_path: dirPath || '/' });
