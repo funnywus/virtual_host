@@ -5,8 +5,15 @@ const crypto = require('crypto');
 const multer = require('multer');
 const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
+const WorkerPool = require('../utils/worker-pool');
 
 const router = express.Router();
+
+// 创建工作线程池（用于文件操作）
+const fileOperationPool = new WorkerPool(
+  path.join(__dirname, '../workers/file-operation-worker.js'),
+  require('os').cpus().length
+);
 
 // 配置 multer 用于处理文件上传（存储在内存中）
 const upload = multer({ 
@@ -608,7 +615,7 @@ router.post('/rename', async (req, res) => {
   }
 });
 
-// 解压文件
+// 解压文件（使用工作线程）
 router.post('/extract', async (req, res) => {
   try {
     const { auth_code, path: filePath, target_dir } = req.body;
@@ -618,13 +625,6 @@ router.post('/extract', async (req, res) => {
     if (!ftp || !ftp.ip) {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
-    
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
     
     const targetFile = path.join(ftp.home_dir, filePath);
     if (!targetFile.startsWith(ftp.home_dir)) {
@@ -640,42 +640,40 @@ router.post('/extract', async (req, res) => {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     
-    // 检查文件类型并解压
+    // 检查文件类型
     const ext = path.extname(targetFile).toLowerCase();
-    let result;
+    const supportedFormats = ['.zip', '.gz', '.tgz', '.tar', '.7z'];
     
-    if (ext === '.zip') {
-      // 解压 zip 文件
-      result = await sshService.exec(`cd "${extractDir}" && unzip -o "${targetFile}"`);
-    } else if (ext === '.gz' || ext === '.tgz') {
-      // 解压 tar.gz 文件
-      result = await sshService.exec(`cd "${extractDir}" && tar -xzf "${targetFile}"`);
-    } else if (ext === '.tar') {
-      // 解压 tar 文件
-      result = await sshService.exec(`cd "${extractDir}" && tar -xf "${targetFile}"`);
-    } else if (ext === '.7z') {
-      // 解压 7z 文件
-      result = await sshService.exec(`cd "${extractDir}" && 7z x "${targetFile}" -y`);
-    } else {
+    if (!supportedFormats.includes(ext)) {
       return res.status(400).json({ error: '不支持的压缩格式，仅支持 .zip, .tar.gz, .tar, .7z' });
     }
     
-    if (result.success || result.code === 0) {
-      // 设置解压后文件的权限
-      await sshService.exec(`chmod -R 755 "${extractDir}"`);
-      await sshService.exec(`find "${extractDir}" -type f -exec chmod 644 {} \\;`);
-      await sshService.exec(`chown -R www:www "${extractDir}" 2>/dev/null || chown -R www "${extractDir}" 2>/dev/null`);
-      
-      res.json({ success: true, message: '解压成功' });
+    // 使用工作线程处理解压
+    const result = await fileOperationPool.exec({
+      operation: 'extract',
+      config: {
+        ip: ftp.ip,
+        port: ftp.ssh_port,
+        username: ftp.ssh_user,
+        password: ftp.ssh_pass
+      },
+      params: {
+        targetFile,
+        extractDir
+      }
+    });
+    
+    if (result.success) {
+      res.json({ success: true, message: result.result.message });
     } else {
-      res.status(500).json({ error: '解压失败: ' + (result.error || '未知错误') });
+      res.status(500).json({ error: result.error });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 压缩文件/目录
+// 压缩文件/目录（使用工作线程）
 router.post('/compress', async (req, res) => {
   try {
     const { auth_code, paths, archive_name, format } = req.body;
@@ -686,44 +684,42 @@ router.post('/compress', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
     
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-    
     // 验证所有路径
     const fullPaths = paths.map(p => path.join(ftp.home_dir, p));
     if (!fullPaths.every(p => p.startsWith(ftp.home_dir))) {
       return res.status(403).json({ error: '无权访问某些文件' });
     }
     
-    const archivePath = path.join(ftp.home_dir, archive_name);
     const archiveFormat = format || 'zip';
     
-    let result;
-    const fileList = paths.map(p => `"${p}"`).join(' ');
+    // 使用工作线程处理压缩
+    const result = await fileOperationPool.exec({
+      operation: 'compress',
+      config: {
+        ip: ftp.ip,
+        port: ftp.ssh_port,
+        username: ftp.ssh_user,
+        password: ftp.ssh_pass
+      },
+      params: {
+        homeDir: ftp.home_dir,
+        paths,
+        archiveName: archive_name,
+        format: archiveFormat
+      }
+    });
     
-    if (archiveFormat === 'zip') {
-      result = await sshService.exec(`cd "${ftp.home_dir}" && zip -r "${archive_name}" ${fileList}`);
-    } else if (archiveFormat === 'tar.gz') {
-      result = await sshService.exec(`cd "${ftp.home_dir}" && tar -czf "${archive_name}" ${fileList}`);
+    if (result.success) {
+      res.json({ success: true, message: result.result.message, archive: result.result.archive });
     } else {
-      return res.status(400).json({ error: '不支持的压缩格式' });
-    }
-    
-    if (result.success || result.code === 0) {
-      res.json({ success: true, message: '压缩成功', archive: archive_name });
-    } else {
-      res.status(500).json({ error: '压缩失败' });
+      res.status(500).json({ error: result.error });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 复制文件/目录
+// 复制文件/目录（使用工作线程）
 router.post('/copy', async (req, res) => {
   try {
     const { auth_code, source_path, target_path } = req.body;
@@ -734,13 +730,6 @@ router.post('/copy', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
     
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-    
     const sourcePath = path.join(ftp.home_dir, source_path);
     const targetPath = path.join(ftp.home_dir, target_path);
     
@@ -748,18 +737,25 @@ router.post('/copy', async (req, res) => {
       return res.status(403).json({ error: '无权操作该文件' });
     }
     
-    // 使用 cp -r 复制（支持文件和目录）
-    const result = await sshService.exec(`cp -r "${sourcePath}" "${targetPath}"`);
+    // 使用工作线程处理复制
+    const result = await fileOperationPool.exec({
+      operation: 'copy',
+      config: {
+        ip: ftp.ip,
+        port: ftp.ssh_port,
+        username: ftp.ssh_user,
+        password: ftp.ssh_pass
+      },
+      params: {
+        sourcePath,
+        targetPath
+      }
+    });
     
-    if (result.success || result.code === 0) {
-      // 设置权限
-      await sshService.exec(`chmod -R 755 "${targetPath}"`);
-      await sshService.exec(`find "${targetPath}" -type f -exec chmod 644 {} \\;`);
-      await sshService.exec(`chown -R www:www "${targetPath}" 2>/dev/null || chown -R www "${targetPath}" 2>/dev/null`);
-      
-      res.json({ success: true, message: '复制成功' });
+    if (result.success) {
+      res.json({ success: true, message: result.result.message });
     } else {
-      res.status(500).json({ error: '复制失败: ' + (result.output || '未知错误') });
+      res.status(500).json({ error: result.error });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
