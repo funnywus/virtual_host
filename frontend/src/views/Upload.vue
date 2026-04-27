@@ -36,13 +36,32 @@
       </div>
 
       <!-- 续费提醒 -->
-      <div v-if="showRenewAlert" class="renew-alert">
-        <el-alert :type="isExpired ? 'error' : 'warning'" :closable="false" show-icon>
-          <template #title>
-            <span v-if="isExpired">您的服务已过期，请联系客服续费！</span>
-            <span v-else>您的服务还剩 {{ remainingDays }} 天到期，请及时联系客服续费</span>
-          </template>
-        </el-alert>
+      <div v-if="showRenewAlert" class="renew-alert-container">
+        <div class="renew-alert-card" :class="{ 'expired': isExpired, 'warning': !isExpired }">
+          <div class="renew-alert-icon">
+            <el-icon v-if="isExpired" style="font-size:32px;color:#FF3B30"><WarningFilled /></el-icon>
+            <el-icon v-else style="font-size:32px;color:#FF9500"><Clock /></el-icon>
+          </div>
+          <div class="renew-alert-content">
+            <div class="renew-alert-title">
+              <span v-if="isExpired">⚠️ 服务已过期</span>
+              <span v-else>⏰ 服务即将到期</span>
+            </div>
+            <div class="renew-alert-message">
+              <span v-if="isExpired">您的服务已过期，为避免影响使用，请尽快联系客服续费</span>
+              <span v-else>您的服务还剩 <strong style="color:#FF9500;font-size:18px">{{ remainingDays }}</strong> 天到期，请及时续费</span>
+            </div>
+            <div class="renew-alert-info" v-if="expireAt">
+              <span style="color:#86868B;font-size:13px">到期时间：{{ formatExpireDate(expireAt) }}</span>
+            </div>
+          </div>
+          <div class="renew-alert-action">
+            <el-button type="success" size="large" @click="showContactDialog = true" round>
+              <el-icon style="margin-right:5px"><Service /></el-icon>
+              立即续费
+            </el-button>
+          </div>
+        </div>
       </div>
 
       <!-- 统计卡片 -->
@@ -538,7 +557,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files } from '@element-plus/icons-vue'
+import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
 
@@ -1559,7 +1578,6 @@ const createFolder = async () => {
 
 const createFile = async () => {
   if (!newFileName.value) { ElMessage.warning('请输入文件名'); return }
-  creatingFile.value = true
   
   // 构建完整文件名（添加扩展名）
   const fullFileName = newFileType.value === 'other' 
@@ -1568,18 +1586,46 @@ const createFile = async () => {
       ? newFileName.value
       : `${newFileName.value}.${newFileType.value}`
   
-  await api('/create-file', { path: currentPath.value, name: fullFileName, content: newFileContent.value || '' })
-  ElMessage.success('创建成功')
-  showNewFileDialog.value = false
+  // 检查文件是否已存在
+  const existingFile = files.value.find(f => f.name === fullFileName && f.type === 'file')
   
-  // 重置表单
-  newFileName.value = ''
-  newFileType.value = 'html'
-  useTemplate.value = true
-  newFileContent.value = ''
+  if (existingFile) {
+    try {
+      await ElMessageBox.confirm(
+        `文件 "${fullFileName}" 已存在，是否覆盖？`,
+        '文件已存在',
+        {
+          type: 'warning',
+          confirmButtonText: '覆盖',
+          cancelButtonText: '取消',
+          confirmButtonClass: 'el-button--danger'
+        }
+      )
+    } catch (e) {
+      // 用户取消
+      return
+    }
+  }
   
-  await loadFiles()
-  creatingFile.value = false
+  creatingFile.value = true
+  
+  try {
+    await api('/create-file', { path: currentPath.value, name: fullFileName, content: newFileContent.value || '' })
+    ElMessage.success(existingFile ? '文件已覆盖' : '创建成功')
+    showNewFileDialog.value = false
+    
+    // 重置表单
+    newFileName.value = ''
+    newFileType.value = 'html'
+    useTemplate.value = true
+    newFileContent.value = ''
+    
+    await loadFiles()
+  } catch (err) {
+    ElMessage.error('创建失败: ' + err.message)
+  } finally {
+    creatingFile.value = false
+  }
 }
 
 // 打开新建文件对话框
@@ -1837,6 +1883,17 @@ const formatDate = (dateStr) => {
   return `${y}-${m}-${d} ${h}:${min}:${s}`
 }
 
+// 格式化到期日期（更友好的显示）
+const formatExpireDate = (dateStr) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return dateStr
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}年${m}月${d}日`
+}
+
 onMounted(() => {
   // 检查 URL 参数中的授权码
   const urlParams = new URLSearchParams(window.location.search)
@@ -1956,8 +2013,8 @@ const handleResize = () => {
   margin-bottom: 20px; 
 }
 .stat-card { 
-  padding: 24px 20px; 
-  border-radius: 20px; 
+  padding: 18px 16px; 
+  border-radius: 16px; 
   box-shadow: 
     0 0 0 0.5px rgba(0, 0, 0, 0.04) inset,
     0 4px 16px rgba(0, 0, 0, 0.04),
@@ -1995,7 +2052,7 @@ const handleResize = () => {
 .stat-card:nth-child(4) { background: #FFFFFF; }
 .stat-card:nth-child(5) { background: #FFF9F0; }
 .stat-value { 
-  font-size: 34px; 
+  font-size: 28px; 
   font-weight: 600; 
   color: #1c1c1e;
   position: relative;
@@ -2004,14 +2061,68 @@ const handleResize = () => {
 }
 .stat-label { 
   color: #3c3c43; 
-  font-size: 13px; 
+  font-size: 12px; 
   margin-top: 6px;
   font-weight: 500;
   position: relative;
   z-index: 1;
   letter-spacing: 0.2px;
 }
-.renew-alert { margin-bottom: 20px; }
+
+/* 续费提醒样式 */
+.renew-alert-container { 
+  margin-bottom: 20px; 
+}
+.renew-alert-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  transition: all 0.3s;
+}
+.renew-alert-card.expired {
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.08) 0%, rgba(255, 59, 48, 0.04) 100%);
+  border-color: rgba(255, 59, 48, 0.2);
+}
+.renew-alert-card.warning {
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.08) 0%, rgba(255, 149, 0, 0.04) 100%);
+  border-color: rgba(255, 149, 0, 0.2);
+}
+.renew-alert-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+.renew-alert-icon {
+  flex-shrink: 0;
+}
+.renew-alert-content {
+  flex: 1;
+  min-width: 0;
+}
+.renew-alert-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1D1D1F;
+  margin-bottom: 6px;
+  letter-spacing: -0.3px;
+}
+.renew-alert-message {
+  font-size: 14px;
+  color: #3c3c43;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.renew-alert-info {
+  margin-top: 4px;
+}
+.renew-alert-action {
+  flex-shrink: 0;
+}
+
 .card { 
   background: rgba(255, 255, 255, 0.5); 
   backdrop-filter: blur(80px) saturate(180%);
@@ -2147,9 +2258,9 @@ const handleResize = () => {
 .file-item { 
   display: flex; 
   align-items: center; 
-  padding: 10px 14px; 
-  border-radius: 12px; 
-  margin-bottom: 4px; 
+  padding: 8px 12px; 
+  border-radius: 10px; 
+  margin-bottom: 3px; 
   cursor: pointer; 
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); 
   background: #FFFFFF;
@@ -2166,14 +2277,14 @@ const handleResize = () => {
   border: 0.5px solid rgba(0, 122, 255, 0.25); 
   box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
 }
-.file-checkbox { width: 30px; display: flex; align-items: center; justify-content: center; }
-.file-icon { width: 30px; font-size: 18px; }
+.file-checkbox { width: 28px; display: flex; align-items: center; justify-content: center; }
+.file-icon { width: 28px; font-size: 16px; }
 .file-info { flex: 1; min-width: 0; }
-.file-name { font-weight: 500; color: #1c1c1e; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.1px; }
-.file-meta { font-size: 11px; color: #8e8e93; margin-top: 2px; }
+.file-name { font-weight: 500; color: #1c1c1e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.1px; }
+.file-meta { font-size: 10px; color: #8e8e93; margin-top: 2px; }
 .file-type-label { color: #34c759; font-weight: 500; }
-.file-size-col { width: 100px; text-align: right; color: #007aff; font-weight: 500; font-size: 12px; flex-shrink: 0; padding-right: 15px; }
-.file-date-col { width: 150px; text-align: right; color: #8e8e93; font-size: 11px; flex-shrink: 0; padding-right: 15px; }
+.file-size-col { width: 90px; text-align: right; color: #007aff; font-weight: 500; font-size: 11px; flex-shrink: 0; padding-right: 12px; }
+.file-date-col { width: 140px; text-align: right; color: #8e8e93; font-size: 10px; flex-shrink: 0; padding-right: 12px; }
 .file-actions { transition: opacity 0.2s; flex-shrink: 0; }
 
 /* 网格视图 */
@@ -2345,6 +2456,26 @@ const handleResize = () => {
   .header-actions .el-button .el-icon { margin-right: 3px !important; }
   .domain-info { font-size: 16px; }
   
+  /* 续费提醒移动端 */
+  .renew-alert-card {
+    flex-direction: column;
+    text-align: center;
+    gap: 15px;
+    padding: 20px 15px;
+  }
+  .renew-alert-title {
+    font-size: 16px;
+  }
+  .renew-alert-message {
+    font-size: 13px;
+  }
+  .renew-alert-action {
+    width: 100%;
+  }
+  .renew-alert-action .el-button {
+    width: 100%;
+  }
+  
   /* 统计卡片移动端 - 2行3列布局 */
   .stats-row { 
     grid-template-columns: repeat(3, 1fr);
@@ -2361,8 +2492,8 @@ const handleResize = () => {
   .stat-card:nth-child(5) {
     grid-column: 2 / 3;
   }
-  .stat-value { font-size: 22px; color: #1D1D1F; }
-  .stat-label { font-size: 12px; color: #86868B; }
+  .stat-value { font-size: 20px; color: #1D1D1F; }
+  .stat-label { font-size: 11px; color: #86868B; }
   
   .card { padding: 15px; }
   .toolbar { 
@@ -2386,10 +2517,10 @@ const handleResize = () => {
     font-size: 14px;
   }
   
-  .file-item { padding: 12px 15px; }
-  .file-icon { width: 40px; font-size: 26px; }
-  .file-name { font-size: 14px; }
-  .file-meta { font-size: 11px; }
+  .file-item { padding: 10px 12px; }
+  .file-icon { width: 36px; font-size: 22px; }
+  .file-name { font-size: 13px; }
+  .file-meta { font-size: 10px; }
   .file-actions { opacity: 1; display: flex; flex-wrap: wrap; gap: 5px; }
   .file-actions .el-button { padding: 5px 8px; font-size: 12px; }
   
