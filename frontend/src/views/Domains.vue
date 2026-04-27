@@ -3,7 +3,17 @@
     <div class="card-title">
       <span>主域名列表</span>
       <div>
-        <el-input v-model="searchKeyword" placeholder="搜索域名" clearable style="width:200px;margin-right:10px" size="small" />
+        <el-input 
+          v-model="searchKeyword" 
+          placeholder="搜索域名、备注..." 
+          clearable 
+          style="width:200px;margin-right:10px" 
+          size="small"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button size="small" @click="refreshAllSsl" :loading="refreshingSsl">刷新证书状态</el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加域名</el-button>
@@ -93,16 +103,27 @@
     <!-- DNS记录对话框 -->
     <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px">
       <div style="margin-bottom:15px;display:flex;justify-content:space-between;align-items:center">
-        <div>
+        <div style="display:flex;gap:10px;align-items:center">
           <el-tag type="info">{{ dnsRecords.platform === 'tencent' ? '腾讯云' : '阿里云' }}</el-tag>
-          <span style="margin-left:10px;color:#909399">共 {{ dnsRecords.records.length }} 条记录</span>
+          <span style="color:#909399">共 {{ filteredDnsRecords.length }} 条记录</span>
         </div>
-        <div>
+        <div style="display:flex;gap:10px">
+          <el-input 
+            v-model="dnsSearchKeyword" 
+            placeholder="搜索主机记录、记录值..." 
+            clearable 
+            style="width:220px" 
+            size="small"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
           <el-button size="small" @click="loadDnsRecords" :loading="loadingDnsRecords"><el-icon><Refresh /></el-icon> 刷新</el-button>
           <el-button type="primary" size="small" @click="openAddDnsRecordDialog">添加记录</el-button>
         </div>
       </div>
-      <el-table :data="filteredDnsRecords" stripe v-loading="loadingDnsRecords" max-height="500">
+      <el-table :data="paginatedDnsRecords" stripe v-loading="loadingDnsRecords" max-height="500">
         <el-table-column prop="name" label="主机记录" width="120" />
         <el-table-column prop="type" label="类型" width="80" />
         <el-table-column prop="value" label="记录值" min-width="180" show-overflow-tooltip />
@@ -133,7 +154,7 @@
           v-model:current-page="dnsCurrentPage"
           v-model:page-size="dnsPageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="dnsRecords.records.length"
+          :total="filteredDnsRecords.length"
           layout="total, sizes, prev, pager, next"
           @size-change="dnsCurrentPage = 1"
         />
@@ -184,7 +205,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, ArrowDown } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown, Search } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
 import { formatSslDays, getSslDaysType } from '@/utils'
 import api from '@/api'
@@ -204,6 +225,7 @@ const loadingDnsRecords = ref(false)
 const addingDnsRecord = ref(false)
 const currentDomain = ref(null)
 const searchKeyword = ref('')
+const dnsSearchKeyword = ref('')
 const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [] })
 const dnsRecords = reactive({ platform: '', records: [] })
 const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
@@ -211,8 +233,24 @@ const dnsCurrentPage = ref(1)
 const dnsPageSize = ref(10)
 
 const filteredDnsRecords = computed(() => {
+  let records = dnsRecords.records
+  
+  // 搜索过滤
+  if (dnsSearchKeyword.value) {
+    const kw = dnsSearchKeyword.value.toLowerCase()
+    records = records.filter(r => 
+      r.name?.toLowerCase().includes(kw) ||
+      r.value?.toLowerCase().includes(kw) ||
+      r.type?.toLowerCase().includes(kw)
+    )
+  }
+  
+  return records
+})
+
+const paginatedDnsRecords = computed(() => {
   const start = (dnsCurrentPage.value - 1) * dnsPageSize.value
-  return dnsRecords.records.slice(start, start + dnsPageSize.value)
+  return filteredDnsRecords.value.slice(start, start + dnsPageSize.value)
 })
 
 function getServerNameByIp(ip) {
@@ -491,5 +529,141 @@ async function toggleDnsRecordStatus(row, status) {
 :deep(.el-dialog__footer) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .card {
+    padding: 15px;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    font-size: 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .card-title > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .card-title > div .el-input {
+    width: 100% !important;
+    margin-right: 0 !important;
+  }
+
+  .card-title > div .el-button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* 表格移动端优化 */
+  :deep(.el-table) {
+    font-size: 12px;
+  }
+
+  :deep(.el-table th),
+  :deep(.el-table td) {
+    padding: 8px 5px;
+  }
+
+  :deep(.el-table .cell) {
+    padding: 0 5px;
+    line-height: 1.4;
+  }
+
+  /* 隐藏部分列 */
+  :deep(.el-table__column--selection) {
+    display: none;
+  }
+
+  /* 操作按钮优化 */
+  :deep(.el-button + .el-button) {
+    margin-left: 5px;
+  }
+
+  :deep(.el-button--small) {
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  /* 分页器移动端优化 */
+  :deep(.el-pagination) {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  :deep(.el-pagination .el-pagination__sizes) {
+    margin: 0;
+  }
+
+  :deep(.el-pagination .el-pagination__jump) {
+    margin-left: 0;
+  }
+
+  /* 对话框移动端全屏 */
+  :deep(.el-dialog:not(.is-fullscreen)) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+
+  /* DNS记录对话框优化 */
+  :deep(.el-table__fixed-right) {
+    right: 0 !important;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 15px;
+  }
+
+  :deep(.el-table) {
+    font-size: 11px;
+  }
+
+  :deep(.el-button--small) {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  :deep(.el-tag--small) {
+    padding: 0 4px;
+    font-size: 11px;
+  }
 }
 </style>

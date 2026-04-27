@@ -210,4 +210,65 @@ onUnmounted(() => {
 .command-input :deep(.el-input__inner) { color: #d4d4d4; }
 .command-input :deep(.el-input-group__prepend) { background: #1e1e1e; color: #0dbc79; border-color: #404040; }
 .command-input :deep(.el-input-group__append) { background: #2d2d2d; border-color: #404040; }
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  :deep(.el-dialog) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  .terminal-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .server-info {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .terminal-wrapper {
+    height: 300px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .command-input {
+    padding: 8px 10px;
+  }
+
+  .command-input :deep(.el-input__inner) {
+    font-size: 13px;
+  }
+
+  .command-input :deep(.el-button) {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .terminal-wrapper {
+    height: 250px;
+    font-size: 11px;
+  }
+
+  .command-input :deep(.el-input__inner) {
+    font-size: 12px;
+  }
+
+  :deep(.el-tag--small) {
+    font-size: 10px;
+    padding: 0 4px;
+  }
+}
 </style>

@@ -48,6 +48,21 @@
       <el-table-column prop="max_upload_size" label="空间限制" width="100">
         <template #default="{ row }"><el-tag type="warning" size="small">{{ formatUploadSize(row.max_upload_size) }}</el-tag></template>
       </el-table-column>
+      <el-table-column label="已使用" width="120">
+        <template #default="{ row }">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <el-tag :type="getUsageType(row.used_size, row.max_upload_size)" size="small">
+              {{ formatUploadSize(row.used_size || 0) }}
+            </el-tag>
+            <el-progress 
+              :percentage="getUsagePercentage(row.used_size, row.max_upload_size)" 
+              :stroke-width="4"
+              :show-text="false"
+              :color="getUsageColor(row.used_size, row.max_upload_size)"
+            />
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column prop="sync_status" label="同步状态" width="100">
         <template #default="{ row }">
           <el-tooltip :content="row.sync_message || ''" placement="top" :disabled="!row.sync_message">
@@ -244,6 +259,29 @@ async function resetPassword(id) {
   ElMessage.success(`新密码: ${res.password}`)
   dataStore.loadFtpAccounts()
 }
+
+// 计算使用百分比
+function getUsagePercentage(used, max) {
+  if (!max || max === 0) return 0
+  const percentage = (used / max) * 100
+  return Math.min(Math.round(percentage), 100)
+}
+
+// 获取使用状态类型
+function getUsageType(used, max) {
+  const percentage = getUsagePercentage(used, max)
+  if (percentage >= 90) return 'danger'
+  if (percentage >= 70) return 'warning'
+  return 'success'
+}
+
+// 获取进度条颜色
+function getUsageColor(used, max) {
+  const percentage = getUsagePercentage(used, max)
+  if (percentage >= 90) return '#f56c6c'
+  if (percentage >= 70) return '#e6a23c'
+  return '#67c23a'
+}
 </script>
 
 <style scoped>
@@ -325,5 +363,133 @@ async function resetPassword(id) {
 :deep(.el-dialog__footer) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .card {
+    padding: 15px;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    font-size: 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .card-title > div {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .card-title > div .el-input {
+    flex: 1;
+    width: auto !important;
+    margin-right: 0 !important;
+  }
+
+  .card-title > div .el-button {
+    flex-shrink: 0;
+  }
+
+  /* 表格移动端优化 */
+  :deep(.el-table) {
+    font-size: 11px;
+  }
+
+  :deep(.el-table th),
+  :deep(.el-table td) {
+    padding: 6px 3px;
+  }
+
+  :deep(.el-table .cell) {
+    padding: 0 3px;
+    line-height: 1.3;
+  }
+
+  /* 操作按钮优化 */
+  :deep(.el-button--small) {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  :deep(.el-tag--small) {
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  /* 分页器移动端优化 */
+  :deep(.el-pagination) {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  :deep(.el-pagination .el-pagination__sizes),
+  :deep(.el-pagination .el-pagination__jump) {
+    display: none;
+  }
+
+  /* 对话框移动端优化 */
+  :deep(.el-dialog:not(.is-fullscreen)) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+
+  /* Alert 优化 */
+  :deep(.el-alert) {
+    padding: 10px;
+    font-size: 12px;
+  }
+
+  :deep(.el-alert a) {
+    word-break: break-all;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 15px;
+  }
+
+  :deep(.el-table) {
+    font-size: 10px;
+  }
+
+  :deep(.el-button--small) {
+    padding: 3px 5px;
+    font-size: 10px;
+  }
 }
 </style>

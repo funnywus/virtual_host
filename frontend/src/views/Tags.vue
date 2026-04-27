@@ -167,4 +167,96 @@ async function setDefault(row) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
 }
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .card {
+    padding: 15px;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    font-size: 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .card-title > div {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .card-title > div .el-button {
+    flex: 1;
+  }
+
+  /* 表格移动端优化 */
+  :deep(.el-table) {
+    font-size: 12px;
+  }
+
+  :deep(.el-table th),
+  :deep(.el-table td) {
+    padding: 8px 5px;
+  }
+
+  :deep(.el-table .cell) {
+    padding: 0 5px;
+  }
+
+  /* 操作按钮优化 */
+  :deep(.el-button--small) {
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  /* 对话框移动端优化 */
+  :deep(.el-dialog:not(.is-fullscreen)) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 15px;
+  }
+
+  :deep(.el-table) {
+    font-size: 11px;
+  }
+
+  :deep(.el-button--small) {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+}
 </style>

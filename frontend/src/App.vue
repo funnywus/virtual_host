@@ -293,4 +293,176 @@ a:hover {
   background: rgba(102, 126, 234, 0.3);
   color: var(--text-primary);
 }
+
+/* ========== 移动端全局响应式样式 ========== */
+@media (max-width: 768px) {
+  /* 卡片样式 */
+  .card {
+    padding: 15px !important;
+    border-radius: 12px !important;
+  }
+
+  .card-title {
+    font-size: 16px !important;
+    margin-bottom: 15px !important;
+    padding-bottom: 12px !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px;
+  }
+
+  .card-title > div {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* 表格移动端优化 */
+  .el-table {
+    font-size: 13px !important;
+  }
+
+  .el-table th.el-table__cell,
+  .el-table td.el-table__cell {
+    padding: 10px 8px !important;
+  }
+
+  .el-table__body-wrapper {
+    overflow-x: auto !important;
+  }
+
+  /* 按钮组优化 */
+  .el-button--small {
+    padding: 6px 10px !important;
+    font-size: 12px !important;
+  }
+
+  .el-button {
+    padding: 8px 12px !important;
+  }
+
+  /* 输入框优化 */
+  .el-input,
+  .el-select {
+    font-size: 14px !important;
+  }
+
+  /* 对话框优化 */
+  .el-dialog {
+    width: 95% !important;
+    margin: 10px auto !important;
+  }
+
+  .el-dialog__header {
+    padding: 15px !important;
+  }
+
+  .el-dialog__body {
+    padding: 15px !important;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .el-dialog__footer {
+    padding: 12px 15px !important;
+  }
+
+  /* 表单优化 */
+  .el-form-item {
+    margin-bottom: 18px !important;
+  }
+
+  .el-form-item__label {
+    font-size: 13px !important;
+  }
+
+  /* 分页优化 */
+  .el-pagination {
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 8px;
+  }
+
+  .el-pagination .el-pagination__total,
+  .el-pagination .el-pagination__sizes {
+    margin: 0 !important;
+  }
+
+  .el-pagination .el-pager {
+    margin: 0 !important;
+  }
+
+  /* 标签优化 */
+  .el-tag {
+    font-size: 11px !important;
+    padding: 0 6px !important;
+    height: 22px !important;
+    line-height: 22px !important;
+  }
+
+  /* 下拉菜单优化 */
+  .el-dropdown-menu {
+    max-width: 90vw !important;
+  }
+
+  /* 警告框优化 */
+  .el-alert {
+    padding: 10px 12px !important;
+    font-size: 13px !important;
+  }
+
+  /* Tabs优化 */
+  .el-tabs__item {
+    padding: 0 15px !important;
+    font-size: 13px !important;
+  }
+
+  /* 描述列表优化 */
+  .el-descriptions {
+    font-size: 13px !important;
+  }
+
+  .el-descriptions :deep(.el-descriptions__label) {
+    width: 100px !important;
+  }
+}
+
+/* 小屏手机优化 (< 480px) */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px !important;
+  }
+
+  .card-title {
+    font-size: 15px !important;
+  }
+
+  .el-table {
+    font-size: 12px !important;
+  }
+
+  .el-button--small {
+    padding: 5px 8px !important;
+    font-size: 11px !important;
+  }
+
+  .el-dialog {
+    width: 98% !important;
+  }
+
+  .el-form-item__label {
+    font-size: 12px !important;
+  }
+
+  .el-pagination {
+    font-size: 12px !important;
+  }
+
+  .el-pagination .el-pager li {
+    min-width: 28px !important;
+    height: 28px !important;
+    line-height: 28px !important;
+  }
+}
 </style>

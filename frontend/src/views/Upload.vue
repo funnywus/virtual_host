@@ -56,15 +56,15 @@
           <div class="stat-label">文件夹数量</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" :style="{color: usedSize > maxUploadSize * 0.9 ? '#f56c6c' : '#409eff'}">{{ formatSize(usedSize) }}</div>
+          <div class="stat-value">{{ formatSize(usedSize) }}</div>
           <div class="stat-label">已用空间</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" style="color:#67c23a">{{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
+          <div class="stat-value">{{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
           <div class="stat-label">剩余空间</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" :style="{color: remainingDays !== null && remainingDays <= 3 ? (remainingDays <= 0 ? '#f56c6c' : '#e6a23c') : '#67c23a'}">
+          <div class="stat-value">
             {{ remainingDays !== null ? (remainingDays <= 0 ? '已过期' : remainingDays + ' 天') : '永久' }}
           </div>
           <div class="stat-label">剩余时间</div>
@@ -73,40 +73,45 @@
 
       <div class="card">
         <div class="toolbar">
-          <div class="breadcrumb">
-            <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:middle"><HomeFilled /></el-icon> 根目录</span>
-            <span v-for="(part, index) in pathParts" :key="index" class="breadcrumb-part">
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
-            </span>
+          <div class="toolbar-row">
+            <div class="breadcrumb">
+              <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:middle"><HomeFilled /></el-icon> 根目录</span>
+              <span v-for="(part, index) in pathParts" :key="index" class="breadcrumb-part">
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
+              </span>
+            </div>
+            <div class="toolbar-actions">
+              <template v-if="files.length > 0">
+                <el-button size="small" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
+                <el-button size="small" @click="clearSelection" v-else>取消全选</el-button>
+              </template>
+              <el-radio-group v-model="viewMode" size="small">
+                <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
+                <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
+              </el-radio-group>
+              <el-button type="primary" @click="showUploadDialog = true"><el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件</el-button>
+              <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
+              <el-button @click="showNewFileDialog = true"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
+              <el-button @click="loadFiles" :loading="loading"><el-icon style="margin-right:5px"><Refresh /></el-icon> 刷新</el-button>
+            </div>
           </div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <template v-if="files.length > 0">
-              <el-button size="small" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
-              <el-button size="small" @click="clearSelection" v-else>取消全选</el-button>
-            </template>
+          
+          <!-- 批量操作独占一行 -->
+          <div v-if="selectedFiles.length > 0 || clipboard.files.length > 0" class="batch-operations">
             <template v-if="selectedFiles.length > 0">
-              <span style="color:#909399;font-size:13px">已选 {{ selectedFiles.length }} 项</span>
+              <span style="color:#606266;font-size:13px;font-weight:500">已选 {{ selectedFiles.length }} 项</span>
               <el-button type="primary" size="small" @click="copyFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>复制</el-button>
               <el-button type="warning" size="small" @click="cutFiles"><el-icon style="margin-right:5px"><Scissor /></el-icon>剪切</el-button>
               <el-button type="success" size="small" @click="compressFiles"><el-icon style="margin-right:5px"><Files /></el-icon>压缩</el-button>
               <el-button type="danger" size="small" @click="deleteSelected"><el-icon style="margin-right:5px"><Delete /></el-icon>删除</el-button>
               <el-button size="small" @click="clearSelection">取消选择</el-button>
-              <el-divider direction="vertical" />
             </template>
             <template v-if="clipboard.files.length > 0">
+              <el-divider v-if="selectedFiles.length > 0" direction="vertical" style="margin:0 10px" />
               <el-button type="success" size="small" @click="pasteFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>粘贴 ({{ clipboard.files.length }})</el-button>
               <el-button size="small" text @click="clearClipboard">清空剪贴板</el-button>
-              <el-divider direction="vertical" />
             </template>
-            <el-radio-group v-model="viewMode" size="small">
-              <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
-              <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
-            </el-radio-group>
-            <el-button type="primary" @click="showUploadDialog = true"><el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件</el-button>
-            <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
-            <el-button @click="showNewFileDialog = true"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
-            <el-button @click="loadFiles" :loading="loading"><el-icon style="margin-right:5px"><Refresh /></el-icon> 刷新</el-button>
           </div>
         </div>
 
@@ -134,9 +139,13 @@
               <div class="file-icon">{{ file.type === 'directory' ? '📁' : getFileIcon(file.name) }}</div>
               <div class="file-info">
                 <div class="file-name">{{ file.name }}</div>
-                <div class="file-meta"><span v-if="file.type === 'file'">{{ formatSize(file.size) }}</span></div>
+                <div class="file-meta">
+                  <span v-if="file.type === 'directory'" class="file-type-label">文件夹</span>
+                </div>
               </div>
-              <div class="file-date">{{ formatDate(file.date) }}</div>
+              <div v-if="file.type === 'file'" class="file-size-col">{{ formatSize(file.size) }}</div>
+              <div v-else class="file-size-col">-</div>
+              <div class="file-date-col">{{ formatDate(file.date) }}</div>
               <div class="file-actions" @click.stop>
                 <el-button v-if="file.type === 'file'" type="primary" size="small" @click="openFileUrl(file)" style="margin-right:8px">访问</el-button>
                 <el-dropdown trigger="click">
@@ -181,6 +190,7 @@
                 </div>
                 <div class="grid-icon">{{ file.type === 'directory' ? '📁' : getFileIcon(file.name) }}</div>
                 <div class="grid-name" :title="file.name">{{ file.name }}</div>
+                <div v-if="file.type === 'file'" class="grid-size">{{ formatSize(file.size) }}</div>
                 <el-dropdown trigger="click" class="grid-more" @click.stop>
                   <el-button size="small" circle @click.stop><el-icon><MoreFilled /></el-icon></el-button>
                   <template #dropdown>
@@ -873,19 +883,18 @@ const api = async (url, data = {}) => {
 const verifyAuth = async () => {
   if (!authCode.value) { ElMessage.warning('请输入授权码'); return }
   verifying.value = true
-  try {
-    const res = await api('/auth')
-    domain.value = res.domain
-    homeDir.value = res.home_dir
-    maxUploadSize.value = res.max_upload_size || 209715200
-    expireAt.value = res.expire_at || null
-    remainingDays.value = res.remaining_days
-    
-    authorized.value = true
-    localStorage.setItem('upload_auth_code', authCode.value)
-    loadFiles()
-  } catch (e) { ElMessage.error(e.message) }
-  finally { verifying.value = false }
+  const res = await api('/auth')
+  console.log('verifyAuth response:', res)
+  domain.value = res.domain
+  homeDir.value = res.home_dir
+  maxUploadSize.value = res.max_upload_size || 209715200
+  expireAt.value = res.expire_at || null
+  remainingDays.value = res.remaining_days
+  
+  authorized.value = true
+  localStorage.setItem('upload_auth_code', authCode.value)
+  await loadFiles()
+  verifying.value = false
 }
 
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
@@ -901,13 +910,14 @@ const copyWechat = () => {
 
 const loadFiles = async () => {
   loading.value = true
-  try {
-    const res = await api('/list', { path: currentPath.value })
-    files.value = res.files.sort((a, b) => { if (a.type !== b.type) return a.type === 'directory' ? -1 : 1; return a.name.localeCompare(b.name) })
-    const usage = await api('/usage')
-    usedSize.value = usage.used_size || 0
-  } catch (e) { ElMessage.error(e.message) }
-  finally { loading.value = false }
+  const res = await api('/list', { path: currentPath.value })
+  files.value = res.files.sort((a, b) => { 
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+    return a.name.localeCompare(b.name) 
+  })
+  const usage = await api('/usage')
+  usedSize.value = usage.used_size || 0
+  loading.value = false
 }
 
 const navigateTo = (path) => { currentPath.value = path; selectedFiles.value = []; loadFiles() }
@@ -1385,33 +1395,32 @@ const retryUpload = async (item) => {
 const createFolder = async () => {
   if (!newFolderName.value) { ElMessage.warning('请输入文件夹名称'); return }
   creating.value = true
-  try { await api('/mkdir', { path: currentPath.value, name: newFolderName.value }); ElMessage.success('创建成功'); showMkdirDialog.value = false; newFolderName.value = ''; loadFiles() }
-  catch (e) { ElMessage.error(e.message) }
-  finally { creating.value = false }
+  await api('/mkdir', { path: currentPath.value, name: newFolderName.value })
+  ElMessage.success('创建成功')
+  showMkdirDialog.value = false
+  newFolderName.value = ''
+  await loadFiles()
+  creating.value = false
 }
 
 const createFile = async () => {
   if (!newFileName.value) { ElMessage.warning('请输入文件名'); return }
   creatingFile.value = true
-  try {
-    await api('/create-file', { path: currentPath.value, name: newFileName.value, content: newFileContent.value || '' })
-    ElMessage.success('创建成功')
-    showNewFileDialog.value = false
-    newFileName.value = ''
-    newFileContent.value = ''
-    loadFiles()
-  } catch (e) { ElMessage.error(e.message) }
-  finally { creatingFile.value = false }
+  await api('/create-file', { path: currentPath.value, name: newFileName.value, content: newFileContent.value || '' })
+  ElMessage.success('创建成功')
+  showNewFileDialog.value = false
+  newFileName.value = ''
+  newFileContent.value = ''
+  await loadFiles()
+  creatingFile.value = false
 }
 
 const deleteFile = async (file) => {
-  try {
-    await ElMessageBox.confirm(`确定删除 "${file.name}"？${file.type === 'directory' ? '文件夹内所有内容将被删除！' : ''}`, '确认删除', { type: 'warning' })
-    const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-    await api('/delete', { path: filePath })
-    ElMessage.success('删除成功')
-    loadFiles()
-  } catch (e) { if (e !== 'cancel') ElMessage.error(e.message) }
+  await ElMessageBox.confirm(`确定删除 "${file.name}"？${file.type === 'directory' ? '文件夹内所有内容将被删除！' : ''}`, '确认删除', { type: 'warning' })
+  const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+  await api('/delete', { path: filePath })
+  ElMessage.success('删除成功')
+  await loadFiles()
 }
 
 // 重命名
@@ -1431,18 +1440,13 @@ const renameFile = async () => {
     return
   }
   renaming.value = true
-  try {
-    const oldPath = currentPath.value ? `${currentPath.value}/${renamingFile.value.name}` : renamingFile.value.name
-    const newPath = currentPath.value ? `${currentPath.value}/${newFileName.value}` : newFileName.value
-    await api('/rename', { oldPath, newPath })
-    ElMessage.success('重命名成功')
-    showRenameDialog.value = false
-    loadFiles()
-  } catch (e) {
-    ElMessage.error(e.message)
-  } finally {
-    renaming.value = false
-  }
+  const oldPath = currentPath.value ? `${currentPath.value}/${renamingFile.value.name}` : renamingFile.value.name
+  const newPath = currentPath.value ? `${currentPath.value}/${newFileName.value}` : newFileName.value
+  await api('/rename', { oldPath, newPath })
+  ElMessage.success('重命名成功')
+  showRenameDialog.value = false
+  await loadFiles()
+  renaming.value = false
 }
 
 // 打开文件编辑
@@ -1695,17 +1699,119 @@ const handleResize = () => {
 .header-left { display: flex; align-items: center; gap: 15px; }
 .domain-info { font-size: 20px; font-weight: bold; color: #409eff; }
 .header-actions { display: flex; gap: 10px; }
-.stats-row { display: flex; gap: 15px; margin-bottom: 20px; }
-.stat-card { flex: 1; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
-.stat-value { font-size: 24px; font-weight: bold; color: #409eff; }
-.stat-label { color: #909399; font-size: 14px; margin-top: 5px; }
+.stats-row { 
+  display: grid; 
+  grid-template-columns: repeat(5, 1fr); 
+  gap: 15px; 
+  margin-bottom: 20px; 
+}
+.stat-card { 
+  padding: 20px; 
+  border-radius: 12px; 
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1); 
+  text-align: center;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: inherit;
+  opacity: 0.9;
+  transition: opacity 0.3s;
+}
+.stat-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+.stat-card:hover::before {
+  opacity: 1;
+}
+.stat-card:nth-child(1) { background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%); }
+.stat-card:nth-child(2) { background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%); }
+.stat-card:nth-child(3) { background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%); }
+.stat-card:nth-child(4) { background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%); }
+.stat-card:nth-child(5) { background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); }
+.stat-value { 
+  font-size: 28px; 
+  font-weight: bold; 
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  position: relative;
+  z-index: 1;
+}
+.stat-label { 
+  color: rgba(255,255,255,0.95); 
+  font-size: 13px; 
+  margin-top: 8px;
+  font-weight: 500;
+  position: relative;
+  z-index: 1;
+}
 .renew-alert { margin-bottom: 20px; }
 .card { background: #fff; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f0f0f0; }
-.breadcrumb { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.breadcrumb-item { cursor: pointer; color: #409eff; padding: 4px 8px; border-radius: 4px; transition: background 0.2s; }
-.breadcrumb-item:hover { background: #ecf5ff; }
-.breadcrumb-sep { color: #c0c4cc; }
+.toolbar { 
+  display: flex; 
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px; 
+  padding: 15px 20px; 
+  background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.batch-operations {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 15px;
+  background: rgba(64, 158, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(64, 158, 255, 0.15);
+}
+.breadcrumb { 
+  display: flex; 
+  align-items: center; 
+  gap: 8px; 
+  flex-wrap: wrap;
+  background: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.breadcrumb-item { 
+  cursor: pointer; 
+  color: #409eff; 
+  padding: 4px 10px; 
+  border-radius: 6px; 
+  transition: all 0.2s;
+  font-weight: 500;
+}
+.breadcrumb-item:hover { 
+  background: #ecf5ff;
+  transform: translateY(-1px);
+}
+.breadcrumb-sep { 
+  color: #c0c4cc; 
+}
 .file-list { 
   height: 350px; 
   overflow-y: auto; 
@@ -1759,11 +1865,13 @@ const handleResize = () => {
 .file-item.selected { background: #e6f0ff; border: 1px solid #409eff; }
 .file-checkbox { width: 30px; display: flex; align-items: center; justify-content: center; }
 .file-icon { width: 30px; font-size: 18px; }
-.file-info { flex: 1; }
-.file-name { font-weight: 500; color: #303133; font-size: 13px; }
-.file-meta { font-size: 11px; color: #909399; }
-.file-date { font-size: 11px; color: #909399; margin-right: 15px; white-space: nowrap; }
-.file-actions { transition: opacity 0.2s; }
+.file-info { flex: 1; min-width: 0; }
+.file-name { font-weight: 500; color: #303133; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-meta { font-size: 11px; color: #909399; margin-top: 2px; }
+.file-type-label { color: #67c23a; }
+.file-size-col { width: 100px; text-align: right; color: #409eff; font-weight: 500; font-size: 12px; flex-shrink: 0; padding-right: 15px; }
+.file-date-col { width: 150px; text-align: right; color: #909399; font-size: 11px; flex-shrink: 0; padding-right: 15px; }
+.file-actions { transition: opacity 0.2s; flex-shrink: 0; }
 
 /* 网格视图 */
 .file-grid { display: grid; grid-template-columns: repeat(auto-fill, 100px); gap: 15px; padding: 10px 0; justify-content: center; }
@@ -1774,6 +1882,7 @@ const handleResize = () => {
 .grid-item:hover .grid-checkbox, .grid-item.selected .grid-checkbox { opacity: 1; }
 .grid-icon { font-size: 36px; margin-bottom: 6px; }
 .grid-name { font-size: 12px; color: #303133; text-align: center; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; }
+.grid-size { font-size: 10px; color: #409eff; text-align: center; margin-top: 2px; font-weight: 500; }
 .grid-more { position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity 0.2s; }
 .grid-item:hover .grid-more { opacity: 1; }
 .upload-area { border: 2px dashed #dcdfe6; border-radius: 12px; padding: 40px 30px; text-align: center; transition: all 0.3s; background: #fafafa; }
@@ -1881,16 +1990,46 @@ const handleResize = () => {
   .header-actions .el-button .el-icon { margin-right: 3px !important; }
   .domain-info { font-size: 16px; }
   
-  .stats-row { flex-wrap: wrap; gap: 10px; }
-  .stat-card { flex: 1 1 45%; min-width: 140px; padding: 15px 10px; }
-  .stat-value { font-size: 20px; }
-  .stat-label { font-size: 12px; }
+  /* 统计卡片移动端 - 2行3列布局 */
+  .stats-row { 
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .stat-card { 
+    padding: 15px 10px;
+  }
+  .stat-card:nth-child(4),
+  .stat-card:nth-child(5) {
+    grid-column: span 1;
+  }
+  /* 如果只想让第5个卡片居中，可以用这个 */
+  .stat-card:nth-child(5) {
+    grid-column: 2 / 3;
+  }
+  .stat-value { font-size: 22px; color: #fff; }
+  .stat-label { font-size: 12px; color: rgba(255,255,255,0.95); }
   
   .card { padding: 15px; }
-  .toolbar { flex-direction: column; gap: 15px; align-items: stretch; }
+  .toolbar { 
+    flex-direction: column; 
+    gap: 12px; 
+    align-items: stretch;
+    padding: 12px 15px;
+  }
   .toolbar > div { width: 100%; }
-  .toolbar > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
-  .toolbar > div:last-child .el-button { flex: 1; min-width: 90px; }
+  .toolbar > div:last-child { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 8px; 
+  }
+  .toolbar > div:last-child .el-button { 
+    flex: 1; 
+    min-width: 90px;
+    font-size: 12px;
+  }
+  .toolbar > div:last-child .el-button .el-icon {
+    font-size: 14px;
+  }
   
   .file-item { padding: 12px 15px; }
   .file-icon { width: 40px; font-size: 26px; }
@@ -1935,7 +2074,14 @@ const handleResize = () => {
   .header-actions .el-button span { display: none; }
   .header-actions .el-button .el-icon { margin-right: 0 !important; }
   
-  .stat-card { flex: 1 1 100%; }
+  /* 统计卡片 2行布局 */
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .stat-card:nth-child(5) {
+    grid-column: 1 / -1; /* 第5个卡片占满整行 */
+  }
   
   .tips-list { flex-direction: column; }
   .tip-tag { text-align: center; }

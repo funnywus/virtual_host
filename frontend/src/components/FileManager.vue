@@ -400,4 +400,120 @@ function getFileIcon(name) {
 
 .editor-wrapper { border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden; }
 .code-editor :deep(textarea) { font-family: 'Monaco', 'Menlo', 'Consolas', monospace !important; font-size: 13px; line-height: 1.5; }
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .nav-buttons {
+    order: 1;
+  }
+
+  .action-buttons {
+    order: 2;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .action-buttons .el-button {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .path-bar {
+    order: 3;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .file-grid {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 8px;
+    padding: 10px;
+    max-height: 60vh;
+  }
+
+  .file-item {
+    padding: 10px 5px;
+  }
+
+  .file-icon {
+    font-size: 32px;
+    margin-bottom: 6px;
+  }
+
+  .file-name {
+    font-size: 11px;
+  }
+
+  .file-size {
+    font-size: 10px;
+  }
+
+  .status-bar {
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+
+  .empty-state {
+    padding: 40px 20px;
+  }
+
+  .empty-icon {
+    font-size: 48px;
+  }
+
+  /* 对话框优化 */
+  :deep(.el-dialog) {
+    width: 95% !important;
+    margin: 5vh auto !important;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+  }
+
+  /* 上传区域优化 */
+  :deep(.el-upload-dragger) {
+    padding: 30px 15px;
+  }
+
+  :deep(.el-icon--upload) {
+    font-size: 36px !important;
+  }
+
+  /* 编辑器优化 */
+  .code-editor :deep(textarea) {
+    font-size: 12px;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .file-grid {
+    grid-template-columns: repeat(auto-fill, minmax(75px, 1fr));
+    gap: 6px;
+  }
+
+  .file-icon {
+    font-size: 28px;
+  }
+
+  .file-name {
+    font-size: 10px;
+  }
+
+  .action-buttons .el-button {
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+}
 </style>

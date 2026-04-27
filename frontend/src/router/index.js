@@ -28,7 +28,8 @@ const routes = [
       { path: 'servers', name: 'Servers', component: () => import('@/views/Servers.vue') },
       { path: 'dns-platforms', name: 'DnsPlatforms', component: () => import('@/views/DnsPlatforms.vue') },
       { path: 'tags', name: 'Tags', component: () => import('@/views/Tags.vue') },
-      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue') }
+      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue') },
+      { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') }
     ]
   }
 ]

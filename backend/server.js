@@ -16,6 +16,7 @@ const uploadRoutes = require('./routes/upload');
 const uploadChunkedRoutes = require('./routes/upload-chunked');
 const sslRoutes = require('./routes/ssl');
 const tagsRoutes = require('./routes/tags');
+const systemRoutes = require('./routes/system');
 const SshFtpService = require('./services/ssh-ftp');
 const sslCert = require('./services/ssl-cert');
 const WebSocketSFTPProxy = require('./services/ws-sftp-proxy');
@@ -55,6 +56,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/upload-chunked', uploadChunkedRoutes);
 app.use('/api/ssl', sslRoutes);
 app.use('/api/tags', tagsRoutes);
+app.use('/api/system', systemRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

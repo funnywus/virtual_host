@@ -3,11 +3,22 @@
     <div class="card-title">
       <span>DNS平台配置</span>
       <div>
+        <el-input 
+          v-model="searchKeyword" 
+          placeholder="搜索配置名称、备注..." 
+          clearable 
+          style="width:200px;margin-right:10px" 
+          size="small"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加平台</el-button>
       </div>
     </div>
-    <el-table :data="dataStore.aliyunConfigs" stripe>
+    <el-table :data="filteredConfigs" stripe>
       <el-table-column prop="name" label="配置名称" width="140">
         <template #default="{ row }">
           {{ row.name }}
@@ -90,9 +101,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Search, View, Hide } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
 import { platformTypes } from '@/utils'
 import api from '@/api'
@@ -101,9 +112,21 @@ const dataStore = useDataStore()
 const dialogVisible = ref(false)
 const saving = ref(false)
 const loading = ref(false)
+const searchKeyword = ref('')
 const showKey = ref({})
 const showSecret = ref({})
 const form = reactive({ id: null, name: '', platform: 'aliyun', access_key: '', secret_key: '', remark: '', tagList: [] })
+
+const filteredConfigs = computed(() => {
+  if (!searchKeyword.value) return dataStore.aliyunConfigs
+  const kw = searchKeyword.value.toLowerCase()
+  return dataStore.aliyunConfigs.filter(c => 
+    c.name?.toLowerCase().includes(kw) ||
+    c.remark?.toLowerCase().includes(kw) ||
+    c.platform?.toLowerCase().includes(kw) ||
+    c.tags?.toLowerCase().includes(kw)
+  )
+})
 
 onMounted(() => {
   loadData()
@@ -248,5 +271,110 @@ async function testConfig(row) {
 :deep(.el-dialog__footer) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .card {
+    padding: 15px;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    font-size: 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .card-title > div {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .card-title > div .el-input {
+    flex: 1;
+    width: auto !important;
+    margin-right: 0 !important;
+  }
+
+  .card-title > div .el-button {
+    flex-shrink: 0;
+  }
+
+  /* 表格移动端优化 */
+  :deep(.el-table) {
+    font-size: 11px;
+  }
+
+  :deep(.el-table th),
+  :deep(.el-table td) {
+    padding: 6px 3px;
+  }
+
+  :deep(.el-table .cell) {
+    padding: 0 3px;
+  }
+
+  /* 操作按钮优化 */
+  :deep(.el-button--small) {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  :deep(.el-tag--small) {
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  /* 对话框移动端优化 */
+  :deep(.el-dialog:not(.is-fullscreen)) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  .card {
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 15px;
+  }
+
+  :deep(.el-table) {
+    font-size: 10px;
+  }
+
+  :deep(.el-button--small) {
+    padding: 3px 5px;
+    font-size: 10px;
+  }
 }
 </style>

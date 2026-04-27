@@ -56,6 +56,7 @@ router.get('/', async (req, res) => {
     // 获取分页数据
     let sql = `
       SELECT f.*, s.subdomain, d.domain as main_domain, sv.name as server_name, sv.ip as server_ip,
+             sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
@@ -72,10 +73,30 @@ router.get('/', async (req, res) => {
     const params = userId ? [userId, parseInt(pageSize), offset] : [parseInt(pageSize), offset];
     const accounts = await db.all(sql, params);
     
-    // 动态计算授权码 (域名MD5前8位)
-    accounts.forEach(acc => {
+    // 动态计算授权码和获取已使用空间
+    for (const acc of accounts) {
       acc.auth_code = generateAuthCode(acc.full_domain);
-    });
+      
+      // 获取已使用空间
+      acc.used_size = 0;
+      if (acc.server_ip && acc.home_dir) {
+        try {
+          const sshService = new SshFtpService({
+            ip: acc.server_ip,
+            port: acc.ssh_port,
+            username: acc.ssh_user,
+            password: acc.ssh_pass
+          });
+          
+          const result = await sshService.exec(`du -sb "${acc.home_dir}" 2>/dev/null | cut -f1`);
+          if (result.success && result.output) {
+            acc.used_size = parseInt(result.output.trim()) || 0;
+          }
+        } catch (err) {
+          console.error(`获取空间使用失败 (${acc.full_domain}):`, err.message);
+        }
+      }
+    }
     
     res.json({ 
       list: accounts, 

@@ -284,4 +284,114 @@ async function downloadCert() {
 .ftp-info { background: #f5f7fa; padding: 15px; border-radius: 4px; }
 .ftp-info p { margin: 5px 0; font-family: monospace; }
 .log-box { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  :deep(.el-dialog) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  :deep(.el-dialog__footer .el-button) {
+    flex: 1;
+    min-width: calc(50% - 4px);
+    margin: 0;
+    font-size: 12px;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+
+  /* Radio Group 优化 */
+  :deep(.el-radio-group) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  :deep(.el-radio-button) {
+    width: 100%;
+  }
+
+  :deep(.el-radio-button__inner) {
+    width: 100%;
+    font-size: 12px;
+    padding: 8px 10px;
+  }
+
+  /* 证书信息优化 */
+  .ftp-info {
+    padding: 12px;
+    font-size: 12px;
+  }
+
+  .ftp-info p {
+    font-size: 11px;
+    word-break: break-all;
+  }
+
+  /* 日志框优化 */
+  .log-box {
+    padding: 10px;
+    font-size: 11px;
+    max-height: 200px;
+  }
+
+  /* 按钮组优化 */
+  :deep(.el-button-group) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  :deep(.el-button-group .el-button) {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  :deep(.el-dialog__footer .el-button) {
+    min-width: 100%;
+    font-size: 11px;
+  }
+
+  .ftp-info {
+    padding: 10px;
+    font-size: 11px;
+  }
+
+  .ftp-info p {
+    font-size: 10px;
+  }
+
+  .log-box {
+    font-size: 10px;
+    padding: 8px;
+  }
+}
 </style>

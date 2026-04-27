@@ -145,4 +145,79 @@ async function removeConfig() {
 
 <style scoped>
 .full-domain { color: #409eff; font-weight: bold; }
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  :deep(.el-dialog) {
+    width: 95% !important;
+    margin-top: 5vh !important;
+  }
+
+  :deep(.el-dialog__header) {
+    padding: 15px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding: 15px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  :deep(.el-dialog__footer) {
+    padding: 12px 15px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  :deep(.el-dialog__footer .el-button) {
+    flex: 1;
+    min-width: calc(50% - 4px);
+    margin: 0;
+  }
+
+  /* 表单优化 */
+  :deep(.el-form-item) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-form-item__label) {
+    font-size: 13px;
+  }
+
+  /* Radio Group 优化 */
+  :deep(.el-radio-group) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  :deep(.el-radio-button) {
+    flex: 1;
+    min-width: calc(50% - 4px);
+  }
+
+  :deep(.el-radio-button__inner) {
+    width: 100%;
+    font-size: 12px;
+    padding: 8px 10px;
+  }
+
+  /* Textarea 优化 */
+  :deep(.el-textarea__inner) {
+    font-size: 12px;
+  }
+}
+
+/* 小屏手机适配 */
+@media (max-width: 480px) {
+  :deep(.el-radio-button) {
+    flex: 1;
+    min-width: 100%;
+  }
+
+  :deep(.el-dialog__footer .el-button) {
+    min-width: 100%;
+  }
+}
 </style>
