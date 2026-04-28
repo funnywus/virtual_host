@@ -300,7 +300,7 @@
       </div>
 
       <!-- 上传对话框 -->
-      <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px" :fullscreen="isMobile">
+      <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px" :fullscreen="isMobile" append-to-body>
         <!-- 上传区域 - 上传时自动折叠 -->
         <div v-if="!uploading" class="upload-area" :class="{ dragover: isDragover }" @dragover.prevent="isDragover = true" @dragleave="isDragover = false" @drop.prevent="handleDrop">
           <div class="upload-icon">📤</div>
@@ -375,7 +375,7 @@
       </el-dialog>
 
       <!-- 新建文件夹对话框 -->
-      <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px" :fullscreen="isMobile">
+      <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px" :fullscreen="isMobile" append-to-body>
         <el-input v-model="newFolderName" placeholder="请输入文件夹名称" size="large" @keyup.enter="createFolder">
           <template #prefix><el-icon><Folder /></el-icon></template>
         </el-input>
@@ -386,7 +386,7 @@
       </el-dialog>
 
       <!-- 新建文件对话框 -->
-      <el-dialog v-model="showNewFileDialog" title="新建文件" width="600px" :fullscreen="isMobile">
+      <el-dialog v-model="showNewFileDialog" title="新建文件" width="600px" :fullscreen="isMobile" append-to-body>
         <el-form label-width="90px">
           <el-form-item label="文件类型">
             <el-select v-model="newFileType" placeholder="选择文件类型" size="large" style="width:100%" @change="handleFileTypeChange">
@@ -425,7 +425,7 @@
       </el-dialog>
 
       <!-- 重命名对话框 -->
-      <el-dialog v-model="showRenameDialog" title="重命名" width="400px" :fullscreen="isMobile">
+      <el-dialog v-model="showRenameDialog" title="重命名" width="400px" :fullscreen="isMobile" append-to-body>
         <el-input v-model="newFileName" placeholder="请输入新名称" size="large" @keyup.enter="renameFile">
           <template #prefix><el-icon><EditPen /></el-icon></template>
         </el-input>
@@ -436,7 +436,7 @@
       </el-dialog>
 
       <!-- 文件编辑对话框 -->
-      <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile">
+      <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile" append-to-body>
         <div v-loading="loadingFile" class="editor-container">
           <VueMonacoEditor
             v-model:value="fileContent"
@@ -458,14 +458,14 @@
       </el-dialog>
 
       <!-- 图片预览对话框 -->
-      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile">
+      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile" append-to-body>
         <div style="text-align:center;max-height:80vh;overflow:auto">
           <img v-if="previewType === 'image'" :src="previewUrl" style="max-width:100%;max-height:75vh" />
         </div>
       </el-dialog>
 
       <!-- 使用教程对话框 -->
-      <el-dialog v-model="showTutorialDialog" title="📖 帮助中心" width="650px" :fullscreen="isMobile">
+      <el-dialog v-model="showTutorialDialog" title="📖 帮助中心" width="650px" :fullscreen="isMobile" append-to-body>
         <div class="help-layout">
           <div class="help-left">
             <el-icon class="help-icon-el"><Upload /></el-icon>
@@ -505,7 +505,7 @@
       </el-dialog>
 
       <!-- 快捷上传教程对话框 -->
-      <el-dialog v-model="showQuickTutorial" title="🚀 快捷上传教程" width="550px" :fullscreen="isMobile">
+      <el-dialog v-model="showQuickTutorial" title="🚀 快捷上传教程" width="550px" :fullscreen="isMobile" append-to-body>
         <div class="quick-tutorial">
           <div class="quick-header">
             <div class="quick-icon">📂</div>
@@ -563,7 +563,7 @@
     </div>
 
     <!-- 联系客服对话框（放在外层，授权页面也能访问） -->
-    <el-dialog v-model="showContactDialog" title="💬 联系客服" width="500px" :fullscreen="isMobile">
+    <el-dialog v-model="showContactDialog" title="💬 联系客服" width="500px" :fullscreen="isMobile" append-to-body>
       <div class="contact-content">
         <div class="contact-layout">
           <div class="contact-left">

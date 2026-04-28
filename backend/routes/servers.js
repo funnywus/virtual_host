@@ -83,10 +83,11 @@ router.get('/:id/domains', async (req, res) => {
 // 添加服务器
 router.post('/', async (req, res) => {
   try {
-    const { name, ip, port, username, password, tags, expire_at } = req.body;
+    const { name, ip, port, username, password, tags, expire_at, status } = req.body;
+    const serverStatus = status === 'disabled' ? 'disabled' : 'active';
     const result = await db.run(
-      'INSERT INTO servers (name, ip, port, username, password, tags, user_id, expire_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, ip, port || 22, username, password, tags || '', req.user.id, expire_at || null]
+      'INSERT INTO servers (name, ip, port, username, password, tags, user_id, expire_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, ip, port || 22, username, password, tags || '', req.user.id, expire_at || null, serverStatus]
     );
     res.json({ id: result.lastID, message: 'Server added' });
   } catch (err) {
@@ -97,7 +98,7 @@ router.post('/', async (req, res) => {
 // 更新服务器
 router.put('/:id', async (req, res) => {
   try {
-    const { name, ip, port, username, password, tags, nginx_path, ftp_path, expire_at } = req.body;
+    const { name, ip, port, username, password, tags, nginx_path, ftp_path, expire_at, status } = req.body;
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在' });
@@ -105,10 +106,11 @@ router.put('/:id', async (req, res) => {
     
     // 如果密码为空，保留原密码
     const newPassword = password || server.password;
+    const serverStatus = status === 'disabled' ? 'disabled' : 'active';
     
     await db.run(
-      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
-      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
+      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ?, status = ? WHERE id = ?',
+      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, serverStatus, req.params.id]
     );
     res.json({ message: '更新成功' });
   } catch (err) {

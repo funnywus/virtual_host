@@ -8,28 +8,29 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { 
-  font-family: 'PingFang SC', 'Helvetica Neue', Helvetica, Arial, sans-serif; 
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif; 
+  background: linear-gradient(135deg, #F5F5F7 0%, #FAFAFA 100%);
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 /* ========== 主题色变量 ========== */
 :root {
-  --primary-color: #667eea;
-  --primary-light: #8b9ff5;
-  --primary-dark: #5a6fd6;
-  --secondary-color: #764ba2;
-  --success-color: #67c23a;
-  --warning-color: #e6a23c;
-  --danger-color: #f56c6c;
-  --info-color: #909399;
-  --text-primary: #303133;
-  --text-regular: #606266;
-  --text-secondary: #909399;
-  --border-color: #e4e7ed;
-  --bg-color: #f5f7fa;
-  --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  --card-radius: 16px;
+  --primary-color: #007AFF;
+  --primary-light: #66b2ff;
+  --primary-dark: #0051D5;
+  --secondary-color: #0095FF;
+  --success-color: #34C759;
+  --warning-color: #FF9500;
+  --danger-color: #FF3B30;
+  --info-color: #8E8E93;
+  --text-primary: #1C1C1E;
+  --text-regular: #3C3C43;
+  --text-secondary: #86868B;
+  --border-color: rgba(209, 209, 214, 0.45);
+  --bg-color: #F5F5F7;
+  --card-shadow: 0 0 0 0.5px rgba(255, 255, 255, 1) inset, 0 8px 32px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.03);
+  --card-radius: 20px;
 }
 
 /* ========== Element Plus 按钮样式覆盖 ========== */
@@ -41,7 +42,7 @@ body {
 
 .el-button--primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4) !important;
+  box-shadow: 0 8px 24px rgba(0, 122, 255, 0.28) !important;
   opacity: 0.95;
 }
 
@@ -50,33 +51,33 @@ body {
 }
 
 .el-button--success {
-  background: linear-gradient(135deg, #67c23a 0%, #5daf34 100%) !important;
+  background: linear-gradient(135deg, #34C759 0%, #30B350 100%) !important;
   border: none !important;
 }
 
 .el-button--success:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(103, 194, 58, 0.4) !important;
+  box-shadow: 0 8px 24px rgba(52, 199, 89, 0.28) !important;
 }
 
 .el-button--warning {
-  background: linear-gradient(135deg, #e6a23c 0%, #d4940f 100%) !important;
+  background: linear-gradient(135deg, #FF9500 0%, #FF6B00 100%) !important;
   border: none !important;
 }
 
 .el-button--warning:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(230, 162, 60, 0.4) !important;
+  box-shadow: 0 8px 24px rgba(255, 149, 0, 0.28) !important;
 }
 
 .el-button--danger {
-  background: linear-gradient(135deg, #f56c6c 0%, #e64545 100%) !important;
+  background: linear-gradient(135deg, #FF3B30 0%, #D70015 100%) !important;
   border: none !important;
 }
 
 .el-button--danger:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(245, 108, 108, 0.4) !important;
+  box-shadow: 0 8px 24px rgba(255, 59, 48, 0.28) !important;
 }
 
 .el-button--default {
@@ -87,7 +88,7 @@ body {
 .el-button--default:hover {
   color: var(--primary-color) !important;
   border-color: var(--primary-color) !important;
-  background: rgba(102, 126, 234, 0.05) !important;
+  background: rgba(0, 122, 255, 0.06) !important;
 }
 
 /* 小按钮圆角 */
@@ -104,11 +105,11 @@ body {
 .el-table {
   border-radius: 12px !important;
   overflow: hidden !important;
-  --el-table-border-color: #f0f0f0 !important;
+  --el-table-border-color: rgba(209, 209, 214, 0.35) !important;
 }
 
 .el-table th.el-table__cell {
-  background: linear-gradient(135deg, #f8f9fa 0%, #f0f2f5 100%) !important;
+  background: linear-gradient(135deg, rgba(248, 248, 250, 0.95) 0%, rgba(242, 242, 247, 0.88) 100%) !important;
   font-weight: 600 !important;
   color: var(--text-primary) !important;
   padding: 14px 0 !important;
@@ -119,11 +120,38 @@ body {
 }
 
 .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
-  background: rgba(102, 126, 234, 0.02) !important;
+  background: rgba(0, 122, 255, 0.025) !important;
 }
 
 .el-table__body tr:hover > td.el-table__cell {
-  background: rgba(102, 126, 234, 0.06) !important;
+  background: rgba(0, 122, 255, 0.06) !important;
+}
+
+/* ========== 后台与用户端统一的玻璃质感 ========== */
+.admin-layout .card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.52) 100%) !important;
+  backdrop-filter: blur(80px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(80px) saturate(180%) !important;
+  border: 0.5px solid rgba(255, 255, 255, 1) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--card-shadow) !important;
+}
+
+.admin-layout .card-title {
+  color: var(--text-primary) !important;
+  border-bottom: 1px solid rgba(209, 209, 214, 0.35) !important;
+  letter-spacing: -0.2px;
+}
+
+.admin-layout .toolbar,
+.admin-layout .backup-actions,
+.admin-layout .software-actions {
+  border-radius: 16px;
+}
+
+.admin-layout .el-table {
+  background: rgba(255, 255, 255, 0.62) !important;
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.9) inset !important;
 }
 
 /* ========== Element Plus 标签样式覆盖 ========== */
@@ -296,10 +324,19 @@ a:hover {
 
 /* ========== 移动端全局响应式样式 ========== */
 @media (max-width: 768px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
   /* 卡片样式 */
   .card {
     padding: 15px !important;
     border-radius: 12px !important;
+    overflow: hidden !important;
   }
 
   .card-title {
@@ -318,9 +355,20 @@ a:hover {
     gap: 8px;
   }
 
+  .card-title > div .el-input,
+  .card-title > div .el-select,
+  .card-title > div .el-button,
+  .toolbar .el-input,
+  .toolbar .el-select,
+  .toolbar .el-button {
+    min-height: 36px;
+  }
+
   /* 表格移动端优化 */
   .el-table {
     font-size: 13px !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   .el-table th.el-table__cell,
@@ -328,8 +376,25 @@ a:hover {
     padding: 10px 8px !important;
   }
 
+  .el-table .cell {
+    line-height: 1.35 !important;
+  }
+
+  .el-table__inner-wrapper,
+  .el-table__body-wrapper,
+  .el-scrollbar,
+  .el-scrollbar__wrap {
+    max-width: 100% !important;
+  }
+
   .el-table__body-wrapper {
     overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .el-table__fixed-right,
+  .el-table__fixed {
+    box-shadow: none !important;
   }
 
   /* 按钮组优化 */
@@ -340,6 +405,11 @@ a:hover {
 
   .el-button {
     padding: 8px 12px !important;
+    min-height: 34px;
+  }
+
+  .el-button + .el-button {
+    margin-left: 6px !important;
   }
 
   /* 输入框优化 */
@@ -351,7 +421,13 @@ a:hover {
   /* 对话框优化 */
   .el-dialog {
     width: 95% !important;
-    margin: 10px auto !important;
+    max-width: calc(100vw - 20px) !important;
+    margin: 10px auto max(10px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .el-overlay-dialog {
+    align-items: flex-start !important;
+    padding-top: max(10px, env(safe-area-inset-top));
   }
 
   .el-dialog__header {
@@ -360,12 +436,24 @@ a:hover {
 
   .el-dialog__body {
     padding: 15px !important;
-    max-height: 60vh;
+    max-height: calc(100dvh - 170px);
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .el-dialog__footer {
     padding: 12px 15px !important;
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+  }
+
+  .el-dialog__footer .dialog-footer,
+  .el-dialog__footer > span {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   /* 表单优化 */
@@ -382,6 +470,7 @@ a:hover {
     flex-wrap: wrap !important;
     justify-content: center !important;
     gap: 8px;
+    white-space: normal !important;
   }
 
   .el-pagination .el-pagination__total,
@@ -391,6 +480,8 @@ a:hover {
 
   .el-pagination .el-pager {
     margin: 0 !important;
+    flex-wrap: wrap;
+    justify-content: center;
   }
 
   /* 标签优化 */
@@ -406,6 +497,12 @@ a:hover {
     max-width: 90vw !important;
   }
 
+  .el-popper,
+  .el-select__popper,
+  .el-picker__popper {
+    max-width: calc(100vw - 16px) !important;
+  }
+
   /* 警告框优化 */
   .el-alert {
     padding: 10px 12px !important;
@@ -416,6 +513,11 @@ a:hover {
   .el-tabs__item {
     padding: 0 15px !important;
     font-size: 13px !important;
+  }
+
+  .el-tabs__nav-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* 描述列表优化 */
@@ -432,6 +534,7 @@ a:hover {
 @media (max-width: 480px) {
   .card {
     padding: 12px !important;
+    border-radius: 10px !important;
   }
 
   .card-title {
@@ -449,6 +552,16 @@ a:hover {
 
   .el-dialog {
     width: 98% !important;
+    max-width: calc(100vw - 12px) !important;
+  }
+
+  .el-dialog__body {
+    max-height: calc(100dvh - 150px);
+  }
+
+  .el-message-box {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
   }
 
   .el-form-item__label {
@@ -463,6 +576,11 @@ a:hover {
     min-width: 28px !important;
     height: 28px !important;
     line-height: 28px !important;
+  }
+
+  .el-pagination__jump,
+  .el-pagination__sizes {
+    display: none !important;
   }
 }
 </style>

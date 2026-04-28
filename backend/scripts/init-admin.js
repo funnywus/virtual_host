@@ -1,37 +1,43 @@
-// 初始化管理员账号脚本
-const bcrypt = require('bcryptjs');
-const sqlite3 = require('sqlite3').verbose();
+// 初始化管理员账号脚本，跟随 backend/.env 中的 DB_TYPE 使用当前运行数据库。
 const path = require('path');
-const fs = require('fs');
+const bcrypt = require('bcryptjs');
 
-const dbPath = './data/app.db';
-const dbDir = path.dirname(dbPath);
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-const db = new sqlite3.Database(dbPath);
+const db = require('../db/database');
 
 const username = process.argv[2] || 'admin';
 const password = process.argv[3] || 'admin123';
 const email = process.argv[4] || 'admin@example.com';
 
 async function createAdmin() {
-  const hashedPassword = await bcrypt.hash(password, 10);
-  
-  db.run(`
-    INSERT OR REPLACE INTO users (username, email, password, role) 
-    VALUES (?, ?, ?, 'admin')
-  `, [username, email, hashedPassword], function(err) {
-    if (err) {
-      console.error('Error creating admin:', err.message);
+  try {
+    await db.init();
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const existing = await db.get('SELECT id FROM users WHERE username = ?', [username]);
+
+    if (existing) {
+      await db.run(
+        'UPDATE users SET email = ?, password = ?, role = ? WHERE id = ?',
+        [email, hashedPassword, 'admin', existing.id]
+      );
+      console.log(`Admin user updated: ${username}`);
     } else {
+      await db.run(
+        'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
+        [username, email, hashedPassword, 'admin']
+      );
       console.log(`Admin user created: ${username}`);
-      console.log(`Password: ${password}`);
     }
-    db.close();
-  });
+
+    console.log(`Password: ${password}`);
+  } catch (err) {
+    console.error('Error creating admin:', err.message);
+    process.exitCode = 1;
+  } finally {
+    await db.close?.();
+  }
 }
 
 createAdmin();

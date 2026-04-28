@@ -88,7 +88,7 @@
     </el-table>
 
     <!-- 添加/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑域名' : '添加域名'" width="450px">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑域名' : '添加域名'" width="450px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="100px">
         <el-form-item label="域名">
           <el-input v-model="form.domain" placeholder="例如: example.com" :disabled="!!form.id" />
@@ -115,17 +115,13 @@
           />
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
 
     <!-- SSL证书对话框 -->
     <SslDialog v-model="sslDialogVisible" :domain="currentDomain" @refresh="dataStore.loadDomains" />
 
     <!-- DNS记录对话框 -->
-    <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px">
+    <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px" append-to-body>
       <div style="margin-bottom:15px;display:flex;justify-content:space-between;align-items:center">
         <div style="display:flex;gap:10px;align-items:center">
           <el-tag type="info">{{ dnsRecords.platform === 'tencent' ? '腾讯云' : '阿里云' }}</el-tag>
@@ -186,7 +182,7 @@
     </el-dialog>
 
     <!-- 添加DNS记录对话框 -->
-    <el-dialog v-model="addDnsRecordDialogVisible" title="添加DNS记录" width="450px">
+    <AppDialog v-model="addDnsRecordDialogVisible" title="添加DNS记录" width="450px" :loading="addingDnsRecord" confirm-text="添加" @confirm="addDnsRecord">
       <el-form :model="dnsRecordForm" label-width="100px">
         <el-form-item label="主机记录">
           <el-input v-model="dnsRecordForm.name" placeholder="例如: www, @, *" />
@@ -202,7 +198,7 @@
         </el-form-item>
         <el-form-item label="服务器" v-if="dnsRecordForm.type === 'A'">
           <el-select v-model="dnsRecordForm.server_id" placeholder="选择服务器" clearable style="width:100%" @change="onDnsServerChange">
-            <el-option v-for="s in dataStore.servers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
+            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="记录值">
@@ -217,11 +213,7 @@
           </el-select>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="addDnsRecordDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="addDnsRecord" :loading="addingDnsRecord">添加</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
   </div>
 </template>
 
@@ -255,6 +247,12 @@ const dnsRecords = reactive({ platform: '', records: [] })
 const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
 const dnsCurrentPage = ref(1)
 const dnsPageSize = ref(10)
+
+const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
+
+function getDefaultAvailableServer() {
+  return availableServers.value.find(s => s.is_default === 1) || availableServers.value[0] || null
+}
 
 const filteredDnsRecords = computed(() => {
   let records = dnsRecords.records
@@ -446,7 +444,7 @@ async function loadDnsRecords() {
 }
 
 function openAddDnsRecordDialog() {
-  const defaultServer = dataStore.servers.find(s => s.is_default === 1)
+  const defaultServer = getDefaultAvailableServer()
   Object.assign(dnsRecordForm, { 
     name: '', 
     type: 'A', 
@@ -466,7 +464,7 @@ function onDnsServerChange() {
 
 function onDnsTypeChange() {
   if (dnsRecordForm.type === 'A') {
-    const defaultServer = dataStore.servers.find(s => s.is_default === 1)
+    const defaultServer = getDefaultAvailableServer()
     dnsRecordForm.server_id = defaultServer?.id || null
     dnsRecordForm.value = defaultServer?.ip || ''
   } else {

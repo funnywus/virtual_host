@@ -28,8 +28,8 @@ const routes = [
       { path: 'servers', name: 'Servers', component: () => import('@/views/Servers.vue') },
       { path: 'dns-platforms', name: 'DnsPlatforms', component: () => import('@/views/DnsPlatforms.vue') },
       { path: 'tags', name: 'Tags', component: () => import('@/views/Tags.vue') },
-      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue') },
-      { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') }
+      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { adminOnly: true } },
+      { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue'), meta: { adminOnly: true } }
     ]
   }
 ]
@@ -43,6 +43,8 @@ router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
   if (to.meta.requiresAuth && !userStore.token) {
     next('/admin-jm/login')
+  } else if (to.meta.adminOnly && !userStore.isAdmin) {
+    next('/admin-jm/domains')
   } else {
     next()
   }

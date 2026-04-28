@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="'🖥️ ' + server?.name + ' - 终端'" width="900px" top="3vh" :close-on-click-modal="false" @closed="cleanup">
+  <el-dialog v-model="visible" :title="'🖥️ ' + server?.name + ' - 终端'" width="900px" top="3vh" :close-on-click-modal="false" append-to-body @closed="cleanup">
     <div class="terminal-container">
       <div class="terminal-toolbar">
         <div class="server-info">

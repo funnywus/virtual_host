@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node --max-old-space-size=2048 server.js",
-    "dev": "nodemon --max-old-space-size=2048 server.js"
+    "dev": "nodemon --max-old-space-size=2048 server.js",
+    "create-admin": "node scripts/init-admin.js"
   },
   "dependencies": {
     "aliyun-sdk": "^1.11.12",

@@ -30,10 +30,10 @@
         <router-link to="/admin-jm/tags" class="menu-item" :class="{ active: $route.path === '/admin-jm/tags' }" @click="handleMenuClick">
           <span class="menu-icon">🏷️</span><span class="menu-text" v-show="!isCollapsed">标签管理</span>
         </router-link>
-        <router-link to="/admin-jm/users" class="menu-item" :class="{ active: $route.path === '/admin-jm/users' }" @click="handleMenuClick">
+        <router-link v-if="userStore.isAdmin" to="/admin-jm/users" class="menu-item" :class="{ active: $route.path === '/admin-jm/users' }" @click="handleMenuClick">
           <span class="menu-icon">👥</span><span class="menu-text" v-show="!isCollapsed">用户管理</span>
         </router-link>
-        <router-link to="/admin-jm/settings" class="menu-item" :class="{ active: $route.path === '/admin-jm/settings' }" @click="handleMenuClick">
+        <router-link v-if="userStore.isAdmin" to="/admin-jm/settings" class="menu-item" :class="{ active: $route.path === '/admin-jm/settings' }" @click="handleMenuClick">
           <span class="menu-icon">⚙️</span><span class="menu-text" v-show="!isCollapsed">系统设置</span>
         </router-link>
       </div>
@@ -50,7 +50,7 @@
       <div class="header">
         <div class="header-left">
           <!-- 移动端菜单按钮 -->
-          <button class="mobile-menu-btn" @click="toggleMobileMenu">
+          <button class="mobile-menu-btn" type="button" aria-label="打开后台菜单" @click="toggleMobileMenu">
             <span></span>
             <span></span>
             <span></span>
@@ -76,7 +76,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { SwitchButton } from '@element-plus/icons-vue'
@@ -102,6 +102,11 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
+  document.body.style.overflow = ''
+})
+
+watch(mobileMenuOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
 })
 
 function toggleCollapse() {
@@ -134,17 +139,41 @@ function handleLogout() {
 .admin-layout {
   display: flex;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #F5F5F7 0%, #FAFAFA 100%);
   position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+}
+
+.admin-layout::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(0, 122, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(88, 86, 214, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(255, 149, 0, 0.03) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+  animation: backgroundPulse 20s ease-in-out infinite;
+}
+
+@keyframes backgroundPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
 .sidebar {
   width: 240px;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(80px) saturate(180%);
+  -webkit-backdrop-filter: blur(80px) saturate(180%);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 0.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.9) inset,
+    8px 0 32px rgba(0, 0, 0, 0.04);
   transition: width 0.3s ease, transform 0.3s ease;
   position: relative;
   z-index: 1000;
@@ -169,7 +198,7 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(209, 209, 214, 0.32);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -186,7 +215,8 @@ function handleLogout() {
 .logo-text {
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: #1C1C1E;
+  letter-spacing: -0.35px;
 }
 
 .sidebar-menu {
@@ -200,7 +230,7 @@ function handleLogout() {
   padding: 14px 18px;
   margin-bottom: 6px;
   border-radius: 10px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #3C3C43;
   text-decoration: none;
   transition: all 0.3s ease;
   font-size: 14px;
@@ -214,9 +244,9 @@ function handleLogout() {
 }
 
 .menu-item:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
-  transform: translateX(5px);
+  background: rgba(0, 122, 255, 0.07);
+  color: #007AFF;
+  transform: translateX(3px);
 }
 
 .admin-layout.collapsed .menu-item:hover {
@@ -224,10 +254,12 @@ function handleLogout() {
 }
 
 .menu-item.active {
-  background: rgba(255, 255, 255, 0.25);
-  color: #fff;
-  font-weight: 500;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.14) 0%, rgba(0, 149, 255, 0.08) 100%);
+  color: #007AFF;
+  font-weight: 600;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 122, 255, 0.18) inset,
+    0 6px 18px rgba(0, 122, 255, 0.08);
 }
 
 .menu-icon {
@@ -242,7 +274,7 @@ function handleLogout() {
 
 .sidebar-footer {
   padding: 15px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(209, 209, 214, 0.32);
 }
 
 .collapse-btn {
@@ -251,19 +283,19 @@ function handleLogout() {
   justify-content: center;
   padding: 8px;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
-  border-radius: 6px;
+  color: #86868B;
+  border-radius: 10px;
   transition: all 0.3s;
   margin-bottom: 10px;
 }
 
 .collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  background: rgba(0, 122, 255, 0.07);
+  color: #007AFF;
 }
 
 .version {
-  color: rgba(255, 255, 255, 0.5);
+  color: #8E8E93;
   font-size: 12px;
   text-align: center;
 }
@@ -274,6 +306,8 @@ function handleLogout() {
   flex-direction: column;
   padding: 20px;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 .header {
@@ -281,9 +315,15 @@ function handleLogout() {
   justify-content: space-between;
   align-items: center;
   padding: 18px 25px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(80px) saturate(180%);
+  -webkit-backdrop-filter: blur(80px) saturate(180%);
+  border-radius: 20px;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
+    0 8px 24px rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.02);
+  border: 0.5px solid rgba(255, 255, 255, 1);
   margin-bottom: 20px;
 }
 
@@ -293,12 +333,12 @@ function handleLogout() {
 }
 
 .welcome {
-  color: #909399;
+  color: #86868B;
   font-size: 14px;
 }
 
 .username {
-  color: #303133;
+  color: #1C1C1E;
   font-weight: 600;
   font-size: 16px;
 }
@@ -319,12 +359,12 @@ function handleLogout() {
 }
 
 .content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(0, 122, 255, 0.18);
   border-radius: 3px;
 }
 
 .content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 122, 255, 0.28);
 }
 
 .logout-btn {
@@ -334,8 +374,6 @@ function handleLogout() {
 .logout-btn:hover {
   color: var(--primary-color) !important;
 }
-</style>
-
 
 /* 移动端菜单按钮 */
 .mobile-menu-btn {
@@ -349,12 +387,13 @@ function handleLogout() {
   cursor: pointer;
   padding: 0;
   margin-right: 15px;
+  flex-shrink: 0;
 }
 
 .mobile-menu-btn span {
   width: 100%;
   height: 3px;
-  background: #303133;
+  background: #1C1C1E;
   border-radius: 2px;
   transition: all 0.3s ease;
 }
@@ -367,6 +406,11 @@ function handleLogout() {
 @media (max-width: 768px) {
   .admin-layout {
     flex-direction: column;
+    min-height: 100dvh;
+    background:
+      radial-gradient(circle at 20% 30%, rgba(0, 122, 255, 0.08) 0%, transparent 50%),
+      radial-gradient(circle at 80% 70%, rgba(88, 86, 214, 0.06) 0%, transparent 50%),
+      linear-gradient(135deg, #F5F5F7 0%, #FAFAFA 100%);
   }
 
   /* 侧边栏移动端样式 */
@@ -374,11 +418,16 @@ function handleLogout() {
     position: fixed;
     left: 0;
     top: 0;
-    height: 100vh;
-    width: 280px;
+    height: 100dvh;
+    width: min(82vw, 320px);
     transform: translateX(-100%);
     z-index: 2000;
-    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+    box-shadow: 18px 0 50px rgba(0, 0, 0, 0.12);
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(80px) saturate(180%);
+    -webkit-backdrop-filter: blur(80px) saturate(180%);
+    border-right: 0.5px solid rgba(255, 255, 255, 1);
+    padding-top: env(safe-area-inset-top);
   }
 
   .admin-layout.mobile-menu-open .sidebar {
@@ -386,7 +435,7 @@ function handleLogout() {
   }
 
   .admin-layout.collapsed .sidebar {
-    width: 280px;
+    width: min(82vw, 320px);
   }
 
   /* 移动端遮罩层 */
@@ -397,7 +446,8 @@ function handleLogout() {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(28, 28, 30, 0.28);
+    backdrop-filter: blur(3px);
     z-index: 1500;
     animation: fadeIn 0.3s ease;
   }
@@ -412,10 +462,12 @@ function handleLogout() {
     display: block;
     margin-left: auto;
     font-size: 24px;
-    color: #fff;
+    color: #1C1C1E;
     cursor: pointer;
     padding: 5px;
     line-height: 1;
+    min-width: 36px;
+    text-align: center;
   }
 
   /* 显示菜单按钮 */
@@ -430,8 +482,10 @@ function handleLogout() {
 
   /* 主内容区 */
   .main-area {
-    padding: 10px;
+    padding: max(10px, env(safe-area-inset-top)) 10px calc(12px + env(safe-area-inset-bottom));
     width: 100%;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
   /* 头部 */
@@ -439,6 +493,10 @@ function handleLogout() {
     padding: 12px 15px;
     margin-bottom: 15px;
     border-radius: 12px;
+    position: sticky;
+    top: 8px;
+    z-index: 50;
+    min-height: 54px;
   }
 
   .header-left {
@@ -468,11 +526,14 @@ function handleLogout() {
   /* 内容区 */
   .content {
     padding-right: 0;
+    overflow: visible;
   }
 
   /* 侧边栏菜单项 */
   .menu-item {
-    padding: 14px 18px;
+    padding: 15px 18px;
+    min-height: 50px;
+    border-radius: 14px;
   }
 
   .menu-icon {
@@ -489,6 +550,15 @@ function handleLogout() {
 
   .version {
     display: block !important;
+  }
+
+  .sidebar-menu {
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+
+  .sidebar-footer {
+    padding-bottom: calc(15px + env(safe-area-inset-bottom));
   }
 }
 
@@ -514,11 +584,12 @@ function handleLogout() {
 /* 小屏手机适配 (< 480px) */
 @media (max-width: 480px) {
   .sidebar {
-    width: 260px;
+    width: min(86vw, 300px);
   }
 
   .header {
     padding: 10px 12px;
+    gap: 8px;
   }
 
   .username {
@@ -531,4 +602,16 @@ function handleLogout() {
     height: 20px;
     line-height: 20px;
   }
+
+  .mobile-menu-btn {
+    width: 28px;
+    height: 22px;
+    margin-right: 10px;
+  }
+
+  .main-area {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
 }
+</style>

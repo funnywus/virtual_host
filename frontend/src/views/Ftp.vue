@@ -51,8 +51,11 @@
       <el-table-column label="已使用" width="120">
         <template #default="{ row }">
           <div style="display:flex;flex-direction:column;gap:4px">
-            <el-tag :type="getUsageType(row.used_size, row.max_upload_size)" size="small">
-              {{ formatUploadSize(row.used_size || 0) }}
+            <el-tag v-if="row.used_size === null || row.usageLoading" type="info" size="small">
+              统计中
+            </el-tag>
+            <el-tag v-else :type="getUsageType(row.used_size, row.max_upload_size)" size="small">
+              {{ formatUploadSize(row.used_size) }}
             </el-tag>
             <el-progress 
               :percentage="getUsagePercentage(row.used_size, row.max_upload_size)" 
@@ -94,7 +97,7 @@
       <el-pagination
         :current-page="currentPage"
         :page-size="pageSize"
-        :page-sizes="[20, 50, 100]"
+        :page-sizes="[10, 20, 50]"
         :total="dataStore.ftpAccountsTotal"
         layout="total, sizes, prev, pager, next, jumper"
         @size-change="onSizeChange"
@@ -106,7 +109,7 @@
       <p>客户上传地址: <a :href="uploadUrl" target="_blank" style="color:#409eff">{{ uploadUrl }}</a></p>
     </el-alert>
 
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑FTP账号' : '添加FTP账号'" width="500px">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑FTP账号' : '添加FTP账号'" width="500px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="100px">
         <el-form-item label="关联域名" v-if="!form.id">
           <el-select v-model="form.subdomain_id" placeholder="选择域名" style="width:100%">
@@ -127,11 +130,7 @@
           </div>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
   </div>
 </template>
 
@@ -151,7 +150,7 @@ const showPassword = ref({})
 const availableSubdomains = ref([])
 const searchKeyword = ref('')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const form = reactive({ id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 209715200, upload_size_value: 200, upload_size_unit: 'MB' })
 
 // 计算实际字节数
@@ -190,9 +189,34 @@ async function loadData() {
   loading.value = true
   try {
     await dataStore.loadFtpAccounts(currentPage.value, pageSize.value)
+    loadUsageForCurrentPage()
   } finally {
     loading.value = false
   }
+}
+
+async function loadUsageForCurrentPage() {
+  const accounts = [...dataStore.ftpAccounts]
+  const concurrency = 3
+  let cursor = 0
+
+  async function worker() {
+    while (cursor < accounts.length) {
+      const account = accounts[cursor]
+      cursor += 1
+      account.usageLoading = true
+      try {
+        const res = await api.get(`/ftp/${account.id}/usage`)
+        account.used_size = res.used_size || 0
+      } catch (err) {
+        account.used_size = 0
+      } finally {
+        account.usageLoading = false
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, accounts.length) }, worker))
 }
 
 function onPageChange(page) {
@@ -233,7 +257,7 @@ async function handleSave() {
     else await api.post('/ftp', data)
     ElMessage.success('保存成功')
     dialogVisible.value = false
-    dataStore.loadFtpAccounts()
+    loadData()
   } finally { saving.value = false }
 }
 
@@ -241,7 +265,7 @@ async function handleDelete(id) {
   await ElMessageBox.confirm('确定删除此FTP账号？', '提示')
   await api.delete(`/ftp/${id}`)
   ElMessage.success('删除成功')
-  dataStore.loadFtpAccounts()
+  loadData()
 }
 
 async function syncFtp(row) {
@@ -249,7 +273,7 @@ async function syncFtp(row) {
   try {
     const res = await api.post(`/ftp/${row.id}/sync`)
     res.success ? ElMessage.success(res.message) : ElMessage.error(res.message)
-    dataStore.loadFtpAccounts()
+    loadData()
   } finally { row.syncing = false }
 }
 
@@ -257,11 +281,12 @@ async function resetPassword(id) {
   await ElMessageBox.confirm('确定重置密码？', '提示')
   const res = await api.post(`/ftp/${id}/reset-password`)
   ElMessage.success(`新密码: ${res.password}`)
-  dataStore.loadFtpAccounts()
+  loadData()
 }
 
 // 计算使用百分比
 function getUsagePercentage(used, max) {
+  if (used === null || used === undefined) return 0
   if (!max || max === 0) return 0
   const percentage = (used / max) * 100
   return Math.min(Math.round(percentage), 100)

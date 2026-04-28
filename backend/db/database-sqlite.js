@@ -34,6 +34,7 @@ const init = () => {
         port INTEGER DEFAULT 22,
         username TEXT NOT NULL,
         password TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
         user_id INTEGER NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
@@ -176,6 +177,7 @@ const init = () => {
     db.run(`ALTER TABLE domains ADD COLUMN ssl_log TEXT`, () => {});
     db.run(`ALTER TABLE aliyun_config ADD COLUMN platform TEXT DEFAULT 'aliyun'`, () => {});
     db.run(`ALTER TABLE servers ADD COLUMN tags TEXT`, () => {});
+    db.run(`ALTER TABLE servers ADD COLUMN status TEXT DEFAULT 'active'`, () => {});
     db.run(`ALTER TABLE domains ADD COLUMN tags TEXT`, () => {});
     db.run(`ALTER TABLE aliyun_config ADD COLUMN tags TEXT`, () => {});
     // 子域名状态和包年包月

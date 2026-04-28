@@ -34,7 +34,7 @@ export const useDataStore = defineStore('data', () => {
     aliyunConfigs.value = await api.get('/dns/aliyun-configs')
   }
 
-  async function loadFtpAccounts(page = 1, pageSize = 20) {
+  async function loadFtpAccounts(page = 1, pageSize = 10) {
     const res = await api.get(`/ftp?page=${page}&pageSize=${pageSize}`)
     ftpAccounts.value = res.list || []
     ftpAccountsTotal.value = res.total || 0

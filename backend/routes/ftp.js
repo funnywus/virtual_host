@@ -23,6 +23,10 @@ function generateAuthCode(domain) {
   return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 // 生成FTP用户名
 function generateUsername(subdomain, domain) {
   const base = subdomain === '@' ? domain.split('.')[0] : subdomain;
@@ -33,8 +37,9 @@ function generateUsername(subdomain, domain) {
 // 获取FTP账号列表
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, pageSize = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(pageSize);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 10, 1), 100);
+    const offset = (page - 1) * pageSize;
     
     const userId = req.user.role === 'admin' ? null : req.user.id;
     
@@ -70,40 +75,68 @@ router.get('/', async (req, res) => {
     
     sql += ' ORDER BY f.created_at DESC LIMIT ? OFFSET ?';
     
-    const params = userId ? [userId, parseInt(pageSize), offset] : [parseInt(pageSize), offset];
+    const params = userId ? [userId, pageSize, offset] : [pageSize, offset];
     const accounts = await db.all(sql, params);
     
-    // 动态计算授权码和获取已使用空间
+    // 列表接口只返回数据库信息，空间统计由单独接口异步获取，避免每行 SSH 阻塞列表响应。
     for (const acc of accounts) {
       acc.auth_code = generateAuthCode(acc.full_domain);
-      
-      // 获取已使用空间
-      acc.used_size = 0;
-      if (acc.server_ip && acc.home_dir) {
-        try {
-          const sshService = new SshFtpService({
-            ip: acc.server_ip,
-            port: acc.ssh_port,
-            username: acc.ssh_user,
-            password: acc.ssh_pass
-          });
-          
-          const result = await sshService.exec(`du -sb "${acc.home_dir}" 2>/dev/null | cut -f1`);
-          if (result.success && result.output) {
-            acc.used_size = parseInt(result.output.trim()) || 0;
-          }
-        } catch (err) {
-          console.error(`获取空间使用失败 (${acc.full_domain}):`, err.message);
-        }
-      }
+      acc.used_size = null;
     }
     
     res.json({ 
       list: accounts, 
       total, 
-      page: parseInt(page), 
-      pageSize: parseInt(pageSize) 
+      page, 
+      pageSize
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取单个 FTP 账号已使用空间
+router.get('/:id/usage', async (req, res) => {
+  try {
+    const userId = req.user.role === 'admin' ? null : req.user.id;
+    let sql = `
+      SELECT f.id, f.home_dir, s.subdomain, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
+      FROM ftp_accounts f
+      LEFT JOIN subdomains s ON f.subdomain_id = s.id
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE f.id = ?
+    `;
+    const params = [req.params.id];
+
+    if (userId) {
+      sql += ' AND d.user_id = ?';
+      params.push(userId);
+    }
+
+    const ftp = await db.get(sql, params);
+    if (!ftp) {
+      return res.status(404).json({ error: 'FTP account not found' });
+    }
+
+    let usedSize = 0;
+    if (ftp.server_ip && ftp.home_dir) {
+      const sshService = new SshFtpService({
+        ip: ftp.server_ip,
+        port: ftp.ssh_port,
+        username: ftp.ssh_user,
+        password: ftp.ssh_pass
+      });
+
+      const result = await sshService.exec(`du -sb ${shellQuote(ftp.home_dir)} 2>/dev/null | cut -f1`, 15000);
+      if (result.success && result.output) {
+        usedSize = parseInt(result.output.trim(), 10) || 0;
+      }
+    }
+
+    res.json({ id: ftp.id, used_size: usedSize });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

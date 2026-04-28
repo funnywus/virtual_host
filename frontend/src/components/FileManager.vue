@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="'📁 ' + server?.name + ' - 文件管理'" width="1000px" top="3vh" :close-on-click-modal="false">
+  <el-dialog v-model="visible" :title="'📁 ' + server?.name + ' - 文件管理'" width="1000px" top="3vh" :close-on-click-modal="false" append-to-body>
     <div class="file-manager">
       <!-- 工具栏 -->
       <div class="toolbar">

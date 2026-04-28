@@ -39,40 +39,46 @@
         <el-button type="success" size="small" @click="openBatchDialog">批量生成</el-button>
       </div>
     </div>
-    <el-table :data="filteredSubdomains" stripe @selection-change="onSelectionChange">
+    <el-table :data="filteredSubdomains" stripe class="subdomain-table" @selection-change="onSelectionChange">
       <el-table-column type="selection" width="45" />
-      <el-table-column label="完整域名" min-width="120">
+      <el-table-column label="域名信息" min-width="260">
         <template #default="{ row }">
-          <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
-          <span v-else class="full-domain" style="cursor:default">{{ row.subdomain }}.{{ row.main_domain }}</span>
+          <div class="domain-cell">
+            <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
+            <span v-else class="full-domain" style="cursor:default">{{ row.subdomain }}.{{ row.main_domain }}</span>
+            <div class="domain-meta">
+              <el-tag size="small" type="info">{{ row.record_type }}</el-tag>
+              <el-tooltip :content="row.record_value || '-'" placement="top">
+                <span class="meta-text">{{ row.record_value || '-' }}</span>
+              </el-tooltip>
+            </div>
+            <div class="domain-server">
+              {{ row.server_name || '未绑定服务器' }}
+            </div>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column prop="record_type" label="类型" width="70" />
-      <el-table-column prop="record_value" label="记录值" min-width="66" />
-      <el-table-column prop="server_name" label="服务器" width="120" show-overflow-tooltip />
-      <el-table-column label="使用状态" width="90">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
-          <el-tag :type="getUseStatusType(row.use_status)" size="small">{{ getUseStatusText(row.use_status) }}</el-tag>
+          <div class="status-cell">
+            <el-tag :type="getUseStatusType(row.use_status)" size="small">{{ getUseStatusText(row.use_status) }}</el-tag>
+            <el-tag :type="row.status === 'active' ? 'success' : row.status === 'dns_error' ? 'danger' : 'warning'" size="small">
+              DNS: {{ getDnsStatusText(row.status) }}
+            </el-tag>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="到期时间" width="100">
+      <el-table-column label="有效期" width="130">
         <template #default="{ row }">
           <template v-if="row.expire_at">
-            <span :style="{ color: isExpired(row.expire_at) ? '#f56c6c' : getRemainingDays(row.expire_at) <= 7 ? '#e6a23c' : '#67c23a', fontSize: '12px' }">
-              {{ isExpired(row.expire_at) ? '已过期' : '剩余 ' + getRemainingDays(row.expire_at) + ' 天' }}
-            </span>
+            <div class="expire-cell">
+              <span :class="getExpireClass(row.expire_at)">
+                {{ isExpired(row.expire_at) ? '已过期' : '剩余 ' + getRemainingDays(row.expire_at) + ' 天' }}
+              </span>
+              <span class="expire-date">{{ formatDateShort(row.expire_at) }}</span>
+            </div>
           </template>
           <span v-else style="color:#999;font-size:12px">-</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="DNS" width="80">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : row.status === 'dns_error' ? 'danger' : 'warning'" size="small">{{ row.status }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="created_at" label="创建时间" width="160">
-        <template #default="{ row }">
-          <span style="font-size:12px;color:#909399">{{ row.created_at }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="remark" label="备注" min-width="120">
@@ -83,16 +89,18 @@
           <span v-else style="color:#999;cursor:pointer" @dblclick="openRemarkDialog(row)">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="320" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
-          <el-button type="warning" size="small" @click="openRenewDialog(row)">续费</el-button>
-          <el-button type="info" size="small" @click="openStatusDialog(row)">状态</el-button>
-          <el-button type="success" size="small" @click="openNginxDialog(row)">Nginx</el-button>
-          <el-dropdown trigger="click" style="margin-left:8px">
+          <div class="row-actions">
+            <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
+            <el-button type="warning" size="small" @click="openRenewDialog(row)">续费</el-button>
+            <el-button type="info" size="small" @click="openStatusDialog(row)">状态</el-button>
+          </div>
+          <el-dropdown trigger="click" class="more-actions">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="openNginxDialog(row)">Nginx 配置</el-dropdown-item>
                 <el-dropdown-item @click="openRateLimitDialog(row)">限流配置</el-dropdown-item>
                 <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
@@ -120,7 +128,7 @@
     </div>
 
     <!-- 添加/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑子域名' : '添加子域名'" width="550px">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑子域名' : '添加子域名'" width="550px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="form.domain_id" placeholder="选择主域名" style="width:100%" :disabled="!!form.id">
@@ -146,7 +154,7 @@
         </el-form-item>
         <el-form-item label="服务器" v-if="form.record_type === 'A'">
           <el-select v-model="form.server_id" placeholder="选择服务器" clearable style="width:100%" @change="onServerChange">
-            <el-option v-for="s in dataStore.servers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
+            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="记录值">
@@ -177,14 +185,10 @@
           </el-select>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
 
     <!-- 批量生成对话框 -->
-    <el-dialog v-model="batchDialogVisible" title="批量生成子域名" width="600px">
+    <el-dialog v-model="batchDialogVisible" title="批量生成子域名" width="600px" append-to-body>
       <el-form :model="batchForm" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="batchForm.domain_id" placeholder="选择主域名" style="width:100%">
@@ -193,7 +197,7 @@
         </el-form-item>
         <el-form-item label="服务器">
           <el-select v-model="batchForm.server_id" placeholder="选择服务器" style="width:100%">
-            <el-option v-for="s in dataStore.servers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
+            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="生成规则">
@@ -268,7 +272,7 @@
     <NginxDialog v-model="nginxDialogVisible" :subdomain="currentSubdomain" @refresh="loadData" />
 
     <!-- 修改状态对话框 -->
-    <el-dialog v-model="statusDialogVisible" title="修改使用状态" width="400px">
+    <el-dialog v-model="statusDialogVisible" title="修改使用状态" width="400px" append-to-body>
       <el-form :model="statusForm" label-width="100px">
         <el-form-item label="域名">
           <span class="full-domain">{{ statusForm.fullDomain }}</span>
@@ -299,7 +303,7 @@
     </el-dialog>
 
     <!-- 续费/时长调整对话框 -->
-    <el-dialog v-model="renewDialogVisible" title="续费 / 时长调整" width="500px">
+    <el-dialog v-model="renewDialogVisible" title="续费 / 时长调整" width="500px" append-to-body>
       <el-form :model="renewForm" label-width="100px">
         <el-form-item label="域名">
           <span class="full-domain">{{ renewForm.fullDomain }}</span>
@@ -396,7 +400,7 @@
     </el-dialog>
 
     <!-- 修改备注对话框 -->
-    <el-dialog v-model="remarkDialogVisible" title="修改备注" width="400px">
+    <el-dialog v-model="remarkDialogVisible" title="修改备注" width="400px" append-to-body>
       <el-form :model="remarkForm" label-width="80px">
         <el-form-item label="域名">
           <span class="full-domain">{{ remarkForm.fullDomain }}</span>
@@ -412,7 +416,7 @@
     </el-dialog>
 
     <!-- 批量时长调整对话框 -->
-    <el-dialog v-model="batchRenewDialogVisible" title="批量时长调整" width="480px">
+    <el-dialog v-model="batchRenewDialogVisible" title="批量时长调整" width="480px" append-to-body>
       <el-form label-width="100px">
         <el-form-item label="选中数量">
           <el-tag type="info">{{ selectedRows.length }} 个子域名</el-tag>
@@ -498,7 +502,7 @@
     </el-dialog>
 
     <!-- 限流配置对话框 -->
-    <el-dialog v-model="rateLimitDialogVisible" title="限流配置" width="550px">
+    <el-dialog v-model="rateLimitDialogVisible" title="限流配置" width="550px" append-to-body>
       <el-alert type="info" :closable="false" style="margin-bottom:20px">
         <template #title>
           <div style="font-size:13px;line-height:1.6">
@@ -643,6 +647,11 @@ function getUseStatusText(status) {
   return texts[status] || '未使用'
 }
 
+function getDnsStatusText(status) {
+  const texts = { active: '正常', dns_error: '异常', pending: '待同步' }
+  return texts[status] || status || '未知'
+}
+
 function isExpired(expireAt) {
   if (!expireAt) return false
   return new Date(expireAt) < new Date()
@@ -654,6 +663,17 @@ function getRemainingDays(expireAt) {
   const expire = new Date(expireAt)
   const diff = expire - now
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
+}
+
+function getExpireClass(expireAt) {
+  if (isExpired(expireAt)) return 'expire-danger'
+  if (getRemainingDays(expireAt) <= 7) return 'expire-warning'
+  return 'expire-success'
+}
+
+function formatDateShort(value) {
+  if (!value) return '-'
+  return String(value).slice(0, 10)
 }
 
 // 计算有效期天数
@@ -1015,6 +1035,12 @@ const currentDomain = computed(() => {
   return dataStore.domains.find(d => d.id === filterDomainId.value)
 })
 
+const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
+
+function getDefaultAvailableServer() {
+  return availableServers.value.find(s => s.is_default === 1) || availableServers.value[0] || null
+}
+
 onMounted(async () => {
   await dataStore.loadDomains()
   await dataStore.loadServers()
@@ -1059,7 +1085,7 @@ async function openDialog(row = null) {
   } else {
     // 获取默认值
     const defaultDomain = dataStore.domains.find(d => d.is_default === 1)
-    const defaultServer = dataStore.servers.find(s => s.is_default === 1)
+    const defaultServer = getDefaultAvailableServer()
     
     Object.assign(form, {
       id: null, domain_id: filterDomainId.value || defaultDomain?.id || '', subdomain: '',
@@ -1076,7 +1102,7 @@ async function openDialog(row = null) {
 function openBatchDialog() {
   // 获取默认值
   const defaultDomain = dataStore.domains.find(d => d.is_default === 1)
-  const defaultServer = dataStore.servers.find(s => s.is_default === 1)
+  const defaultServer = getDefaultAvailableServer()
   
   batchForm.domain_id = filterDomainId.value || defaultDomain?.id || ''
   batchForm.server_id = defaultServer?.id || ''
@@ -1270,6 +1296,7 @@ async function handleRateLimitSave() {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .renew-quick-actions {
@@ -1291,6 +1318,8 @@ async function handleRateLimitSave() {
   text-decoration: none;
   cursor: pointer;
   transition: color 0.3s;
+  line-height: 1.35;
+  word-break: break-all;
 }
 
 .full-domain:hover {
@@ -1311,6 +1340,86 @@ async function handleRateLimitSave() {
 
 .remark-text:hover {
   color: #409eff;
+}
+
+.domain-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.domain-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meta-text {
+  color: #606266;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-server {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.expire-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.25;
+}
+
+.expire-success,
+.expire-warning,
+.expire-danger {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.expire-success {
+  color: #67c23a;
+}
+
+.expire-warning {
+  color: #e6a23c;
+}
+
+.expire-danger {
+  color: #f56c6c;
+}
+
+.expire-date {
+  color: #909399;
+  font-size: 11px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.row-actions .el-button {
+  margin-left: 0;
+}
+
+.more-actions {
+  margin-top: 6px;
 }
 
 :deep(.el-table) {
@@ -1340,9 +1449,6 @@ async function handleRateLimitSave() {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
 }
-</style>
-
-
 /* ========== 移动端适配 ========== */
 @media (max-width: 768px) {
   .card {
@@ -1385,7 +1491,7 @@ async function handleRateLimitSave() {
 
   /* 表格移动端优化 - 隐藏部分列 */
   :deep(.el-table) {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   :deep(.el-table th),
@@ -1394,13 +1500,29 @@ async function handleRateLimitSave() {
   }
 
   :deep(.el-table .cell) {
-    padding: 0 3px;
+    padding: 0 5px;
     line-height: 1.3;
   }
 
   /* 隐藏选择列和部分不重要的列 */
   :deep(.el-table__column--selection) {
     display: none;
+  }
+
+  .domain-cell {
+    gap: 6px;
+  }
+
+  .status-cell {
+    gap: 5px;
+  }
+
+  .row-actions {
+    gap: 5px;
+  }
+
+  .more-actions {
+    margin-top: 5px;
   }
 
   /* 操作按钮优化 */
@@ -1508,3 +1630,4 @@ async function handleRateLimitSave() {
     grid-template-columns: 1fr;
   }
 }
+</style>

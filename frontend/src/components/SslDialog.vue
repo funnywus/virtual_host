@@ -1,5 +1,5 @@
 <template>
-  <el-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" title="SSL证书管理" width="750px">
+  <el-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" title="SSL证书管理" width="750px" append-to-body>
     <div v-if="domain" style="margin-bottom:20px">
       <span style="margin-right:10px">域名: <strong class="full-domain">{{ domain.domain }}</strong></span>
       <el-tag v-if="form.verify_method === 'dns'" type="info" style="margin-right:10px">*.{{ domain.domain }}</el-tag>
@@ -44,8 +44,16 @@
         </el-select>
       </el-form-item>
       <el-form-item label="目标服务器">
-        <el-select v-model="form.server_id" placeholder="自动选择" clearable style="width:100%">
-          <el-option v-for="s in servers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
+        <el-select
+          v-model="form.server_ids"
+          placeholder="自动选择"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          style="width:100%"
+        >
+          <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
         </el-select>
       </el-form-item>
       <el-form-item label="网站目录" v-if="form.verify_method === 'http'">
@@ -87,7 +95,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
 import { copyText } from '@/utils'
@@ -99,8 +107,9 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'refresh'])
 
 const servers = ref([])
+const availableServers = computed(() => servers.value.filter(s => s.status !== 'disabled'))
 const sslInfo = reactive({ exists: false, status: '', issuer: '', not_before: '', not_after: '', paths: null, san: '', log: '' })
-const form = reactive({ verify_method: 'dns', cert_type: 'letsencrypt', server_id: null, webroot: '' })
+const form = reactive({ verify_method: 'dns', cert_type: 'letsencrypt', server_ids: [], webroot: '' })
 
 const showCertInfo = ref(false)
 const showLog = ref(false)
@@ -204,7 +213,13 @@ async function issueCert() {
   sslInfo.log = '正在申请证书，请稍候...\n'
   startLogPolling()
   try {
-    const res = await api.post(`/ssl/issue/${props.domain.id}`, form)
+    const payload = {
+      verify_method: form.verify_method,
+      cert_type: form.cert_type,
+      server_ids: form.server_ids,
+      webroot: form.webroot
+    }
+    const res = await api.post(`/ssl/issue/${props.domain.id}`, payload)
     sslInfo.log = res.log || sslInfo.log
     if (res.success) {
       ElMessage.success(res.message)

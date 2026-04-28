@@ -16,6 +16,11 @@
       </el-table-column>
       <el-table-column prop="ip" label="IP地址" width="130"/>
       <el-table-column prop="port" label="端口" width="80" />
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }">
+          <el-tag :type="getServerStatusType(row.status)" size="small">{{ getServerStatusText(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="标签" width="80">
         <template #default="{ row }">
           <el-tag v-for="tag in parseTags(row.tags)" :key="tag" :style="getTagStyle(tag)" size="small" style="margin-right:4px">{{ tag }}</el-tag>
@@ -70,7 +75,7 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="550px">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="550px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="服务器名称" />
@@ -93,6 +98,12 @@
         <el-form-item label="FTP目录">
           <el-input v-model="form.ftp_path" placeholder="/www/wwwroot/ftp" />
         </el-form-item>
+        <el-form-item label="状态">
+          <el-radio-group v-model="form.status">
+            <el-radio-button value="active">正常</el-radio-button>
+            <el-radio-button value="disabled">停用</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="form.tagList" multiple filterable allow-create default-first-option placeholder="选择或输入标签" style="width:100%" @change="onTagChange">
             <el-option v-for="t in dataStore.serverTags" :key="t.id" :label="t.name" :value="t.name" />
@@ -110,11 +121,7 @@
           />
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
 
     <!-- 文件管理 -->
     <FileManager v-model="fileManagerVisible" :server="currentServer" />
@@ -123,7 +130,7 @@
     <ServerTerminal v-model="terminalVisible" :server="currentServer" />
 
     <!-- 软件管理 -->
-    <el-dialog v-model="softwareDialogVisible" :title="'软件管理 - ' + currentServer?.name" width="550px">
+    <el-dialog v-model="softwareDialogVisible" :title="'软件管理 - ' + currentServer?.name" width="550px" append-to-body>
       <div v-loading="loadingSoftware">
         <div class="software-item">
           <div class="software-info">
@@ -157,7 +164,7 @@
     </el-dialog>
 
     <!-- 配置文件编辑 -->
-    <el-dialog v-model="configDialogVisible" :title="configTitle" width="900px">
+    <el-dialog v-model="configDialogVisible" :title="configTitle" width="900px" append-to-body>
       <div v-loading="loadingConfig" style="min-height:400px">
         <el-input 
           v-model="configContent" 
@@ -197,7 +204,7 @@ const installingFtp = ref(false)
 const restartingNginx = ref(false)
 const restartingFtp = ref(false)
 const showPassword = ref({})
-const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', nginx_path: '/www/server/panel/vhost/nginx', ftp_path: '/www/wwwroot/ftp', tagList: [], expire_at: null })
+const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', nginx_path: '/www/server/panel/vhost/nginx', ftp_path: '/www/wwwroot/ftp', status: 'active', tagList: [], expire_at: null })
 const softwareStatus = reactive({ nginx: {}, vsftpd: {}, pureFtpd: {} })
 const configDialogVisible = ref(false)
 const configTitle = ref('')
@@ -235,6 +242,14 @@ function getTagStyle(tagName) {
   return color ? { backgroundColor: color, borderColor: color, color: '#fff' } : {}
 }
 
+function getServerStatusText(status) {
+  return status === 'disabled' ? '停用' : '正常'
+}
+
+function getServerStatusType(status) {
+  return status === 'disabled' ? 'danger' : 'success'
+}
+
 function openDialog(row = null) {
   if (row) {
     Object.assign(form, { 
@@ -242,6 +257,7 @@ function openDialog(row = null) {
       username: row.username, password: '', 
       nginx_path: row.nginx_path || '/www/server/panel/vhost/nginx',
       ftp_path: row.ftp_path || '/www/wwwroot/ftp',
+      status: row.status || 'active',
       tagList: parseTags(row.tags),
       expire_at: row.expire_at || null
     })
@@ -251,6 +267,7 @@ function openDialog(row = null) {
       id: null, name: '', ip: '', port: 22, username: '', password: '', 
       nginx_path: '/www/server/panel/vhost/nginx',
       ftp_path: '/www/wwwroot/ftp',
+      status: 'active',
       tagList: defaultTag ? [defaultTag.name] : [],
       expire_at: null
     })

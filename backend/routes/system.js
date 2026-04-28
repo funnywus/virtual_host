@@ -4,12 +4,13 @@ const fs = fsSync.promises;
 const path = require('path');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 const execAsync = promisify(exec);
 
 router.use(authMiddleware);
+router.use(adminMiddleware);
 
 // 备份目录
 const BACKUP_DIR = path.join(__dirname, '../backups');

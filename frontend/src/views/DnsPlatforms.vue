@@ -71,7 +71,7 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑DNS平台' : '添加DNS平台'" width="500px">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑DNS平台' : '添加DNS平台'" width="500px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="140px">
         <el-form-item label="配置名称"><el-input v-model="form.name" placeholder="例如: 主账号" /></el-form-item>
         <el-form-item label="DNS平台">
@@ -92,11 +92,7 @@
           </el-select>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
-      </template>
-    </el-dialog>
+    </AppDialog>
   </div>
 </template>
 

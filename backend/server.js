@@ -45,6 +45,51 @@ app.use((req, res, next) => {
 // 初始化数据库
 db.init();
 
+const getTableColumns = async (tableName) => {
+  if (db.type === 'mysql') {
+    const rows = await db.all(`SHOW COLUMNS FROM ${tableName}`);
+    return rows.map(row => ({ name: row.Field }));
+  }
+  return await db.all(`PRAGMA table_info(${tableName})`);
+};
+
+// 数据库迁移：补充新增字段
+async function migrateDatabase() {
+  try {
+    // 检查 domains 表是否已有 expire_at 字段
+    const domainsColumns = await getTableColumns('domains');
+    const hasDomainsExpireAt = domainsColumns.some(col => col.name === 'expire_at');
+    
+    if (!hasDomainsExpireAt) {
+      console.log('[DB Migration] 为 domains 表添加 expire_at 字段...');
+      await db.run('ALTER TABLE domains ADD COLUMN expire_at DATETIME DEFAULT NULL');
+      console.log('[DB Migration] ✓ domains 表添加成功');
+    }
+    
+    // 检查 servers 表是否已有 expire_at 字段
+    const serversColumns = await getTableColumns('servers');
+    const hasServersExpireAt = serversColumns.some(col => col.name === 'expire_at');
+    const hasServersStatus = serversColumns.some(col => col.name === 'status');
+    
+    if (!hasServersExpireAt) {
+      console.log('[DB Migration] 为 servers 表添加 expire_at 字段...');
+      await db.run('ALTER TABLE servers ADD COLUMN expire_at DATETIME DEFAULT NULL');
+      console.log('[DB Migration] ✓ servers 表添加成功');
+    }
+
+    if (!hasServersStatus) {
+      console.log('[DB Migration] 为 servers 表添加 status 字段...');
+      await db.run("ALTER TABLE servers ADD COLUMN status VARCHAR(20) DEFAULT 'active'");
+      console.log('[DB Migration] ✓ servers.status 添加成功');
+    }
+  } catch (err) {
+    console.error('[DB Migration] 错误:', err.message);
+  }
+}
+
+// 执行数据库迁移
+migrateDatabase();
+
 // API路由
 app.use('/api/auth', authRoutes);
 app.use('/api/servers', serverRoutes);

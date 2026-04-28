@@ -6,6 +6,7 @@ import 'element-plus/dist/index.css'
 
 import App from './App.vue'
 import router from './router'
+import AppDialog from '@/components/AppDialog.vue'
 
 const app = createApp(App)
 
@@ -17,5 +18,6 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
+app.component('AppDialog', AppDialog)
 
 app.mount('#app')

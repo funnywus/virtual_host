@@ -27,10 +27,47 @@ router.get('/', adminMiddleware, async (req, res) => {
   }
 });
 
+// 管理员：创建用户
+router.post('/', adminMiddleware, async (req, res) => {
+  try {
+    const { username, email, password, role = 'user' } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: '用户名、邮箱和密码不能为空' });
+    }
+
+    if (!['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: '无效的用户角色' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await db.run(
+      'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)',
+      [username, email, hashedPassword, role]
+    );
+
+    res.json({
+      id: result.lastID,
+      username,
+      email,
+      role,
+      message: 'User created'
+    });
+  } catch (err) {
+    const isDuplicate = /duplicate|unique/i.test(err.message);
+    res.status(isDuplicate ? 400 : 500).json({
+      error: isDuplicate ? '用户名或邮箱已存在' : err.message
+    });
+  }
+});
+
 // 管理员：修改用户角色
 router.put('/:id/role', adminMiddleware, async (req, res) => {
   try {
     const { role } = req.body;
+    if (!['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: '无效的用户角色' });
+    }
     await db.run('UPDATE users SET role = ? WHERE id = ?', [role, req.params.id]);
     res.json({ message: 'Role updated' });
   } catch (err) {

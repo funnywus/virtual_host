@@ -25,6 +25,43 @@ const parseOpenSSLDate = (dateStr) => {
   }
 };
 
+const normalizeServerIds = (serverIds, serverId) => {
+  const rawIds = Array.isArray(serverIds) ? serverIds : (serverId ? [serverId] : []);
+  return [...new Set(rawIds.map(id => parseInt(id, 10)).filter(id => Number.isInteger(id) && id > 0))];
+};
+
+const getFallbackServer = async (domainId) => {
+  const sub = await db.get(`
+    SELECT sv.* FROM subdomains s
+    LEFT JOIN servers sv ON s.server_id = sv.id
+    WHERE s.domain_id = ? AND sv.id IS NOT NULL
+    LIMIT 1
+  `, [domainId]);
+  
+  return sub || await db.get('SELECT * FROM servers LIMIT 1');
+};
+
+const getIssueServers = async (domainId, serverIds) => {
+  if (serverIds.length === 0) {
+    const server = await getFallbackServer(domainId);
+    return server ? [server] : [];
+  }
+  
+  const servers = [];
+  for (const serverId of serverIds) {
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+    if (server) servers.push(server);
+  }
+  return servers;
+};
+
+const hasIssueSucceeded = (result) => (
+  result.success ||
+  result.output?.includes('Cert success') ||
+  result.output?.includes('Installing cert') ||
+  result.output?.includes('Your cert is in')
+);
+
 router.use(authMiddleware);
 
 // 获取证书类型列表
@@ -166,9 +203,10 @@ router.get('/log/:domain_id', async (req, res) => {
 // 申请证书
 router.post('/issue/:domain_id', async (req, res) => {
   try {
-    const { cert_type, verify_method, server_id, webroot } = req.body;
+    const { cert_type, verify_method, server_id, server_ids, webroot } = req.body;
     const startTime = formatTime();
     let log = `[${startTime}] 开始申请证书\n`;
+    const selectedServerIds = normalizeServerIds(server_ids, server_id);
     
     const domain = await db.get(`
       SELECT d.*, a.access_key, a.secret_key, a.platform
@@ -186,34 +224,6 @@ router.post('/issue/:domain_id', async (req, res) => {
     log += `[${startTime}] 证书类型: ${cert_type || 'letsencrypt'}\n`;
     log += `[${startTime}] 验证方式: ${verify_method || 'dns'}\n`;
     
-    // 获取服务器
-    let server = null;
-    if (server_id) {
-      server = await db.get('SELECT * FROM servers WHERE id = ?', [server_id]);
-    } else {
-      // 尝试从子域名获取服务器
-      const sub = await db.get(`
-        SELECT sv.* FROM subdomains s
-        LEFT JOIN servers sv ON s.server_id = sv.id
-        WHERE s.domain_id = ? AND sv.id IS NOT NULL
-        LIMIT 1
-      `, [req.params.domain_id]);
-      server = sub;
-      
-      // 如果还没有，获取任意服务器
-      if (!server) {
-        server = await db.get('SELECT * FROM servers LIMIT 1');
-      }
-    }
-    
-    if (!server || !server.ip) {
-      log += `[${startTime}] 错误: 没有可用的服务器\n`;
-      await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
-      return res.status(400).json({ error: '请先添加服务器，或选择一个服务器来申请证书', log });
-    }
-    
-    log += `[${startTime}] 目标服务器: ${server.name || server.ip} (${server.ip})\n`;
-    
     // DNS验证需要DNS配置
     if (isWildcard && (!domain.aliyun_config_id || !domain.access_key)) {
       log += `[${startTime}] 错误: 通配符证书需要DNS平台配置\n`;
@@ -224,12 +234,23 @@ router.post('/issue/:domain_id', async (req, res) => {
       });
     }
     
-    const sshService = new SshFtpService({
-      ip: server.ip,
-      port: server.port,
-      username: server.username,
-      password: server.password
-    });
+    const servers = await getIssueServers(req.params.domain_id, selectedServerIds);
+    
+    if (servers.length === 0) {
+      log += `[${startTime}] 错误: 没有可用的服务器\n`;
+      await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+      return res.status(400).json({ error: '请先添加服务器，或选择一个服务器来申请证书', log });
+    }
+    
+    if (selectedServerIds.length > 0 && servers.length !== selectedServerIds.length) {
+      const foundIds = new Set(servers.map(server => Number(server.id)));
+      const missingIds = selectedServerIds.filter(id => !foundIds.has(id));
+      log += `[${startTime}] 错误: 选中的服务器不存在: ${missingIds.join(', ')}\n`;
+      await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+      return res.status(400).json({ error: '选中的服务器不存在，请刷新后重试', log });
+    }
+    
+    log += `[${startTime}] 目标服务器: ${servers.map(server => `${server.name || server.ip} (${server.ip})`).join(', ')}\n`;
     
     // 更新状态为申请中
     log += `[${formatTime()}] 状态: 申请中...\n`;
@@ -256,70 +277,109 @@ router.post('/issue/:domain_id', async (req, res) => {
       );
     }
     
-    log += `[${formatTime()}] 执行acme.sh申请命令...\n`;
+    log += `[${formatTime()}] 将在 ${servers.length} 台服务器上执行acme.sh申请命令\n`;
     await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
     
-    // 先检查并安装 acme.sh
-    const checkAcmeCmd = 'if [ -f ~/.acme.sh/acme.sh ]; then echo "ACME_INSTALLED"; else echo "ACME_NOT_INSTALLED"; fi';
-    const checkResult = await sshService.exec(checkAcmeCmd);
+    const paths = sslCert.getCertPath(domain.domain);
+    const results = [];
+    let expiresAt = null;
     
-    if (checkResult.output?.includes('ACME_NOT_INSTALLED')) {
-      log += `[${formatTime()}] 检测到服务器未安装acme.sh，正在自动安装...\n`;
+    for (let index = 0; index < servers.length; index++) {
+      const server = servers[index];
+      const serverLabel = `${server.name || server.ip} (${server.ip})`;
+      log += `\n[${formatTime()}] [${index + 1}/${servers.length}] 开始处理服务器: ${serverLabel}\n`;
       await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
       
-      const installCmd = sslCert.getInstallAcmeCommand('admin@' + domain.domain);
-      const installResult = await sshService.exec(installCmd);
-      
-      if (!installResult.success && !installResult.output?.includes('acme.sh')) {
-        log += `[${formatTime()}] acme.sh安装失败\n`;
-        log += `--- 安装输出 ---\n${installResult.output || '(无输出)'}\n--- 输出结束 ---\n`;
-        await db.run('UPDATE domains SET ssl_status = ?, ssl_log = ? WHERE id = ?', ['error', log, req.params.domain_id]);
-        return res.json({ success: false, message: 'acme.sh安装失败', log });
+      try {
+        const sshService = new SshFtpService({
+          ip: server.ip,
+          port: server.port,
+          username: server.username,
+          password: server.password
+        });
+        
+        // 先检查并安装 acme.sh
+        const checkAcmeCmd = 'if [ -f ~/.acme.sh/acme.sh ]; then echo "ACME_INSTALLED"; else echo "ACME_NOT_INSTALLED"; fi';
+        const checkResult = await sshService.exec(checkAcmeCmd);
+        
+        if (checkResult.output?.includes('ACME_NOT_INSTALLED')) {
+          log += `[${formatTime()}] ${serverLabel}: 检测到未安装acme.sh，正在自动安装...\n`;
+          await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+          
+          const installCmd = sslCert.getInstallAcmeCommand('admin@' + domain.domain);
+          const installResult = await sshService.exec(installCmd);
+          
+          if (!installResult.success && !installResult.output?.includes('acme.sh')) {
+            log += `[${formatTime()}] ${serverLabel}: acme.sh安装失败\n`;
+            log += `--- ${serverLabel} 安装输出 ---\n${installResult.output || '(无输出)'}\n--- 输出结束 ---\n`;
+            results.push({ server: serverLabel, success: false, message: 'acme.sh安装失败' });
+            await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+            continue;
+          }
+          
+          log += `[${formatTime()}] ${serverLabel}: acme.sh安装成功\n`;
+          await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+        }
+        
+        log += `[${formatTime()}] ${serverLabel}: 执行申请命令...\n`;
+        await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
+        
+        const result = await sshService.exec(issueCmd);
+        
+        log += `[${formatTime()}] ${serverLabel}: 命令执行完成\n`;
+        log += `--- ${serverLabel} 执行输出 ---\n${result.output || '(无输出)'}\n--- 输出结束 ---\n`;
+        
+        if (hasIssueSucceeded(result)) {
+          // 获取证书信息
+          const checkCmd = sslCert.getCheckCommand(domain.domain);
+          const certCheckResult = await sshService.exec(checkCmd);
+          
+          const afterMatch = certCheckResult.output?.match(/notAfter=(.+)/);
+          if (afterMatch && !expiresAt) {
+            expiresAt = parseOpenSSLDate(afterMatch[1].trim());
+          }
+          
+          log += `[${formatTime()}] ${serverLabel}: 证书申请成功\n`;
+          log += `[${formatTime()}] ${serverLabel}: 过期时间: ${expiresAt || '未知'}\n`;
+          results.push({ server: serverLabel, success: true, expires: expiresAt });
+        } else {
+          log += `[${formatTime()}] ${serverLabel}: 证书申请失败\n`;
+          results.push({ server: serverLabel, success: false, message: '证书申请失败', output: result.output });
+        }
+      } catch (err) {
+        log += `[${formatTime()}] ${serverLabel}: 异常错误: ${err.message}\n`;
+        results.push({ server: serverLabel, success: false, message: err.message });
       }
       
-      log += `[${formatTime()}] acme.sh安装成功\n`;
       await db.run('UPDATE domains SET ssl_log = ? WHERE id = ?', [log, req.params.domain_id]);
     }
     
-    const result = await sshService.exec(issueCmd);
+    const successCount = results.filter(result => result.success).length;
+    const failedCount = results.length - successCount;
     
-    log += `[${formatTime()}] 命令执行完成\n`;
-    log += `--- 执行输出 ---\n${result.output || '(无输出)'}\n--- 输出结束 ---\n`;
+    log += `\n[${formatTime()}] 申请完成: 成功 ${successCount} 台，失败 ${failedCount} 台\n`;
     
-    if (result.success || result.output?.includes('Cert success') || result.output?.includes('Installing cert') || result.output?.includes('Your cert is in')) {
-      // 获取证书信息
-      const checkCmd = sslCert.getCheckCommand(domain.domain);
-      const checkResult = await sshService.exec(checkCmd);
-      
-      let expiresAt = null;
-      const afterMatch = checkResult.output?.match(/notAfter=(.+)/);
-      if (afterMatch) {
-        expiresAt = parseOpenSSLDate(afterMatch[1].trim());
-      }
-      
+    if (failedCount === 0) {
       log += `[${formatTime()}] 证书申请成功!\n`;
-      log += `[${formatTime()}] 过期时间: ${expiresAt || '未知'}\n`;
-      
       await db.run('UPDATE domains SET ssl_status = ?, ssl_expires = ?, ssl_log = ? WHERE id = ?', 
         ['active', expiresAt, log, req.params.domain_id]);
-      
-      const paths = sslCert.getCertPath(domain.domain);
       
       res.json({ 
         success: true, 
         message: isWildcard ? `通配符证书申请成功 (*.${domain.domain})` : `证书申请成功 (${domain.domain})`,
         paths,
         expires: expiresAt,
+        results,
         log
       });
     } else {
-      log += `[${formatTime()}] 证书申请失败\n`;
+      log += `[${formatTime()}] 证书申请失败，请查看各服务器日志\n`;
       
       await db.run('UPDATE domains SET ssl_status = ?, ssl_log = ? WHERE id = ?', ['error', log, req.params.domain_id]);
       res.json({ 
-        success: false, 
-        message: '证书申请失败，请查看日志',
-        output: result.output,
+        success: false,
+        message: successCount > 0 ? `部分服务器申请成功：成功 ${successCount} 台，失败 ${failedCount} 台` : '证书申请失败，请查看日志',
+        results,
         log
       });
     }

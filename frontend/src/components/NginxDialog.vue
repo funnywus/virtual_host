@@ -1,5 +1,5 @@
 <template>
-  <el-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" title="Nginx配置" width="800px">
+  <el-dialog :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" title="Nginx配置" width="800px" append-to-body>
     <div v-if="subdomain" style="margin-bottom:15px">
       <span>域名: <strong class="full-domain">{{ fullDomain }}</strong></span>
       <el-tag v-if="form.synced" type="success" size="small" style="margin-left:10px">已同步</el-tag>
