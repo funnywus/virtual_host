@@ -17,9 +17,13 @@ export const useDataStore = defineStore('data', () => {
     domains.value = await api.get('/dns/domains')
   }
 
-  async function loadSubdomains(domainId = null, page = 1, pageSize = 20) {
+  async function loadSubdomains(domainId = null, page = 1, pageSize = 20, filters = {}) {
     let url = `/dns/subdomains?page=${page}&pageSize=${pageSize}`
     if (domainId) url += `&domain_id=${domainId}`
+    if (filters.server_id) url += `&server_id=${filters.server_id}`
+    if (filters.use_status) url += `&use_status=${filters.use_status}`
+    if (filters.expiring_soon) url += '&expiring_soon=1'
+    if (filters.keyword) url += `&keyword=${encodeURIComponent(filters.keyword)}`
     const res = await api.get(url)
     subdomains.value = res.list || []
     subdomainsTotal.value = res.total || 0

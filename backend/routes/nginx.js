@@ -8,6 +8,36 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function nginxTestPassed(result) {
+  return result.success || result.output?.includes('successful');
+}
+
+function nginxReloadPassed(result) {
+  return result.success;
+}
+
+async function restoreNginxConfig(sshService, configPath, backupPath) {
+  const restoreResult = await sshService.exec(`
+if [ -f ${shellQuote(backupPath)} ]; then
+  sudo cp ${shellQuote(backupPath)} ${shellQuote(configPath)}
+else
+  sudo rm -f ${shellQuote(configPath)}
+fi
+`.trim());
+
+  const testResult = await sshService.exec('sudo nginx -t 2>&1');
+  let reloadResult = { success: false, output: '恢复后 nginx -t 未通过，未重载' };
+  if (nginxTestPassed(testResult)) {
+    reloadResult = await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx 2>&1');
+  }
+
+  return { restoreResult, testResult, reloadResult };
+}
+
 // 获取Nginx配置模板
 router.get('/templates', (req, res) => {
   res.json({
@@ -96,6 +126,7 @@ router.post('/sync/:subdomain_id', async (req, res) => {
     });
     
     const configPath = nginxConfig.getConfigPath(sub.full_domain);
+    const backupPath = `${configPath}.bak.${Date.now()}`;
     const rootPath = `/www/wwwroot/ftp/${sub.full_domain}`;
     
     // 创建网站目录
@@ -127,25 +158,48 @@ router.post('/sync/:subdomain_id', async (req, res) => {
 EOF'`);
     await sshService.exec(`sudo chown www:www ${rootPath}/index.html 2>/dev/null || sudo chown www-data:www-data ${rootPath}/index.html`);
     
+    // 备份原配置。原文件不存在时，后续失败会删除新写入文件。
+    const backupResult = await sshService.exec(`if [ -f ${shellQuote(configPath)} ]; then sudo cp ${shellQuote(configPath)} ${shellQuote(backupPath)}; else true; fi`);
+    if (!backupResult.success) {
+      await db.run('UPDATE subdomains SET nginx_synced = 0 WHERE id = ?', [req.params.subdomain_id]);
+      return res.json({ success: false, message: '备份原配置失败: ' + backupResult.output });
+    }
+
     // 写入Nginx配置文件
-    const escapedConfig = sub.nginx_config.replace(/'/g, "'\\''");
-    const writeResult = await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
+    const writeResult = await sshService.exec(`printf %s ${shellQuote(sub.nginx_config)} | sudo tee ${shellQuote(configPath)} >/dev/null`);
     
     if (!writeResult.success) {
+      await restoreNginxConfig(sshService, configPath, backupPath);
+      await db.run('UPDATE subdomains SET nginx_synced = 0 WHERE id = ?', [req.params.subdomain_id]);
       return res.json({ success: false, message: '写入配置失败: ' + writeResult.output });
     }
     
     // 测试Nginx配置
     const testResult = await sshService.exec('sudo nginx -t 2>&1');
     
-    if (!testResult.success && !testResult.output.includes('successful')) {
-      return res.json({ success: false, message: 'Nginx配置测试失败: ' + testResult.output });
+    if (!nginxTestPassed(testResult)) {
+      const restore = await restoreNginxConfig(sshService, configPath, backupPath);
+      await db.run('UPDATE subdomains SET nginx_synced = 0 WHERE id = ?', [req.params.subdomain_id]);
+      return res.json({
+        success: false,
+        message: `Nginx配置测试失败，已尝试恢复旧配置。\n--- 测试输出 ---\n${testResult.output || '(无输出)'}\n--- 恢复输出 ---\n${restore.restoreResult.output || '(无输出)'}`
+      });
     }
     
     // 重载Nginx
-    const reloadResult = await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
+    const reloadResult = await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx 2>&1');
+
+    if (!nginxReloadPassed(reloadResult)) {
+      const restore = await restoreNginxConfig(sshService, configPath, backupPath);
+      await db.run('UPDATE subdomains SET nginx_synced = 0 WHERE id = ?', [req.params.subdomain_id]);
+      return res.json({
+        success: false,
+        message: `Nginx重载失败，已尝试恢复旧配置。\n--- 重载输出 ---\n${reloadResult.output || '(无输出)'}\n--- 恢复输出 ---\n${restore.restoreResult.output || '(无输出)'}\n--- 恢复重载输出 ---\n${restore.reloadResult.output || '(无输出)'}`
+      });
+    }
     
     await db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [req.params.subdomain_id]);
+    await sshService.exec(`sudo rm -f ${shellQuote(backupPath)}`);
     
     res.json({ success: true, message: 'Nginx配置已同步并重载' });
   } catch (err) {
@@ -215,10 +269,37 @@ router.delete('/remove/:subdomain_id', async (req, res) => {
     });
     
     const configPath = nginxConfig.getConfigPath(sub.full_domain);
-    await sshService.exec(`sudo rm -f ${configPath}`);
-    await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
+    const backupPath = `${configPath}.bak.${Date.now()}`;
+    const backupResult = await sshService.exec(`if [ -f ${shellQuote(configPath)} ]; then sudo cp ${shellQuote(configPath)} ${shellQuote(backupPath)}; else true; fi`);
+    if (!backupResult.success) {
+      return res.json({ success: false, message: '备份原配置失败: ' + backupResult.output });
+    }
+    
+    const removeResult = await sshService.exec(`sudo rm -f ${shellQuote(configPath)}`);
+    if (!removeResult.success) {
+      return res.json({ success: false, message: '删除配置失败: ' + removeResult.output });
+    }
+    
+    const testResult = await sshService.exec('sudo nginx -t 2>&1');
+    if (!nginxTestPassed(testResult)) {
+      const restore = await restoreNginxConfig(sshService, configPath, backupPath);
+      return res.json({
+        success: false,
+        message: `删除后Nginx配置测试失败，已恢复旧配置。\n--- 测试输出 ---\n${testResult.output || '(无输出)'}\n--- 恢复输出 ---\n${restore.restoreResult.output || '(无输出)'}`
+      });
+    }
+
+    const reloadResult = await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx 2>&1');
+    if (!nginxReloadPassed(reloadResult)) {
+      const restore = await restoreNginxConfig(sshService, configPath, backupPath);
+      return res.json({
+        success: false,
+        message: `删除配置后Nginx重载失败，已恢复旧配置。\n--- 重载输出 ---\n${reloadResult.output || '(无输出)'}\n--- 恢复输出 ---\n${restore.restoreResult.output || '(无输出)'}`
+      });
+    }
     
     await db.run('UPDATE subdomains SET nginx_config = NULL, nginx_synced = 0 WHERE id = ?', [req.params.subdomain_id]);
+    await sshService.exec(`sudo rm -f ${shellQuote(backupPath)}`);
     
     res.json({ success: true, message: 'Nginx配置已删除' });
   } catch (err) {

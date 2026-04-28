@@ -5,6 +5,12 @@
       <el-tag v-if="form.verify_method === 'dns'" type="info" style="margin-right:10px">*.{{ domain.domain }}</el-tag>
       <el-tag :type="getSslStatusType(sslInfo.status)" size="small">{{ getSslStatusText(sslInfo.status) }}</el-tag>
       <el-button type="text" size="small" @click="refreshStatus" :loading="refreshing" style="margin-left:10px">刷新状态</el-button>
+      <el-button type="primary" size="small" plain @click="showCertFiles" :loading="loadingFiles">
+        <el-icon><FolderOpened /></el-icon>证书文件
+      </el-button>
+      <el-button type="success" size="small" plain @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">
+        <el-icon><Upload /></el-icon>发布证书
+      </el-button>
     </div>
 
     <!-- 证书信息 -->
@@ -43,18 +49,13 @@
           <el-option label="ZeroSSL - 免费证书" value="zerossl" />
         </el-select>
       </el-form-item>
-      <el-form-item label="目标服务器">
-        <el-select
-          v-model="form.server_ids"
-          placeholder="自动选择"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          clearable
-          style="width:100%"
-        >
-          <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
-        </el-select>
+      <el-form-item label="签发服务器">
+        <div class="issue-server-line">
+          <el-tag :type="defaultServer ? 'success' : 'warning'" size="small">
+            {{ defaultServer ? `${defaultServer.name || defaultServer.ip} (${defaultServer.ip})` : '未设置默认服务器' }}
+          </el-tag>
+          <span class="issue-server-note">申请和续期统一使用默认服务器，证书会保存到当前项目 uploads/certs。</span>
+        </div>
       </el-form-item>
       <el-form-item label="网站目录" v-if="form.verify_method === 'http'">
         <el-input v-model="form.webroot" :placeholder="`/www/wwwroot/ftp/${domain?.domain}`" />
@@ -72,6 +73,7 @@
 
     <template #footer>
       <el-button @click="$emit('update:modelValue', false)">关闭</el-button>
+      <el-button type="success" @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">发布证书</el-button>
       <el-button type="warning" @click="renewCert" :loading="renewing" :disabled="!sslInfo.exists">续期证书</el-button>
       <el-button type="primary" @click="issueCert" :loading="issuing">申请证书</el-button>
     </template>
@@ -91,6 +93,84 @@
         <el-button type="primary" @click="certDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 当前项目证书文件对话框 -->
+    <el-dialog v-model="certFilesDialogVisible" title="证书文件" width="820px" append-to-body>
+      <div v-if="certFilesInfo.domain" class="cert-files-head">
+        <div>
+          <span class="cert-files-label">本地域名</span>
+          <strong>{{ certFilesInfo.domain }}</strong>
+        </div>
+        <el-tag :type="certFilesInfo.stored ? 'success' : 'warning'" size="small">
+          {{ certFilesInfo.stored ? '已保存完整证书' : '本地证书不完整' }}
+        </el-tag>
+      </div>
+
+      <div class="cert-dir-row">
+        <span class="cert-files-label">本地目录</span>
+        <span class="cert-path">{{ certFilesInfo.dir || '-' }}</span>
+        <el-button v-if="certFilesInfo.dir" type="primary" link @click="copyText(certFilesInfo.dir)">复制</el-button>
+      </div>
+
+      <el-table :data="certFiles" size="small" border style="width:100%">
+        <el-table-column prop="label" label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.missing ? 'info' : row.type === 'key' ? 'danger' : 'success'" size="small">
+              {{ row.label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="文件名" min-width="170" show-overflow-tooltip />
+        <el-table-column label="大小" width="95">
+          <template #default="{ row }">{{ row.missing ? '-' : formatFileSize(row.size) }}</template>
+        </el-table-column>
+        <el-table-column label="更新时间" width="155">
+          <template #default="{ row }">{{ row.modified_at || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="路径" min-width="240">
+          <template #default="{ row }">
+            <div class="cert-file-path-cell">
+              <span class="cert-path" :class="{ muted: row.missing }">{{ row.path }}</span>
+              <el-button type="primary" link @click="copyText(row.path)">复制</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-empty v-if="certFiles.length === 0" description="暂无证书文件" />
+
+      <template #footer>
+        <el-button type="primary" @click="certFilesDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 发布证书对话框 -->
+    <el-dialog v-model="publishDialogVisible" title="发布证书" width="620px" append-to-body>
+      <el-form :model="publishForm" label-width="100px">
+        <el-form-item label="发布服务器">
+          <el-select v-model="publishForm.server_id" placeholder="默认服务器" clearable style="width:100%">
+            <el-option
+              v-for="s in servers"
+              :key="s.id"
+              :label="`${s.name || s.ip} (${s.ip})${s.is_default ? ' - 默认' : ''}`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="发布目录">
+          <el-input v-model="publishForm.target_dir" :placeholder="`/www/certs/${domain?.domain}`" />
+        </el-form-item>
+      </el-form>
+      <div class="publish-path-preview">
+        <div><span>证书链</span>{{ publishForm.target_dir }}/{{ domain?.domain }}.fullchain.crt</div>
+        <div><span>私钥</span>{{ publishForm.target_dir }}/{{ domain?.domain }}.key</div>
+        <div><span>证书</span>{{ publishForm.target_dir }}/{{ domain?.domain }}.crt</div>
+      </div>
+      <template #footer>
+        <el-button @click="publishDialogVisible = false">取消</el-button>
+        <el-button type="success" @click="publishCert" :loading="publishing">发布</el-button>
+      </template>
+    </el-dialog>
   </el-dialog>
 </template>
 
@@ -107,9 +187,10 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'refresh'])
 
 const servers = ref([])
-const availableServers = computed(() => servers.value.filter(s => s.status !== 'disabled'))
-const sslInfo = reactive({ exists: false, status: '', issuer: '', not_before: '', not_after: '', paths: null, san: '', log: '' })
-const form = reactive({ verify_method: 'dns', cert_type: 'letsencrypt', server_ids: [], webroot: '' })
+const defaultServer = computed(() => servers.value.find(s => s.is_default) || servers.value[0])
+const sslInfo = reactive({ exists: false, status: '', issuer: '', not_before: '', not_after: '', paths: null, san: '', log: '', local_cert: null })
+const form = reactive({ verify_method: 'dns', cert_type: 'letsencrypt', webroot: '' })
+const publishForm = reactive({ server_id: '', target_dir: '' })
 
 const showCertInfo = ref(false)
 const showLog = ref(false)
@@ -118,64 +199,101 @@ const issuing = ref(false)
 const renewing = ref(false)
 const viewing = ref(false)
 const downloading = ref(false)
-const logPolling = ref(null)
+const loadingFiles = ref(false)
+const publishing = ref(false)
+const sslLogSocket = ref(null)
 
 const certDialogVisible = ref(false)
 const certTab = ref('cert')
 const certContent = ref('')
 const keyContent = ref('')
+const certFilesDialogVisible = ref(false)
+const certFiles = ref([])
+const certFilesInfo = reactive({ domain: '', stored: false, dir: '', metadata: null })
+const publishDialogVisible = ref(false)
 
-// 开始轮询日志
-function startLogPolling() {
-  if (logPolling.value) return
-  logPolling.value = setInterval(async () => {
-    if (!props.domain) return
-    try {
-      const res = await api.get(`/ssl/log/${props.domain.id}`)
-      if (res.log) {
-        sslInfo.log = res.log
-        // 自动滚动到底部
-        setTimeout(() => {
-          const logBox = document.querySelector('.log-box')
-          if (logBox) logBox.scrollTop = logBox.scrollHeight
-        }, 50)
-      }
-      // 如果状态不再是申请中/续期中，停止轮询
-      if (res.status !== 'issuing' && res.status !== 'renewing') {
-        stopLogPolling()
-      }
-    } catch (e) {}
-  }, 1000)
+function scrollLogToBottom() {
+  setTimeout(() => {
+    const logBox = document.querySelector('.log-box')
+    if (logBox) logBox.scrollTop = logBox.scrollHeight
+  }, 50)
 }
 
-// 停止轮询日志
-function stopLogPolling() {
-  if (logPolling.value) {
-    clearInterval(logPolling.value)
-    logPolling.value = null
+function startSslLogSocket() {
+  if (sslLogSocket.value || !props.domain) return
+
+  const token = localStorage.getItem('token')
+  if (!token) return
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/api/ws-ssl-log?token=${encodeURIComponent(token)}&domainId=${props.domain.id}`
+  const socket = new WebSocket(wsUrl)
+
+  socket.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.type !== 'ssl-log') return
+
+      if (typeof data.log === 'string') {
+        sslInfo.log = data.log
+        scrollLogToBottom()
+      }
+      if (typeof data.status === 'string') {
+        sslInfo.status = data.status
+        if (data.status !== 'issuing' && data.status !== 'renewing') {
+          stopSslLogSocket()
+        }
+      }
+      if (typeof data.expires === 'string' || data.expires === null) {
+        sslInfo.not_after = data.expires || sslInfo.not_after
+      }
+    } catch (err) {
+      console.error('解析 SSL 日志消息失败:', err)
+    }
+  }
+
+  socket.onclose = () => {
+    if (sslLogSocket.value === socket) {
+      sslLogSocket.value = null
+    }
+  }
+
+  socket.onerror = () => {
+    socket.close()
+  }
+
+  sslLogSocket.value = socket
+}
+
+function stopSslLogSocket() {
+  if (sslLogSocket.value) {
+    sslLogSocket.value.close()
+    sslLogSocket.value = null
   }
 }
 
 watch(() => props.modelValue, async (val) => {
   if (val && props.domain) {
     form.webroot = `/www/wwwroot/ftp/${props.domain.domain}`
+    publishForm.target_dir = `/www/certs/${props.domain.domain}`
+    publishForm.server_id = defaultServer.value?.id || ''
     await refreshStatus()
     // 如果正在申请中，开始轮询
     if (sslInfo.status === 'issuing' || sslInfo.status === 'renewing') {
       showLog.value = true
-      startLogPolling()
+      startSslLogSocket()
     }
   } else {
-    stopLogPolling()
+    stopSslLogSocket()
   }
 })
 
 onMounted(async () => {
-  servers.value = await api.get('/servers')
+  servers.value = await api.get('/ssl/servers')
 })
 
 onUnmounted(() => {
-  stopLogPolling()
+  stopSslLogSocket()
 })
 
 function getSslStatusType(status) {
@@ -202,6 +320,7 @@ async function refreshStatus() {
     sslInfo.paths = res.paths
     sslInfo.san = res.san || ''
     sslInfo.log = res.ssl_log || ''
+    sslInfo.local_cert = res.local_cert || null
   } finally {
     refreshing.value = false
   }
@@ -211,12 +330,11 @@ async function issueCert() {
   issuing.value = true
   showLog.value = true
   sslInfo.log = '正在申请证书，请稍候...\n'
-  startLogPolling()
+  startSslLogSocket()
   try {
     const payload = {
       verify_method: form.verify_method,
       cert_type: form.cert_type,
-      server_ids: form.server_ids,
       webroot: form.webroot
     }
     const res = await api.post(`/ssl/issue/${props.domain.id}`, payload)
@@ -228,10 +346,11 @@ async function issueCert() {
       ElMessage.error(res.message || '申请失败')
     }
   } catch (e) {
-    sslInfo.log += `\n错误: ${e.message}`
+    const serverLog = e.response?.data?.log
+    sslInfo.log = serverLog || `${sslInfo.log}\n错误: ${e.message}`
   } finally {
     issuing.value = false
-    stopLogPolling()
+    stopSslLogSocket()
     await refreshStatus()
   }
 }
@@ -240,7 +359,7 @@ async function renewCert() {
   renewing.value = true
   showLog.value = true
   sslInfo.log = '正在续期证书，请稍候...\n'
-  startLogPolling()
+  startSslLogSocket()
   try {
     const res = await api.post(`/ssl/renew/${props.domain.id}`)
     sslInfo.log = res.log || sslInfo.log
@@ -251,10 +370,11 @@ async function renewCert() {
       ElMessage.error(res.message || '续期失败')
     }
   } catch (e) {
-    sslInfo.log += `\n错误: ${e.message}`
+    const serverLog = e.response?.data?.log
+    sslInfo.log = serverLog || `${sslInfo.log}\n错误: ${e.message}`
   } finally {
     renewing.value = false
-    stopLogPolling()
+    stopSslLogSocket()
     await refreshStatus()
   }
 }
@@ -292,6 +412,64 @@ async function downloadCert() {
     downloading.value = false
   }
 }
+
+function formatFileSize(size) {
+  if (!size) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = size
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+async function showCertFiles() {
+  if (!props.domain) return
+  loadingFiles.value = true
+  try {
+    const res = await api.get(`/ssl/files/${props.domain.id}`)
+    certFiles.value = res.files || []
+    Object.assign(certFilesInfo, {
+      domain: res.domain || props.domain.domain,
+      stored: !!res.stored,
+      dir: res.dir || '',
+      metadata: res.metadata || null
+    })
+    certFilesDialogVisible.value = true
+  } finally {
+    loadingFiles.value = false
+  }
+}
+
+function openPublishDialog() {
+  if (!props.domain) return
+  publishForm.target_dir = publishForm.target_dir || `/www/certs/${props.domain.domain}`
+  publishForm.server_id = publishForm.server_id || defaultServer.value?.id || ''
+  publishDialogVisible.value = true
+}
+
+async function publishCert() {
+  if (!props.domain) return
+  publishing.value = true
+  try {
+    const res = await api.post(`/ssl/publish/${props.domain.id}`, {
+      server_id: publishForm.server_id || null,
+      target_dir: publishForm.target_dir || `/www/certs/${props.domain.domain}`
+    })
+    sslInfo.log = res.log || sslInfo.log
+    showLog.value = true
+    publishDialogVisible.value = false
+    ElMessage.success(res.message || '证书发布成功')
+  } catch (e) {
+    const serverLog = e.response?.data?.log
+    sslInfo.log = serverLog || `${sslInfo.log}\n错误: ${e.message}`
+    showLog.value = true
+  } finally {
+    publishing.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -299,6 +477,17 @@ async function downloadCert() {
 .ftp-info { background: #f5f7fa; padding: 15px; border-radius: 4px; }
 .ftp-info p { margin: 5px 0; font-family: monospace; }
 .log-box { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.cert-files-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.cert-files-label { color: #606266; margin-right: 8px; font-size: 13px; }
+.cert-dir-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 12px; background: #f5f7fa; border-radius: 4px; }
+.cert-path { font-family: monospace; font-size: 12px; color: #303133; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cert-path.muted { color: #909399; }
+.cert-file-path-cell { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; }
+.issue-server-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.issue-server-note { color: #909399; font-size: 12px; line-height: 1.4; }
+.publish-path-preview { background: #f5f7fa; border-radius: 4px; padding: 10px 12px; font-family: monospace; font-size: 12px; color: #303133; }
+.publish-path-preview div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; line-height: 1.8; word-break: break-all; }
+.publish-path-preview span { color: #606266; }
 
 /* ========== 移动端适配 ========== */
 @media (max-width: 768px) {

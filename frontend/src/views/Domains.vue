@@ -16,10 +16,12 @@
         </el-input>
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button size="small" @click="refreshAllSsl" :loading="refreshingSsl">刷新证书状态</el-button>
+        <el-button type="success" size="small" @click="openBatchSslDialog" :disabled="filteredDomains.length === 0">批量获取证书</el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加域名</el-button>
       </div>
     </div>
-    <el-table :data="filteredDomains" stripe>
+    <el-table :data="filteredDomains" stripe @selection-change="selectedDomains = $event">
+      <el-table-column type="selection" width="44" />
       <el-table-column prop="domain" label="域名" width="180">
         <template #default="{ row }">
           <span class="full-domain">{{ row.domain }}</span>
@@ -88,7 +90,7 @@
     </el-table>
 
     <!-- 添加/编辑对话框 -->
-    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑域名' : '添加域名'" width="450px" :loading="saving" @confirm="handleSave">
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑域名' : '添加域名'" width="650px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="域名">
           <el-input v-model="form.domain" placeholder="例如: example.com" :disabled="!!form.id" />
@@ -115,10 +117,107 @@
           />
         </el-form-item>
       </el-form>
-    </AppDialog>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
+      </template>
+    </el-dialog>
 
     <!-- SSL证书对话框 -->
     <SslDialog v-model="sslDialogVisible" :domain="currentDomain" @refresh="dataStore.loadDomains" />
+
+    <!-- 批量获取证书日志 - 多任务Tab模式 -->
+    <el-dialog v-model="batchSslDialogVisible" title="批量获取证书" width="900px" append-to-body>
+      <!-- 新建任务区域 -->
+      <div v-if="!currentBatchTask" class="batch-ssl-new-task">
+        <div class="batch-ssl-summary">
+          <div>
+            <span class="batch-ssl-label">处理范围</span>
+            <strong>{{ batchTargetDomains.length }} 个域名</strong>
+            <span class="batch-ssl-muted">{{ selectedDomains.length ? '已勾选' : '当前筛选结果' }}</span>
+          </div>
+        </div>
+        <el-form :model="batchSslForm" label-width="90px" style="margin-top:15px">
+          <el-form-item label="证书类型">
+            <el-select v-model="batchSslForm.cert_type" style="width:220px">
+              <el-option label="Let's Encrypt" value="letsencrypt" />
+              <el-option label="ZeroSSL" value="zerossl" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div style="text-align:center;margin-top:20px">
+          <el-button type="primary" size="large" @click="startBatchSsl" :loading="startingBatchSsl" :disabled="batchTargetDomains.length === 0">
+            <el-icon style="margin-right:5px"><Plus /></el-icon>
+            开始批量获取
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 任务列表Tab -->
+      <div v-else class="batch-ssl-tasks">
+        <el-tabs v-model="activeTaskTab" type="card" closable @tab-remove="removeTask">
+          <el-tab-pane
+            v-for="task in batchSslTasks"
+            :key="task.job_id"
+            :name="task.job_id"
+            :closable="task.status === 'completed' || task.status === 'completed_with_errors' || task.status === 'error'"
+          >
+            <template #label>
+              <div style="display:flex;align-items:center;gap:8px">
+                <el-icon v-if="task.status === 'running' || task.status === 'pending'" class="is-loading"><Loading /></el-icon>
+                <el-icon v-else-if="task.status === 'completed'" style="color:#67c23a"><CircleCheck /></el-icon>
+                <el-icon v-else-if="task.status === 'error' || task.status === 'completed_with_errors'" style="color:#f56c6c"><CircleClose /></el-icon>
+                <span>任务 {{ task.created_at?.slice(11, 19) || task.job_id.slice(0, 8) }}</span>
+                <el-badge v-if="task.status === 'running' || task.status === 'pending'" :value="`${task.done}/${task.total}`" type="primary" />
+              </div>
+            </template>
+
+            <!-- 任务详情 -->
+            <div class="batch-task-content">
+              <div class="batch-ssl-summary">
+                <div>
+                  <span class="batch-ssl-label">任务ID</span>
+                  <span style="font-family:monospace;font-size:12px;color:#909399">{{ task.job_id }}</span>
+                </div>
+                <el-tag :type="getBatchStatusType(task.status)" size="small">{{ getBatchStatusText(task.status) }}</el-tag>
+              </div>
+              
+              <el-progress
+                :percentage="getTaskProgress(task)"
+                :status="task.failed > 0 && task.status !== 'running' && task.status !== 'pending' ? 'exception' : getTaskProgress(task) === 100 ? 'success' : ''"
+                style="margin:15px 0"
+              />
+              
+              <div class="batch-ssl-counts">
+                <span>总数 {{ task.total }}</span>
+                <span>完成 {{ task.done }}</span>
+                <span class="success">成功 {{ task.success }}</span>
+                <span class="failed">失败 {{ task.failed }}</span>
+              </div>
+              
+              <div class="batch-log-box">{{ task.log || '等待开始...' }}</div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+
+      <template #footer>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <el-button v-if="currentBatchTask" @click="backToNewTask" :disabled="hasRunningTask">
+            <el-icon style="margin-right:5px"><Plus /></el-icon>
+            新建任务
+          </el-button>
+          <div v-else></div>
+          <div>
+            <el-button @click="batchSslDialogVisible = false">关闭</el-button>
+            <el-button v-if="currentBatchTask" type="primary" @click="refreshCurrentTask" :loading="refreshingTask">
+              <el-icon style="margin-right:5px"><Refresh /></el-icon>
+              刷新
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
 
     <!-- DNS记录对话框 -->
     <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px" append-to-body>
@@ -218,10 +317,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, ArrowDown, Search } from '@element-plus/icons-vue'
+import { Refresh, ArrowDown, Search, Plus, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
 import { formatSslDays, getSslDaysType } from '@/utils'
 import api from '@/api'
@@ -243,6 +342,49 @@ const currentDomain = ref(null)
 const searchKeyword = ref('')
 const dnsSearchKeyword = ref('')
 const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [], expire_at: null })
+const selectedDomains = ref([])
+const batchSslDialogVisible = ref(false)
+const batchSslForm = reactive({ cert_type: 'letsencrypt' })
+
+// 多任务管理
+const batchSslTasks = ref([]) // 所有批量任务列表
+const activeTaskTab = ref('') // 当前激活的任务Tab
+const batchSslPolling = ref(null) // 轮询定时器
+const startingBatchSsl = ref(false)
+const refreshingTask = ref(false)
+
+// 当前任务（用于显示）
+const currentBatchTask = computed(() => {
+  if (!activeTaskTab.value) return null
+  return batchSslTasks.value.find(t => t.job_id === activeTaskTab.value)
+})
+
+// 是否有正在运行的任务
+const hasRunningTask = computed(() => {
+  return batchSslTasks.value.some(t => t.status === 'running' || t.status === 'pending')
+})
+
+// 兼容旧代码的batchSsl对象
+const batchSsl = computed(() => currentBatchTask.value || {
+  job_id: '',
+  status: 'idle',
+  total: 0,
+  done: 0,
+  success: 0,
+  failed: 0,
+  log: '',
+  results: []
+})
+
+const isBatchSslRunning = computed(() => {
+  return currentBatchTask.value && ['pending', 'running'].includes(currentBatchTask.value.status)
+})
+
+const batchSslProgress = computed(() => {
+  if (!currentBatchTask.value || !currentBatchTask.value.total) return 0
+  return Math.min(100, Math.round((currentBatchTask.value.done / currentBatchTask.value.total) * 100))
+})
+
 const dnsRecords = reactive({ platform: '', records: [] })
 const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
 const dnsCurrentPage = ref(1)
@@ -290,11 +432,17 @@ const filteredDomains = computed(() => {
   )
 })
 
+const batchTargetDomains = computed(() => selectedDomains.value.length > 0 ? selectedDomains.value : filteredDomains.value)
+
 onMounted(() => {
   loadData()
   dataStore.loadAliyunConfigs()
   dataStore.loadServerTags()
   dataStore.loadServers()
+})
+
+onUnmounted(() => {
+  stopBatchSslPolling()
 })
 
 async function loadData() {
@@ -417,6 +565,222 @@ async function refreshAllSsl() {
     ElMessage.success('证书状态已更新')
   } finally {
     refreshingSsl.value = false
+  }
+}
+
+function getBatchStatusText(status) {
+  const map = {
+    idle: '未开始',
+    pending: '等待中',
+    running: '执行中',
+    completed: '已完成',
+    completed_with_errors: '部分失败',
+    error: '异常'
+  }
+  return map[status] || status || '未开始'
+}
+
+function getBatchStatusType(status) {
+  if (status === 'completed') return 'success'
+  if (status === 'completed_with_errors' || status === 'error') return 'danger'
+  if (status === 'running' || status === 'pending') return 'warning'
+  return 'info'
+}
+
+function getTaskProgress(task) {
+  if (!task || !task.total) return 0
+  return Math.min(100, Math.round((task.done / task.total) * 100))
+}
+
+function openBatchSslDialog() {
+  batchSslDialogVisible.value = true
+  // 加载历史任务
+  loadHistoryTasks()
+}
+
+async function loadHistoryTasks() {
+  try {
+    const res = await api.get('/ssl/batch-jobs?limit=5')
+    // 只加载最近的5个任务
+    for (const job of res) {
+      // 检查是否已存在
+      if (!batchSslTasks.value.find(t => t.job_id === job.job_id)) {
+        batchSslTasks.value.push({
+          job_id: job.job_id,
+          status: job.status,
+          total: job.total,
+          done: job.done,
+          success: job.success,
+          failed: job.failed,
+          log: '',  // 不加载日志，点击Tab时再加载
+          results: [],
+          created_at: job.created_at,
+          updated_at: job.updated_at
+        })
+      }
+    }
+    // 如果有任务，默认显示最新的任务
+    if (batchSslTasks.value.length > 0 && !activeTaskTab.value) {
+      activeTaskTab.value = batchSslTasks.value[batchSslTasks.value.length - 1].job_id
+      // 加载该任务的详细信息
+      await refreshCurrentTask()
+    }
+  } catch (err) {
+    console.error('加载历史任务失败:', err)
+  }
+}
+
+function backToNewTask() {
+  activeTaskTab.value = ''
+}
+
+function removeTask(jobId) {
+  const index = batchSslTasks.value.findIndex(t => t.job_id === jobId)
+  if (index > -1) {
+    batchSslTasks.value.splice(index, 1)
+    // 如果删除的是当前任务，切换到其他任务或新建页面
+    if (activeTaskTab.value === jobId) {
+      if (batchSslTasks.value.length > 0) {
+        activeTaskTab.value = batchSslTasks.value[batchSslTasks.value.length - 1].job_id
+      } else {
+        activeTaskTab.value = ''
+      }
+    }
+  }
+}
+
+function stopBatchSslPolling() {
+  if (batchSslPolling.value) {
+    clearInterval(batchSslPolling.value)
+    batchSslPolling.value = null
+  }
+}
+
+async function loadBatchSslJob() {
+  // 轮询所有运行中的任务
+  const runningTasks = batchSslTasks.value.filter(t => t.status === 'running' || t.status === 'pending')
+  
+  for (const task of runningTasks) {
+    // 检查 job_id 是否有效
+    if (!task.job_id) {
+      console.error('任务缺少 job_id:', task)
+      continue
+    }
+    
+    try {
+      const res = await api.get(`/ssl/batch-issue/${task.job_id}`)
+      Object.assign(task, {
+        status: res.status,
+        total: res.total || 0,
+        done: res.done || 0,
+        success: res.success || 0,
+        failed: res.failed || 0,
+        log: res.log || '',
+        results: res.results || [],
+        updated_at: res.updated_at
+      })
+      
+      // 如果是当前显示的任务，滚动日志到底部
+      if (activeTaskTab.value === task.job_id) {
+        await nextTick()
+        const box = document.querySelector('.batch-log-box')
+        if (box) box.scrollTop = box.scrollHeight
+      }
+    } catch (err) {
+      // 任务不存在或已过期
+      if (err.message?.includes('不存在') || err.message?.includes('过期')) {
+        task.status = 'error'
+        task.log = task.log + `\n[${formatDateTime(new Date())}] 任务已过期或服务器已重启，任务信息已丢失。\n提示：批量任务在24小时后会自动清理，服务器重启也会导致任务丢失。\n`
+      } else {
+        console.error('加载任务失败:', err)
+      }
+    }
+  }
+  
+  // 如果没有运行中的任务，停止轮询
+  if (runningTasks.length === 0) {
+    stopBatchSslPolling()
+    await dataStore.loadDomains()
+  }
+}
+
+async function refreshCurrentTask() {
+  if (!currentBatchTask.value) return
+  if (!currentBatchTask.value.job_id) {
+    ElMessage.error('任务ID无效')
+    return
+  }
+  
+  refreshingTask.value = true
+  try {
+    const res = await api.get(`/ssl/batch-issue/${currentBatchTask.value.job_id}`)
+    Object.assign(currentBatchTask.value, {
+      status: res.status,
+      total: res.total || 0,
+      done: res.done || 0,
+      success: res.success || 0,
+      failed: res.failed || 0,
+      log: res.log || '',
+      results: res.results || [],
+      updated_at: res.updated_at
+    })
+    await nextTick()
+    const box = document.querySelector('.batch-log-box')
+    if (box) box.scrollTop = box.scrollHeight
+    ElMessage.success('刷新成功')
+  } catch (err) {
+    ElMessage.error(err.message || '刷新失败')
+  } finally {
+    refreshingTask.value = false
+  }
+}
+
+async function startBatchSsl() {
+  const targets = batchTargetDomains.value
+  if (targets.length === 0) {
+    ElMessage.warning('没有可获取证书的域名')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`确定后台获取 ${targets.length} 个域名的通配符证书？`, '批量获取证书')
+  } catch (e) {
+    return
+  }
+
+  startingBatchSsl.value = true
+  try {
+    const res = await api.post('/ssl/batch-issue', {
+      domain_ids: targets.map(item => item.id),
+      cert_type: batchSslForm.cert_type
+    })
+    
+    // 创建新任务
+    const newTask = {
+      job_id: res.job_id,
+      status: 'pending',
+      total: res.total || targets.length,
+      done: 0,
+      success: 0,
+      failed: 0,
+      log: res.message ? `[${formatDateTime(new Date())}] ${res.message}\n` : '',
+      results: [],
+      created_at: formatDateTime(new Date())
+    }
+    
+    batchSslTasks.value.push(newTask)
+    activeTaskTab.value = newTask.job_id
+    
+    // 启动轮询
+    stopBatchSslPolling()
+    batchSslPolling.value = setInterval(loadBatchSslJob, 1000)
+    await loadBatchSslJob()
+    
+    ElMessage.success(res.message || '已开始后台获取证书')
+  } catch (err) {
+    ElMessage.error(err.message || '启动失败')
+  } finally {
+    startingBatchSsl.value = false
   }
 }
 
@@ -606,6 +970,90 @@ function getExpireDaysText(expireAt) {
 :deep(.el-dialog__footer) {
   border-top: 1px solid #f0f0f0;
   padding: 15px 25px;
+}
+
+.batch-ssl-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.batch-ssl-label {
+  color: #606266;
+  margin-right: 8px;
+  font-size: 13px;
+}
+
+.batch-ssl-muted {
+  color: #909399;
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.batch-ssl-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.batch-ssl-counts .success {
+  color: #67c23a;
+}
+
+.batch-ssl-counts .failed {
+  color: #f56c6c;
+}
+
+.batch-log-box {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 14px;
+  border-radius: 6px;
+  min-height: 260px;
+  max-height: 420px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.batch-ssl-new-task {
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  min-height: 300px;
+}
+
+.batch-ssl-tasks {
+  min-height: 400px;
+}
+
+.batch-task-content {
+  padding: 15px 0;
+}
+
+:deep(.el-tabs__item) {
+  padding: 0 15px !important;
+}
+
+:deep(.el-tabs__content) {
+  padding: 0;
+}
+
+:deep(.is-loading) {
+  animation: rotating 2s linear infinite;
+}
+
+@keyframes rotating {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* ========== 移动端适配 ========== */

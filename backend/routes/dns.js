@@ -441,22 +441,62 @@ router.post('/batch-create', async (req, res) => {
 // 获取子域名列表
 router.get('/subdomains', async (req, res) => {
   try {
-    const { domain_id, page = 1, pageSize = 20 } = req.query;
+    const { domain_id, server_id, use_status, expiring_soon, keyword, page = 1, pageSize = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(pageSize);
     
-    let whereSql = '';
+    const whereParts = [];
     const params = [];
     
     if (domain_id) {
-      whereSql = ' WHERE s.domain_id = ?';
+      whereParts.push('s.domain_id = ?');
       params.push(domain_id);
     } else if (req.user.role !== 'admin') {
-      whereSql = ' WHERE d.user_id = ?';
+      whereParts.push('d.user_id = ?');
       params.push(req.user.id);
     }
+
+    if (server_id) {
+      whereParts.push('s.server_id = ?');
+      params.push(server_id);
+    }
+
+    if (use_status) {
+      whereParts.push('COALESCE(s.use_status, ?) = ?');
+      params.push('unused', use_status);
+    }
+
+    if (expiring_soon === '1' || expiring_soon === 'true') {
+      const now = formatTime();
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 5);
+      whereParts.push('s.expire_at IS NOT NULL AND s.expire_at >= ? AND s.expire_at < ?');
+      params.push(now, formatTime(soon));
+    }
+
+    if (keyword && keyword.trim()) {
+      const likeKeyword = `%${keyword.trim()}%`;
+      whereParts.push(`(
+        s.subdomain LIKE ? OR
+        d.domain LIKE ? OR
+        ${db.concat('s.subdomain', `'.'`, 'd.domain')} LIKE ? OR
+        s.record_value LIKE ? OR
+        sv.name LIKE ? OR
+        sv.ip LIKE ? OR
+        s.remark LIKE ?
+      )`);
+      params.push(likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword);
+    }
+    
+    const whereSql = whereParts.length ? ` WHERE ${whereParts.join(' AND ')}` : '';
     
     // 获取总数
-    const countSql = `SELECT COUNT(*) as total FROM subdomains s LEFT JOIN domains d ON s.domain_id = d.id ${whereSql}`;
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      ${whereSql}
+    `;
     const countResult = await db.get(countSql, params);
     const total = countResult?.total || 0;
     

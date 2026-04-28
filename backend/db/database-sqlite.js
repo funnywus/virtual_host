@@ -194,6 +194,28 @@ const init = () => {
     db.run(`ALTER TABLE domains ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
     db.run(`ALTER TABLE aliyun_config ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
     db.run(`ALTER TABLE server_tags ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
+
+    // 批量SSL证书任务表
+    db.run(`
+      CREATE TABLE IF NOT EXISTS batch_ssl_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'pending',
+        total INTEGER DEFAULT 0,
+        done INTEGER DEFAULT 0,
+        success INTEGER DEFAULT 0,
+        failed INTEGER DEFAULT 0,
+        log TEXT,
+        results TEXT,
+        cert_type TEXT DEFAULT 'letsencrypt',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME,
+        finished_at DATETIME,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `);
   });
 };
 

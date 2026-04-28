@@ -20,6 +20,9 @@ backend/*.egg-info/
 backend/.pytest_cache/
 backend/.mypy_cache/
 
+# Local certificate storage (contains private keys)
+backend/uploads/certs/
+
 # General
 .DS_Store
 *.log

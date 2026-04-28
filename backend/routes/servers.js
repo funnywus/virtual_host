@@ -98,7 +98,7 @@ router.post('/', async (req, res) => {
 // 更新服务器
 router.put('/:id', async (req, res) => {
   try {
-    const { name, ip, port, username, password, tags, nginx_path, ftp_path, expire_at, status } = req.body;
+    const { name, ip, port, username, password, tags, nginx_path, ftp_path, expire_at } = req.body;
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在' });
@@ -106,13 +106,30 @@ router.put('/:id', async (req, res) => {
     
     // 如果密码为空，保留原密码
     const newPassword = password || server.password;
-    const serverStatus = status === 'disabled' ? 'disabled' : 'active';
     
     await db.run(
-      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ?, status = ? WHERE id = ?',
-      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, serverStatus, req.params.id]
+      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
+      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
     );
     res.json({ message: '更新成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 更新服务器状态
+router.put('/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const serverStatus = status === 'disabled' ? 'disabled' : 'active';
+    
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在' });
+    }
+    
+    await db.run('UPDATE servers SET status = ? WHERE id = ?', [serverStatus, req.params.id]);
+    res.json({ message: serverStatus === 'disabled' ? '服务器已停用' : '服务器已恢复正常', status: serverStatus });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

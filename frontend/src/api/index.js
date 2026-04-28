@@ -21,6 +21,10 @@ api.interceptors.response.use(
   error => {
     const msg = error.response?.data?.error || error.message
     const status = error.response?.status
+    const normalizedError = new Error(msg)
+    normalizedError.response = error.response
+    normalizedError.status = status
+    normalizedError.data = error.response?.data
     
     // 登录接口的 401 不跳转，只提示错误
     const isLoginRequest = error.config?.url?.includes('/auth/login')
@@ -32,7 +36,7 @@ api.interceptors.response.use(
     } else {
       ElMessage.error(msg)
     }
-    return Promise.reject(new Error(msg))
+    return Promise.reject(normalizedError)
   }
 )
 

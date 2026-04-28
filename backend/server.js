@@ -20,6 +20,7 @@ const systemRoutes = require('./routes/system');
 const SshFtpService = require('./services/ssh-ftp');
 const sslCert = require('./services/ssl-cert');
 const WebSocketSFTPProxy = require('./services/ws-sftp-proxy');
+const { initSslLogWebSocket } = require('./services/ssl-log-ws');
 
 // 格式化时间为 YYYY-MM-DD HH:mm:ss
 const formatTime = (date = new Date()) => {
@@ -82,8 +83,73 @@ async function migrateDatabase() {
       await db.run("ALTER TABLE servers ADD COLUMN status VARCHAR(20) DEFAULT 'active'");
       console.log('[DB Migration] ✓ servers.status 添加成功');
     }
+    
+    // 检查并创建 batch_ssl_jobs 表
+    const batchJobsTableExists = await checkTableExists('batch_ssl_jobs');
+    if (!batchJobsTableExists) {
+      console.log('[DB Migration] 创建 batch_ssl_jobs 表...');
+      if (db.type === 'mysql') {
+        await db.run(`
+          CREATE TABLE batch_ssl_jobs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id VARCHAR(255) UNIQUE NOT NULL,
+            user_id INT NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending',
+            total INT DEFAULT 0,
+            done INT DEFAULT 0,
+            success INT DEFAULT 0,
+            failed INT DEFAULT 0,
+            log TEXT,
+            results TEXT,
+            cert_type VARCHAR(50) DEFAULT 'letsencrypt',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            started_at DATETIME,
+            finished_at DATETIME,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+      } else {
+        await db.run(`
+          CREATE TABLE batch_ssl_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT UNIQUE NOT NULL,
+            user_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'pending',
+            total INTEGER DEFAULT 0,
+            done INTEGER DEFAULT 0,
+            success INTEGER DEFAULT 0,
+            failed INTEGER DEFAULT 0,
+            log TEXT,
+            results TEXT,
+            cert_type TEXT DEFAULT 'letsencrypt',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME,
+            finished_at DATETIME,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+          )
+        `);
+      }
+      console.log('[DB Migration] ✓ batch_ssl_jobs 表创建成功');
+    }
   } catch (err) {
     console.error('[DB Migration] 错误:', err.message);
+  }
+}
+
+// 检查表是否存在
+async function checkTableExists(tableName) {
+  try {
+    if (db.type === 'mysql') {
+      const rows = await db.all(`SHOW TABLES LIKE '${tableName}'`);
+      return rows.length > 0;
+    } else {
+      const row = await db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [tableName]);
+      return !!row;
+    }
+  } catch (err) {
+    return false;
   }
 }
 
@@ -248,6 +314,7 @@ const server = http.createServer(app);
 
 // 启动 WebSocket SFTP 代理
 new WebSocketSFTPProxy(server);
+initSslLogWebSocket(server);
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

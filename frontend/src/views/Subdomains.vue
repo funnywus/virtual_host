@@ -12,6 +12,9 @@
           clearable 
           style="width:250px" 
           size="small"
+          @change="onFilterChange"
+          @clear="onFilterChange"
+          @keyup.enter="onFilterChange"
         >
           <template #prefix>
             <el-icon><Search /></el-icon>
@@ -20,6 +23,15 @@
         <el-select v-model="filterDomainId" placeholder="筛选域名" clearable style="width:180px" size="small" @change="onFilterChange">
           <el-option v-for="d in dataStore.domains" :key="d.id" :label="d.domain" :value="d.id" />
         </el-select>
+        <el-select v-model="filterServerId" placeholder="筛选服务器" clearable style="width:180px" size="small" @change="onFilterChange">
+          <el-option v-for="s in dataStore.servers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
+        </el-select>
+        <el-select v-model="filterStatus" placeholder="筛选状态" clearable style="width:130px" size="small" @change="onFilterChange">
+          <el-option label="未使用" value="unused" />
+          <el-option label="已使用" value="used" />
+          <el-option label="已停用" value="disabled" />
+        </el-select>
+        <el-checkbox v-model="filterExpiringSoon" size="small" @change="onFilterChange">快过期</el-checkbox>
         <el-dropdown v-if="selectedRows.length > 0" trigger="click">
           <el-button type="warning" size="small">
             批量操作 ({{ selectedRows.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -39,9 +51,9 @@
         <el-button type="success" size="small" @click="openBatchDialog">批量生成</el-button>
       </div>
     </div>
-    <el-table :data="filteredSubdomains" stripe class="subdomain-table" @selection-change="onSelectionChange">
+    <el-table :data="dataStore.subdomains" stripe class="subdomain-table" @selection-change="onSelectionChange">
       <el-table-column type="selection" width="45" />
-      <el-table-column label="域名信息" min-width="260">
+      <el-table-column label="域名信息" min-width="360">
         <template #default="{ row }">
           <div class="domain-cell">
             <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
@@ -68,7 +80,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="有效期" width="130">
+      <el-table-column label="有效期" width="180">
         <template #default="{ row }">
           <template v-if="row.expire_at">
             <div class="expire-cell">
@@ -89,7 +101,7 @@
           <span v-else style="color:#999;cursor:pointer" @dblclick="openRemarkDialog(row)">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <div class="row-actions">
             <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
@@ -566,7 +578,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Refresh, Search } from '@element-plus/icons-vue'
@@ -592,6 +604,10 @@ const renewing = ref(false)
 const currentSubdomain = ref(null)
 const batchResults = ref([])
 const searchKeyword = ref('')
+const searchTimer = ref(null)
+const filterServerId = ref(null)
+const filterStatus = ref('')
+const filterExpiringSoon = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const selectedRows = ref([])
@@ -1001,20 +1017,6 @@ async function batchDelete() {
   loadData()
 }
 
-const filteredSubdomains = computed(() => {
-  if (!searchKeyword.value) return dataStore.subdomains
-  const kw = searchKeyword.value.toLowerCase()
-  return dataStore.subdomains.filter(s => {
-    const fullDomain = `${s.subdomain}.${s.main_domain}`.toLowerCase()
-    return fullDomain.includes(kw) ||
-      s.subdomain?.toLowerCase().includes(kw) ||
-      s.main_domain?.toLowerCase().includes(kw) ||
-      s.record_value?.toLowerCase().includes(kw) ||
-      s.server_name?.toLowerCase().includes(kw) ||
-      s.remark?.toLowerCase().includes(kw)
-  })
-})
-
 const form = reactive({
   id: null, domain_id: '', subdomain: '', server_id: null,
   record_type: 'A', record_value: '', ttl: 600, remark: '',
@@ -1050,10 +1052,22 @@ onMounted(async () => {
   loadData()
 })
 
+watch(searchKeyword, () => {
+  if (searchTimer.value) clearTimeout(searchTimer.value)
+  searchTimer.value = setTimeout(() => {
+    onFilterChange()
+  }, 300)
+})
+
 async function loadData() {
   loading.value = true
   try {
-    await dataStore.loadSubdomains(filterDomainId.value, currentPage.value, pageSize.value)
+    await dataStore.loadSubdomains(filterDomainId.value, currentPage.value, pageSize.value, {
+      server_id: filterServerId.value,
+      use_status: filterStatus.value,
+      expiring_soon: filterExpiringSoon.value,
+      keyword: searchKeyword.value.trim()
+    })
   } finally {
     loading.value = false
   }
@@ -1318,8 +1332,11 @@ async function handleRateLimitSave() {
   text-decoration: none;
   cursor: pointer;
   transition: color 0.3s;
-  line-height: 1.35;
-  word-break: break-all;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .full-domain:hover {
@@ -1344,16 +1361,18 @@ async function handleRateLimitSave() {
 
 .domain-cell {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 2px 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .domain-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
+  flex: 0 1 170px;
 }
 
 .meta-text {
@@ -1367,21 +1386,26 @@ async function handleRateLimitSave() {
 .domain-server {
   color: #909399;
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 110px;
 }
 
 .status-cell {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .expire-cell {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 4px;
-  line-height: 1.25;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .expire-success,
@@ -1510,11 +1534,11 @@ async function handleRateLimitSave() {
   }
 
   .domain-cell {
-    gap: 6px;
+    gap: 5px;
   }
 
   .status-cell {
-    gap: 5px;
+    gap: 4px;
   }
 
   .row-actions {

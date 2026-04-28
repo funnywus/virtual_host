@@ -54,9 +54,17 @@
           <span v-else style="font-size:12px;color:#909399">永久</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button type="success" size="small" @click="testServer(row)" :loading="row.testing">测试</el-button>
+          <el-button
+            :type="row.status === 'disabled' ? 'success' : 'warning'"
+            size="small"
+            @click="toggleServerStatus(row)"
+            :loading="row.statusChanging"
+          >
+            {{ row.status === 'disabled' ? '启用' : '停用' }}
+          </el-button>
           <el-dropdown trigger="click" style="margin-left:8px">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
@@ -75,7 +83,7 @@
       </el-table-column>
     </el-table>
 
-    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="550px" :loading="saving" @confirm="handleSave">
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑服务器' : '添加服务器'" width="700px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="服务器名称" />
@@ -98,12 +106,6 @@
         <el-form-item label="FTP目录">
           <el-input v-model="form.ftp_path" placeholder="/www/wwwroot/ftp" />
         </el-form-item>
-        <el-form-item label="状态">
-          <el-radio-group v-model="form.status">
-            <el-radio-button value="active">正常</el-radio-button>
-            <el-radio-button value="disabled">停用</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="form.tagList" multiple filterable allow-create default-first-option placeholder="选择或输入标签" style="width:100%" @change="onTagChange">
             <el-option v-for="t in dataStore.serverTags" :key="t.id" :label="t.name" :value="t.name" />
@@ -121,7 +123,11 @@
           />
         </el-form-item>
       </el-form>
-    </AppDialog>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSave" :loading="saving">确定</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 文件管理 -->
     <FileManager v-model="fileManagerVisible" :server="currentServer" />
@@ -204,7 +210,7 @@ const installingFtp = ref(false)
 const restartingNginx = ref(false)
 const restartingFtp = ref(false)
 const showPassword = ref({})
-const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', nginx_path: '/www/server/panel/vhost/nginx', ftp_path: '/www/wwwroot/ftp', status: 'active', tagList: [], expire_at: null })
+const form = reactive({ id: null, name: '', ip: '', port: 22, username: '', password: '', nginx_path: '/www/server/panel/vhost/nginx', ftp_path: '/www/wwwroot/ftp', tagList: [], expire_at: null })
 const softwareStatus = reactive({ nginx: {}, vsftpd: {}, pureFtpd: {} })
 const configDialogVisible = ref(false)
 const configTitle = ref('')
@@ -257,7 +263,6 @@ function openDialog(row = null) {
       username: row.username, password: '', 
       nginx_path: row.nginx_path || '/www/server/panel/vhost/nginx',
       ftp_path: row.ftp_path || '/www/wwwroot/ftp',
-      status: row.status || 'active',
       tagList: parseTags(row.tags),
       expire_at: row.expire_at || null
     })
@@ -267,7 +272,6 @@ function openDialog(row = null) {
       id: null, name: '', ip: '', port: 22, username: '', password: '', 
       nginx_path: '/www/server/panel/vhost/nginx',
       ftp_path: '/www/wwwroot/ftp',
-      status: 'active',
       tagList: defaultTag ? [defaultTag.name] : [],
       expire_at: null
     })
@@ -315,6 +319,19 @@ async function testServer(row) {
     res.success ? ElMessage.success(res.message) : ElMessage.error(res.message)
   } finally { 
     row.testing = false 
+  }
+}
+
+async function toggleServerStatus(row) {
+  const nextStatus = row.status === 'disabled' ? 'active' : 'disabled'
+  row.statusChanging = true
+  try {
+    const res = await api.put(`/servers/${row.id}/status`, { status: nextStatus })
+    row.status = res.status
+    ElMessage.success(res.message)
+    dataStore.loadServers()
+  } finally {
+    row.statusChanging = false
   }
 }
 
