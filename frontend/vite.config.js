@@ -10,23 +10,7 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173,
-    proxy: {
-      '/api/ws-ssl-log': {
-        target: 'ws://127.0.0.1:6002',
-        ws: true,
-        changeOrigin: true
-      },
-      '/api': {
-        target: 'http://127.0.0.1:6002',
-        changeOrigin: true
-      },
-      '/ws-upload': {
-        target: 'ws://127.0.0.1:6002',
-        ws: true,
-        changeOrigin: true
-      }
-    }
+    port: 5173
   },
   build: {
     outDir: './dist',
