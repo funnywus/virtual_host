@@ -21,10 +21,10 @@
           </template>
         </el-input>
         <el-select v-model="filterDomainId" placeholder="筛选域名" clearable style="width:180px" size="small" @change="onFilterChange">
-          <el-option v-for="d in dataStore.domains" :key="d.id" :label="d.domain" :value="d.id" />
+          <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain" :value="d.id" />
         </el-select>
         <el-select v-model="filterServerId" placeholder="筛选服务器" clearable style="width:180px" size="small" @change="onFilterChange">
-          <el-option v-for="s in dataStore.servers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
+          <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
         </el-select>
         <el-select v-model="filterStatus" placeholder="筛选状态" clearable style="width:130px" size="small" @change="onFilterChange">
           <el-option label="未使用" value="unused" />
@@ -144,7 +144,7 @@
       <el-form :model="form" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="form.domain_id" placeholder="选择主域名" style="width:100%" :disabled="!!form.id">
-            <el-option v-for="d in dataStore.domains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
+            <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="子域名">
@@ -204,7 +204,7 @@
       <el-form :model="batchForm" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="batchForm.domain_id" placeholder="选择主域名" style="width:100%">
-            <el-option v-for="d in dataStore.domains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
+            <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="服务器">
@@ -1038,6 +1038,7 @@ const currentDomain = computed(() => {
 })
 
 const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
+const activeDomains = computed(() => dataStore.domains.filter(d => d.status !== 'disabled'))
 
 function getDefaultAvailableServer() {
   return availableServers.value.find(s => s.is_default === 1) || availableServers.value[0] || null
@@ -1098,7 +1099,7 @@ async function openDialog(row = null) {
     })
   } else {
     // 获取默认值
-    const defaultDomain = dataStore.domains.find(d => d.is_default === 1)
+    const defaultDomain = activeDomains.value.find(d => d.is_default === 1)
     const defaultServer = getDefaultAvailableServer()
     
     Object.assign(form, {
@@ -1115,7 +1116,7 @@ async function openDialog(row = null) {
 
 function openBatchDialog() {
   // 获取默认值
-  const defaultDomain = dataStore.domains.find(d => d.is_default === 1)
+  const defaultDomain = activeDomains.value.find(d => d.is_default === 1)
   const defaultServer = getDefaultAvailableServer()
   
   batchForm.domain_id = filterDomainId.value || defaultDomain?.id || ''

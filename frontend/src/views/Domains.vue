@@ -14,9 +14,17 @@
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+        <el-select v-model="filterTag" placeholder="筛选标签" clearable style="width:140px;margin-right:10px" size="small">
+          <el-option v-for="t in dataStore.serverTags" :key="t.id" :label="t.name" :value="t.name" />
+        </el-select>
+        <el-select v-model="filterStatus" placeholder="筛选状态" clearable style="width:120px;margin-right:10px" size="small">
+          <el-option label="正常" value="active" />
+          <el-option label="禁用" value="disabled" />
+        </el-select>
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button size="small" @click="refreshAllSsl" :loading="refreshingSsl">刷新证书状态</el-button>
         <el-button type="success" size="small" @click="openBatchSslDialog" :disabled="filteredDomains.length === 0">批量获取证书</el-button>
+        <el-button type="warning" size="small" @click="openBatchPublishDialog" :disabled="filteredDomains.length === 0">批量发布证书</el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加域名</el-button>
       </div>
     </div>
@@ -32,6 +40,11 @@
         <template #default="{ row }">
           <el-tag v-if="row.aliyun_name" type="success">{{ row.aliyun_name }}</el-tag>
           <el-tag v-else type="info">未配置</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="80">
+        <template #default="{ row }">
+          <el-tag :type="row.status === 'disabled' ? 'danger' : 'success'" size="small">{{ row.status === 'disabled' ? '禁用' : '正常' }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="标签" width="80">
@@ -80,6 +93,7 @@
               <el-dropdown-menu>
                 <el-dropdown-item @click="viewSubdomains(row)">子域名</el-dropdown-item>
                 <el-dropdown-item @click="setDefault(row)" :disabled="row.is_default === 1">设为默认</el-dropdown-item>
+                <el-dropdown-item @click="toggleDomainStatus(row)">{{ row.status === 'disabled' ? '启用' : '禁用' }}</el-dropdown-item>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
                 <el-dropdown-item divided @click="handleDelete(row.id)" style="color:#f56c6c">删除</el-dropdown-item>
               </el-dropdown-menu>
@@ -127,7 +141,7 @@
     <SslDialog v-model="sslDialogVisible" :domain="currentDomain" @refresh="dataStore.loadDomains" />
 
     <!-- 批量获取证书日志 - 多任务Tab模式 -->
-    <el-dialog v-model="batchSslDialogVisible" title="批量获取证书" width="900px" append-to-body>
+    <el-dialog v-model="batchSslDialogVisible" title="批量获取证书" width="900px" append-to-body top="5vh">
       <!-- 新建任务区域 -->
       <div v-if="!currentBatchTask" class="batch-ssl-new-task">
         <div class="batch-ssl-summary">
@@ -194,6 +208,19 @@
                 <span class="success">成功 {{ task.success }}</span>
                 <span class="failed">失败 {{ task.failed }}</span>
               </div>
+
+              <!-- 重试操作按钮 -->
+              <div v-if="isTaskRetryable(task)" class="batch-retry-actions">
+                <el-button type="warning" size="small" @click="retryBatchTask(task, 'remaining')" :loading="retryingTask">
+                  从中断位置继续
+                </el-button>
+                <el-button type="danger" size="small" @click="retryBatchTask(task, 'failed')" :loading="retryingTask" :disabled="task.failed === 0">
+                  仅重试失败项 ({{ task.failed }})
+                </el-button>
+                <el-button type="primary" size="small" @click="retryBatchTask(task, 'all')" :loading="retryingTask">
+                  全部重新执行
+                </el-button>
+              </div>
               
               <div class="batch-log-box">{{ task.log || '等待开始...' }}</div>
             </div>
@@ -203,11 +230,15 @@
 
       <template #footer>
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <el-button v-if="currentBatchTask" @click="backToNewTask" :disabled="hasRunningTask">
-            <el-icon style="margin-right:5px"><Plus /></el-icon>
-            新建任务
-          </el-button>
-          <div v-else></div>
+          <div style="display:flex;gap:8px">
+            <el-button v-if="currentBatchTask" @click="backToNewTask" :disabled="hasRunningTask">
+              <el-icon style="margin-right:5px"><Plus /></el-icon>
+              新建任务
+            </el-button>
+            <el-button v-if="hasCompletedTasks" type="danger" plain @click="clearCompletedTasks">
+              清空已完成
+            </el-button>
+          </div>
           <div>
             <el-button @click="batchSslDialogVisible = false">关闭</el-button>
             <el-button v-if="currentBatchTask" type="primary" @click="refreshCurrentTask" :loading="refreshingTask">
@@ -220,7 +251,7 @@
     </el-dialog>
 
     <!-- DNS记录对话框 -->
-    <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px" append-to-body>
+    <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px" append-to-body top="5vh">
       <div style="margin-bottom:15px;display:flex;justify-content:space-between;align-items:center">
         <div style="display:flex;gap:10px;align-items:center">
           <el-tag type="info">{{ dnsRecords.platform === 'tencent' ? '腾讯云' : '阿里云' }}</el-tag>
@@ -313,6 +344,63 @@
         </el-form-item>
       </el-form>
     </AppDialog>
+
+    <!-- 批量发布证书对话框 -->
+    <el-dialog v-model="batchPublishDialogVisible" title="批量发布证书" width="700px" append-to-body top="5vh">
+      <div style="max-height:65vh;overflow-y:auto">
+      <el-alert type="info" :closable="false" style="margin-bottom:20px">
+        <template #title>
+          <div style="font-size:13px;line-height:1.6">
+            将本地已保存的证书批量发布到选定的服务器。支持同时发布到多台服务器。
+          </div>
+        </template>
+      </el-alert>
+      <el-form :model="batchPublishForm" label-width="100px">
+        <el-form-item label="发布域名">
+          <div style="display:flex;align-items:center;gap:10px">
+            <el-tag type="info">{{ batchPublishTargetDomains.length }} 个域名</el-tag>
+            <span style="color:#909399;font-size:12px">{{ selectedDomains.length ? '已勾选' : '当前筛选结果' }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="目标服务器">
+          <el-checkbox-group v-model="batchPublishForm.server_ids">
+            <el-checkbox
+              v-for="s in availableServers"
+              :key="s.id"
+              :value="s.id"
+              :label="s.id"
+              style="display:flex;margin-bottom:6px"
+            >
+              {{ s.name }} ({{ s.ip }})
+              <el-tag v-if="s.is_default === 1" type="warning" size="small" style="margin-left:5px">默认</el-tag>
+            </el-checkbox>
+          </el-checkbox-group>
+          <div style="margin-top:8px">
+            <el-button size="small" @click="selectAllServers">全选</el-button>
+            <el-button size="small" @click="batchPublishForm.server_ids = []">清空</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="目标目录">
+          <el-input v-model="batchPublishForm.target_dir_template" placeholder="/www/certs/{domain}">
+            <template #append>{domain} = 域名</template>
+          </el-input>
+          <div style="margin-top:5px;color:#909399;font-size:12px">
+            使用 {domain} 作为域名占位符，例如: /www/certs/{domain}
+          </div>
+        </el-form-item>
+      </el-form>
+
+      <!-- 发布结果 -->
+      <div v-if="batchPublishLog" class="batch-log-box" style="margin-top:15px">{{ batchPublishLog }}</div>
+      </div>
+
+      <template #footer>
+        <el-button @click="batchPublishDialogVisible = false">关闭</el-button>
+        <el-button type="success" @click="executeBatchPublish" :loading="batchPublishing" :disabled="batchPublishForm.server_ids.length === 0">
+          开始发布
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -340,6 +428,8 @@ const loadingDnsRecords = ref(false)
 const addingDnsRecord = ref(false)
 const currentDomain = ref(null)
 const searchKeyword = ref('')
+const filterTag = ref('')
+const filterStatus = ref('')
 const dnsSearchKeyword = ref('')
 const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [], expire_at: null })
 const selectedDomains = ref([])
@@ -352,6 +442,7 @@ const activeTaskTab = ref('') // 当前激活的任务Tab
 const batchSslPolling = ref(null) // 轮询定时器
 const startingBatchSsl = ref(false)
 const refreshingTask = ref(false)
+const retryingTask = ref(false)
 
 // 当前任务（用于显示）
 const currentBatchTask = computed(() => {
@@ -362,6 +453,13 @@ const currentBatchTask = computed(() => {
 // 是否有正在运行的任务
 const hasRunningTask = computed(() => {
   return batchSslTasks.value.some(t => t.status === 'running' || t.status === 'pending')
+})
+
+// 是否有已完成的任务（可清空）
+const hasCompletedTasks = computed(() => {
+  return batchSslTasks.value.some(t => 
+    t.status === 'completed' || t.status === 'completed_with_errors' || t.status === 'error'
+  )
 })
 
 // 兼容旧代码的batchSsl对象
@@ -389,6 +487,15 @@ const dnsRecords = reactive({ platform: '', records: [] })
 const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
 const dnsCurrentPage = ref(1)
 const dnsPageSize = ref(10)
+
+// 批量发布证书
+const batchPublishDialogVisible = ref(false)
+const batchPublishing = ref(false)
+const batchPublishLog = ref('')
+const batchPublishForm = reactive({
+  server_ids: [],
+  target_dir_template: '/www/certs/{domain}'
+})
 
 const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
 
@@ -423,13 +530,25 @@ function getServerNameByIp(ip) {
 }
 
 const filteredDomains = computed(() => {
-  if (!searchKeyword.value) return dataStore.domains
-  const kw = searchKeyword.value.toLowerCase()
-  return dataStore.domains.filter(d => 
-    d.domain?.toLowerCase().includes(kw) ||
-    d.aliyun_name?.toLowerCase().includes(kw) ||
-    d.tags?.toLowerCase().includes(kw)
-  )
+  let list = dataStore.domains
+  if (filterStatus.value) {
+    list = list.filter(d => d.status === filterStatus.value)
+  }
+  if (searchKeyword.value) {
+    const kw = searchKeyword.value.toLowerCase()
+    list = list.filter(d => 
+      d.domain?.toLowerCase().includes(kw) ||
+      d.aliyun_name?.toLowerCase().includes(kw) ||
+      d.tags?.toLowerCase().includes(kw)
+    )
+  }
+  if (filterTag.value) {
+    list = list.filter(d => {
+      const tags = d.tags ? d.tags.split(',').map(t => t.trim()) : []
+      return tags.includes(filterTag.value)
+    })
+  }
+  return list
 })
 
 const batchTargetDomains = computed(() => selectedDomains.value.length > 0 ? selectedDomains.value : filteredDomains.value)
@@ -551,6 +670,15 @@ async function handleDelete(id) {
   dataStore.loadDomains()
 }
 
+async function toggleDomainStatus(row) {
+  const newStatus = row.status === 'disabled' ? 'active' : 'disabled'
+  const action = newStatus === 'disabled' ? '禁用' : '启用'
+  await ElMessageBox.confirm(`确定${action}域名 ${row.domain}？`, '提示')
+  await api.put(`/dns/domains/${row.id}/status`, { status: newStatus })
+  ElMessage.success(`已${action}`)
+  dataStore.loadDomains()
+}
+
 async function setDefault(row) {
   await api.post(`/dns/domains/${row.id}/set-default`)
   ElMessage.success('已设为默认')
@@ -600,11 +728,29 @@ function openBatchSslDialog() {
 
 async function loadHistoryTasks() {
   try {
-    const res = await api.get('/ssl/batch-jobs?limit=5')
-    // 只加载最近的5个任务
+    const res = await api.get('/ssl/batch-jobs?limit=10')
+    const serverJobIds = new Set(res.map(j => j.job_id))
+    
+    // 移除服务器上已不存在的任务（保留正在运行的本地任务，避免误删刚启动的任务）
+    batchSslTasks.value = batchSslTasks.value.filter(t => 
+      serverJobIds.has(t.job_id) || t.status === 'pending' || t.status === 'running'
+    )
+    
+    // 同步/添加服务器上的任务
     for (const job of res) {
-      // 检查是否已存在
-      if (!batchSslTasks.value.find(t => t.job_id === job.job_id)) {
+      const existing = batchSslTasks.value.find(t => t.job_id === job.job_id)
+      if (existing) {
+        // 更新现有任务的状态
+        Object.assign(existing, {
+          status: job.status,
+          total: job.total,
+          done: job.done,
+          success: job.success,
+          failed: job.failed,
+          updated_at: job.updated_at,
+          finished_at: job.finished_at
+        })
+      } else {
         batchSslTasks.value.push({
           job_id: job.job_id,
           status: job.status,
@@ -619,7 +765,13 @@ async function loadHistoryTasks() {
         })
       }
     }
-    // 如果有任务，默认显示最新的任务
+    
+    // 按创建时间排序（最新的在最后）
+    batchSslTasks.value.sort((a, b) => 
+      new Date(a.created_at || 0) - new Date(b.created_at || 0)
+    )
+    
+    // 如果有任务且当前没有激活的Tab，默认显示最新的任务
     if (batchSslTasks.value.length > 0 && !activeTaskTab.value) {
       activeTaskTab.value = batchSslTasks.value[batchSslTasks.value.length - 1].job_id
       // 加载该任务的详细信息
@@ -634,18 +786,73 @@ function backToNewTask() {
   activeTaskTab.value = ''
 }
 
-function removeTask(jobId) {
-  const index = batchSslTasks.value.findIndex(t => t.job_id === jobId)
-  if (index > -1) {
-    batchSslTasks.value.splice(index, 1)
-    // 如果删除的是当前任务，切换到其他任务或新建页面
-    if (activeTaskTab.value === jobId) {
-      if (batchSslTasks.value.length > 0) {
-        activeTaskTab.value = batchSslTasks.value[batchSslTasks.value.length - 1].job_id
-      } else {
-        activeTaskTab.value = ''
+async function removeTask(jobId) {
+  const task = batchSslTasks.value.find(t => t.job_id === jobId)
+  if (!task) return
+  
+  // 运行中的任务不允许删除
+  if (task.status === 'running' || task.status === 'pending') {
+    ElMessage.warning('任务正在运行中，不能删除')
+    return
+  }
+  
+  try {
+    await ElMessageBox.confirm('确定删除该任务记录？删除后不可恢复', '删除任务', {
+      type: 'warning'
+    })
+  } catch (e) {
+    return
+  }
+  
+  try {
+    await api.delete(`/ssl/batch-issue/${jobId}`)
+    
+    // 从内存中删除
+    const index = batchSslTasks.value.findIndex(t => t.job_id === jobId)
+    if (index > -1) {
+      batchSslTasks.value.splice(index, 1)
+      // 如果删除的是当前任务，切换到其他任务或新建页面
+      if (activeTaskTab.value === jobId) {
+        if (batchSslTasks.value.length > 0) {
+          activeTaskTab.value = batchSslTasks.value[batchSslTasks.value.length - 1].job_id
+        } else {
+          activeTaskTab.value = ''
+        }
       }
     }
+    ElMessage.success('已删除')
+  } catch (err) {
+    ElMessage.error(err.message || '删除失败')
+  }
+}
+
+async function clearCompletedTasks() {
+  try {
+    await ElMessageBox.confirm('确定清空所有已完成的任务？', '清空任务', {
+      type: 'warning'
+    })
+  } catch (e) {
+    return
+  }
+  
+  try {
+    const res = await api.delete('/ssl/batch-jobs/clear')
+    
+    // 从内存中移除已完成的任务
+    batchSslTasks.value = batchSslTasks.value.filter(t => 
+      t.status === 'running' || t.status === 'pending'
+    )
+    
+    // 如果当前激活任务被清空，切换到新建页面
+    if (activeTaskTab.value && !batchSslTasks.value.find(t => t.job_id === activeTaskTab.value)) {
+      activeTaskTab.value = batchSslTasks.value.length > 0 
+        ? batchSslTasks.value[batchSslTasks.value.length - 1].job_id 
+        : ''
+    }
+    
+    ElMessage.success(`已清空 ${res.count || 0} 个任务`)
+  } catch (err) {
+    ElMessage.error(err.message || '清空失败')
   }
 }
 
@@ -732,6 +939,56 @@ async function refreshCurrentTask() {
     ElMessage.error(err.message || '刷新失败')
   } finally {
     refreshingTask.value = false
+  }
+}
+
+// 判断任务是否可重试
+function isTaskRetryable(task) {
+  return task && ['error', 'completed_with_errors'].includes(task.status)
+}
+
+// 重试批量任务
+async function retryBatchTask(task, mode) {
+  const modeText = { remaining: '从中断位置继续', failed: '仅重试失败项', all: '全部重新执行' }
+  try {
+    await ElMessageBox.confirm(`确定${modeText[mode]}？`, '重试任务')
+  } catch (e) {
+    return
+  }
+
+  retryingTask.value = true
+  try {
+    const res = await api.post(`/ssl/batch-issue/${task.job_id}/retry`, {
+      mode,
+      cert_type: batchSslForm.cert_type
+    })
+    
+    // 创建新任务并切换到新任务
+    const newTask = {
+      job_id: res.job_id,
+      status: 'pending',
+      total: res.total || 0,
+      done: 0,
+      success: 0,
+      failed: 0,
+      log: '',
+      results: [],
+      created_at: formatDateTime(new Date())
+    }
+    
+    batchSslTasks.value.push(newTask)
+    activeTaskTab.value = newTask.job_id
+    
+    // 启动轮询
+    stopBatchSslPolling()
+    batchSslPolling.value = setInterval(loadBatchSslJob, 1000)
+    await loadBatchSslJob()
+    
+    ElMessage.success(res.message || '重试任务已启动')
+  } catch (err) {
+    ElMessage.error(err.message || '重试失败')
+  } finally {
+    retryingTask.value = false
   }
 }
 
@@ -874,6 +1131,77 @@ async function toggleDnsRecordStatus(row, status) {
   }
 }
 
+// 批量发布证书相关
+const batchPublishTargetDomains = computed(() => selectedDomains.value.length > 0 ? selectedDomains.value : filteredDomains.value)
+
+function openBatchPublishDialog() {
+  batchPublishLog.value = ''
+  // 收集待发布域名的所有标签
+  const targets = batchPublishTargetDomains.value
+  const domainTags = new Set()
+  for (const d of targets) {
+    if (d.tags) {
+      d.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => domainTags.add(t))
+    }
+  }
+  
+  // 根据域名标签匹配服务器
+  if (domainTags.size > 0) {
+    const matchedServers = availableServers.value.filter(s => {
+      const serverTags = s.tags ? s.tags.split(',').map(t => t.trim()) : []
+      return serverTags.some(t => domainTags.has(t))
+    })
+    batchPublishForm.server_ids = matchedServers.map(s => s.id)
+  } else {
+    // 域名没有标签时，默认选中默认服务器
+    const defaultServer = availableServers.value.find(s => s.is_default === 1)
+    batchPublishForm.server_ids = defaultServer ? [defaultServer.id] : []
+  }
+  batchPublishDialogVisible.value = true
+}
+
+function selectAllServers() {
+  batchPublishForm.server_ids = availableServers.value.map(s => s.id)
+}
+
+async function executeBatchPublish() {
+  const targets = batchPublishTargetDomains.value
+  if (targets.length === 0) {
+    ElMessage.warning('没有可发布的域名')
+    return
+  }
+  if (batchPublishForm.server_ids.length === 0) {
+    ElMessage.warning('请选择目标服务器')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定将 ${targets.length} 个域名的证书发布到 ${batchPublishForm.server_ids.length} 台服务器？`,
+      '批量发布证书'
+    )
+  } catch (e) {
+    return
+  }
+
+  batchPublishing.value = true
+  batchPublishLog.value = ''
+  try {
+    const res = await api.post('/ssl/batch-publish', {
+      domain_ids: targets.map(d => d.id),
+      server_ids: batchPublishForm.server_ids,
+      target_dir_template: batchPublishForm.target_dir_template || '/www/certs/{domain}'
+    })
+    batchPublishLog.value = res.log || ''
+    ElMessage.success(`发布完成: 成功 ${res.success_count} 个, 失败 ${res.failed_count} 个`)
+  } catch (err) {
+    batchPublishLog.value = err.data?.log || err.message || '发布失败'
+    ElMessage.error(err.message || '发布失败')
+  } finally {
+    batchPublishing.value = false
+  }
+}
+
 // 时间格式化函数
 function formatDateTime(dateStr) {
   if (!dateStr) return '-'
@@ -1007,6 +1335,16 @@ function getExpireDaysText(expireAt) {
 
 .batch-ssl-counts .failed {
   color: #f56c6c;
+}
+
+.batch-retry-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: #fef0f0;
+  border-radius: 6px;
+  border: 1px solid #fde2e2;
 }
 
 .batch-log-box {

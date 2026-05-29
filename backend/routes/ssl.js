@@ -382,7 +382,7 @@ const fetchBatchDomains = async (user, domainIds = []) => {
       SELECT d.*, a.access_key, a.secret_key, a.platform
       FROM domains d
       LEFT JOIN aliyun_config a ON d.aliyun_config_id = a.id
-      WHERE d.id IN (${placeholders})${userClause}
+      WHERE d.id IN (${placeholders}) AND (d.status IS NULL OR d.status != 'disabled')${userClause}
       ORDER BY d.id ASC
     `, [...ids, ...userParams]);
   }
@@ -391,7 +391,7 @@ const fetchBatchDomains = async (user, domainIds = []) => {
     SELECT d.*, a.access_key, a.secret_key, a.platform
     FROM domains d
     LEFT JOIN aliyun_config a ON d.aliyun_config_id = a.id
-    WHERE 1 = 1${userClause}
+    WHERE (d.status IS NULL OR d.status != 'disabled')${userClause}
     ORDER BY d.id ASC
   `, userParams);
 };
@@ -696,6 +696,8 @@ router.post('/batch-issue', async (req, res) => {
 
     const job = await createBatchJob(req.user);
     job.total = domains.length;
+    // 存储 cert_type 到数据库
+    await db.run('UPDATE batch_ssl_jobs SET cert_type = ? WHERE job_id = ?', [cert_type || 'letsencrypt', job.id]);
     await appendBatchJobLog(job, `[${formatTime()}] 已创建批量证书任务，等待后台执行\n`);
 
     setImmediate(() => {
@@ -794,6 +796,116 @@ router.get('/batch-issue/:job_id', async (req, res) => {
   }
 });
 
+// 重试批量证书任务（从失败位置继续 / 仅失败项 / 全部重新执行）
+router.post('/batch-issue/:job_id/retry', async (req, res) => {
+  try {
+    const { mode = 'remaining', cert_type } = req.body;
+    // mode: 'remaining' = 从中断位置继续未完成的, 'failed' = 仅重试失败的, 'all' = 全部重新执行
+    
+    // 从数据库加载原任务
+    const dbJob = await db.get('SELECT * FROM batch_ssl_jobs WHERE job_id = ?', [req.params.job_id]);
+    if (!dbJob) {
+      return res.status(404).json({ error: '原任务不存在或已过期' });
+    }
+    
+    // 检查权限
+    if (req.user.role !== 'admin' && dbJob.user_id !== req.user.id) {
+      return res.status(403).json({ error: '无权操作该任务' });
+    }
+    
+    // 解析原任务的结果
+    const oldResults = JSON.parse(dbJob.results || '[]');
+    const successDomains = new Set(oldResults.filter(r => r.success).map(r => r.domain));
+    const failedDomainNames = oldResults.filter(r => !r.success).map(r => r.domain);
+    
+    // 获取原任务涉及的所有域名（从数据库重新查询）
+    let domainIds = [];
+    
+    if (mode === 'failed') {
+      // 仅重试失败的域名
+      if (failedDomainNames.length === 0) {
+        return res.status(400).json({ error: '没有失败的域名需要重试' });
+      }
+      const placeholders = failedDomainNames.map(() => '?').join(',');
+      const failedDomains = await db.all(`
+        SELECT d.*, a.access_key, a.secret_key, a.platform
+        FROM domains d
+        LEFT JOIN aliyun_config a ON d.aliyun_config_id = a.id
+        WHERE d.domain IN (${placeholders})
+      `, failedDomainNames);
+      domainIds = failedDomains.map(d => d.id);
+    } else if (mode === 'remaining') {
+      // 从中断位置继续：重试失败的 + 未处理的
+      // 未处理的 = 原任务 total > done 的部分，即不在 results 中的域名
+      // 需要知道原任务的所有域名ID，但数据库中没有存储 domain_ids
+      // 所以我们用 results 中已成功的域名来排除
+      // 获取所有域名，排除已成功的
+      const allDomains = await fetchBatchDomains(req.user);
+      const retryDomains = allDomains.filter(d => !successDomains.has(d.domain));
+      
+      if (retryDomains.length === 0) {
+        return res.status(400).json({ error: '所有域名都已成功，无需重试' });
+      }
+      domainIds = retryDomains.map(d => d.id);
+    } else {
+      // all: 全部重新执行 - 获取原任务涉及的所有域名
+      const allDomainNames = oldResults.map(r => r.domain);
+      if (allDomainNames.length > 0) {
+        const placeholders = allDomainNames.map(() => '?').join(',');
+        const allDomains = await db.all(`
+          SELECT d.*, a.access_key, a.secret_key, a.platform
+          FROM domains d
+          LEFT JOIN aliyun_config a ON d.aliyun_config_id = a.id
+          WHERE d.domain IN (${placeholders})
+        `, allDomainNames);
+        domainIds = allDomains.map(d => d.id);
+      }
+      
+      if (domainIds.length === 0) {
+        // 如果无法从结果中恢复，获取所有域名
+        const allDomains = await fetchBatchDomains(req.user);
+        domainIds = allDomains.map(d => d.id);
+      }
+    }
+    
+    // 获取要处理的域名
+    const domains = await fetchBatchDomains(req.user, domainIds);
+    if (domains.length === 0) {
+      return res.status(400).json({ error: '没有可重试的域名' });
+    }
+    
+    // 创建新的批量任务
+    const job = await createBatchJob(req.user);
+    job.total = domains.length;
+    
+    const modeText = mode === 'failed' ? '仅失败项' : mode === 'remaining' ? '从中断位置继续' : '全部重新执行';
+    await appendBatchJobLog(job, `[${formatTime()}] 重试任务已创建（${modeText}），原任务: ${req.params.job_id}\n`);
+    await appendBatchJobLog(job, `[${formatTime()}] 待处理域名: ${domains.length} 个\n`);
+    
+    const useCertType = cert_type || dbJob.cert_type || 'letsencrypt';
+    
+    setImmediate(() => {
+      runBatchIssueJob(job, domains, { cert_type: useCertType }).catch(err => {
+        job.status = 'error';
+        job.finished_at = formatTime();
+        job.finished_at_ms = Date.now();
+        appendBatchJobLog(job, `[${formatTime()}] 批量任务异常: ${err.message}\n`);
+        console.error('[SSL Batch] 重试任务异常:', err);
+      });
+    });
+    
+    res.json({
+      success: true,
+      job_id: job.id,
+      total: domains.length,
+      mode,
+      message: `已开始重试 ${domains.length} 个域名（${modeText}）`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 获取用户的所有批量任务列表
 router.get('/batch-jobs', async (req, res) => {
   try {
@@ -835,6 +947,65 @@ router.get('/batch-jobs', async (req, res) => {
       started_at: job.started_at,
       finished_at: job.finished_at
     })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 删除批量任务
+router.delete('/batch-issue/:job_id', async (req, res) => {
+  try {
+    const dbJob = await db.get('SELECT * FROM batch_ssl_jobs WHERE job_id = ?', [req.params.job_id]);
+    if (!dbJob) {
+      return res.status(404).json({ error: '任务不存在' });
+    }
+    
+    // 检查权限
+    if (req.user.role !== 'admin' && dbJob.user_id !== req.user.id) {
+      return res.status(403).json({ error: '无权操作该任务' });
+    }
+    
+    // 不允许删除运行中的任务
+    if (isActiveBatchStatus(dbJob.status)) {
+      // 检查内存中的任务是否真的还在跑
+      const memJob = batchIssueJobs.get(req.params.job_id);
+      if (memJob && isActiveBatchStatus(memJob.status)) {
+        return res.status(400).json({ error: '任务正在运行中，请先等待完成' });
+      }
+    }
+    
+    await db.run('DELETE FROM batch_ssl_jobs WHERE job_id = ?', [req.params.job_id]);
+    batchIssueJobs.delete(req.params.job_id);
+    
+    res.json({ success: true, message: '任务已删除' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 清空已完成的批量任务
+router.delete('/batch-jobs/clear', async (req, res) => {
+  try {
+    const userId = req.user.role === 'admin' ? null : req.user.id;
+    
+    let sql = `DELETE FROM batch_ssl_jobs WHERE status IN ('completed', 'completed_with_errors', 'error')`;
+    const params = [];
+    
+    if (userId) {
+      sql += ' AND user_id = ?';
+      params.push(userId);
+    }
+    
+    const result = await db.run(sql, params);
+    
+    // 同步清理内存
+    for (const [id, job] of batchIssueJobs.entries()) {
+      if (!isActiveBatchStatus(job.status)) {
+        batchIssueJobs.delete(id);
+      }
+    }
+    
+    res.json({ success: true, message: `已清空已完成任务`, count: result.changes || 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1397,6 +1568,117 @@ router.post('/check-all', async (req, res) => {
     }
 
     res.json({ success: true, checked: domains.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量发布证书到多台服务器
+router.post('/batch-publish', async (req, res) => {
+  try {
+    const { domain_ids, server_ids, target_dir_template } = req.body;
+    // domain_ids: 要发布的域名ID列表
+    // server_ids: 目标服务器ID列表（支持多台）
+    // target_dir_template: 目标目录模板，{domain} 会被替换为域名，默认 /www/certs/{domain}
+    
+    if (!domain_ids || !Array.isArray(domain_ids) || domain_ids.length === 0) {
+      return res.status(400).json({ error: '请选择要发布的域名' });
+    }
+    if (!server_ids || !Array.isArray(server_ids) || server_ids.length === 0) {
+      return res.status(400).json({ error: '请选择目标服务器' });
+    }
+    
+    const dirTemplate = target_dir_template || '/www/certs/{domain}';
+    
+    // 获取域名列表
+    const placeholders = domain_ids.map(() => '?').join(',');
+    const domains = await db.all(`SELECT * FROM domains WHERE id IN (${placeholders})`, domain_ids);
+    if (domains.length === 0) {
+      return res.status(400).json({ error: '未找到有效域名' });
+    }
+    
+    // 获取服务器列表
+    const serverPlaceholders = server_ids.map(() => '?').join(',');
+    const servers = await db.all(`SELECT * FROM servers WHERE id IN (${serverPlaceholders}) AND (status IS NULL OR status != 'disabled')`, server_ids);
+    if (servers.length === 0) {
+      return res.status(400).json({ error: '未找到有效服务器' });
+    }
+    
+    const results = [];
+    let log = `[${formatTime()}] 批量发布证书开始\n`;
+    log += `[${formatTime()}] 域名: ${domains.length} 个, 服务器: ${servers.length} 台\n\n`;
+    
+    for (const domain of domains) {
+      log += `========== ${domain.domain} ==========\n`;
+      
+      // 检查本地证书
+      const localCert = await getLocalCertInfo(domain.domain);
+      if (!localCert.stored) {
+        log += `[${formatTime()}] 跳过: 本地证书不存在\n\n`;
+        results.push({ domain: domain.domain, success: false, message: '本地证书不存在', servers: [] });
+        continue;
+      }
+      
+      // 读取证书文件
+      const localPaths = getLocalCertPaths(domain.domain);
+      const fullchainContent = await readTextIfExists(localPaths.fullchain);
+      const keyContent = await readTextIfExists(localPaths.key);
+      const certContent = await readTextIfExists(localPaths.cert);
+      
+      if (!fullchainContent || !keyContent) {
+        log += `[${formatTime()}] 跳过: 本地证书文件不完整\n\n`;
+        results.push({ domain: domain.domain, success: false, message: '本地证书文件不完整', servers: [] });
+        continue;
+      }
+      
+      const serverResults = [];
+      
+      for (const server of servers) {
+        const remoteDir = dirTemplate.replace(/\{domain\}/g, domain.domain);
+        const remotePaths = {
+          dir: remoteDir,
+          fullchain: path.posix.join(remoteDir, `${domain.domain}.fullchain.crt`),
+          key: path.posix.join(remoteDir, `${domain.domain}.key`),
+          cert: path.posix.join(remoteDir, `${domain.domain}.crt`)
+        };
+        
+        try {
+          const sshService = getSshService(server);
+          log += `[${formatTime()}] → ${getServerLabel(server)}: 发布到 ${remoteDir}\n`;
+          
+          await sshService.exec(`sudo mkdir -p ${shellQuote(remoteDir)}`);
+          await writeRemoteFile(sshService, remotePaths.fullchain, fullchainContent, '644');
+          await writeRemoteFile(sshService, remotePaths.key, keyContent, '600');
+          if (certContent) {
+            await writeRemoteFile(sshService, remotePaths.cert, certContent, '644');
+          }
+          
+          log += `[${formatTime()}]   ✓ 发布成功\n`;
+          serverResults.push({ server_id: server.id, server_name: server.name, ip: server.ip, success: true });
+        } catch (err) {
+          log += `[${formatTime()}]   ✗ 发布失败: ${err.message}\n`;
+          serverResults.push({ server_id: server.id, server_name: server.name, ip: server.ip, success: false, message: err.message });
+        }
+      }
+      
+      const allSuccess = serverResults.every(r => r.success);
+      results.push({ domain: domain.domain, success: allSuccess, servers: serverResults });
+      log += '\n';
+    }
+    
+    const totalSuccess = results.filter(r => r.success).length;
+    const totalFailed = results.filter(r => !r.success).length;
+    log += `[${formatTime()}] 批量发布完成: 成功 ${totalSuccess} 个域名, 失败 ${totalFailed} 个域名\n`;
+    
+    res.json({
+      success: true,
+      total: domains.length,
+      servers_count: servers.length,
+      success_count: totalSuccess,
+      failed_count: totalFailed,
+      results,
+      log
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

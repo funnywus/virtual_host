@@ -238,6 +238,22 @@ router.put('/domains/:id', async (req, res) => {
   }
 });
 
+// 更新域名状态（启用/禁用）
+router.put('/domains/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const domainStatus = status === 'disabled' ? 'disabled' : 'active';
+    const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.id]);
+    if (!domain) {
+      return res.status(404).json({ error: '域名不存在' });
+    }
+    await db.run('UPDATE domains SET status = ? WHERE id = ?', [domainStatus, req.params.id]);
+    res.json({ message: domainStatus === 'disabled' ? '已禁用' : '已启用' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 删除主域名
 router.delete('/domains/:id', async (req, res) => {
   try {
@@ -678,7 +694,7 @@ router.post('/subdomains/check-expire', async (req, res) => {
 // 添加子域名并解析DNS
 router.post('/subdomains', async (req, res) => {
   try {
-    const { domain_id, subdomain, server_id, record_type, record_value, ttl, auto_ftp, auto_nginx, nginx_type, duration_days = 31 } = req.body;
+    const { domain_id, subdomain, server_id, record_type, record_value, ttl, auto_ftp, auto_nginx, nginx_type, duration_days = 31, remark } = req.body;
     
     // 获取主域名及其阿里云配置
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [domain_id]);
@@ -700,11 +716,11 @@ router.post('/subdomains', async (req, res) => {
 
     const fullDomain = subdomain === '@' ? domain.domain : `${subdomain}.${domain.domain}`;
 
-    // 创建子域名记录（包含有效期天数）
+    // 创建子域名记录（包含有效期天数和备注）
     const result = await db.run(
-      `INSERT INTO subdomains (domain_id, subdomain, server_id, record_type, record_value, ttl, duration_days, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [domain_id, subdomain, server_id || null, record_type || 'A', finalValue, ttl || 600, duration_days || 31, formatTime()]
+      `INSERT INTO subdomains (domain_id, subdomain, server_id, record_type, record_value, ttl, duration_days, remark, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [domain_id, subdomain, server_id || null, record_type || 'A', finalValue, ttl || 600, duration_days || 31, remark || null, formatTime()]
     );
 
     const subdomainId = result.lastID;
