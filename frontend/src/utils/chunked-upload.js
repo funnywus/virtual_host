@@ -2,6 +2,7 @@
  * 分片上传工具
  * 支持大文件上传、断点续传、并发上传
  */
+import { API_BASE } from '@/config';
 
 const CHUNK_SIZE = 2 * 1024 * 1024; // 每片 2MB
 const MAX_CONCURRENT = 3; // 最大并发数
@@ -28,7 +29,7 @@ export class ChunkedUploader {
   // 初始化上传
   async init() {
     try {
-      const res = await fetch('/api/upload-chunked/init-chunk', {
+      const res = await fetch(`${API_BASE}/api/upload-chunked/init-chunk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,7 +70,7 @@ export class ChunkedUploader {
     formData.append('chunk', chunk);
     
     try {
-      const res = await fetch('/api/upload-chunked/upload-chunk', {
+      const res = await fetch(`${API_BASE}/api/upload-chunked/upload-chunk`, {
         method: 'POST',
         body: formData
       });
@@ -148,7 +149,7 @@ export class ChunkedUploader {
   // 合并分片
   async merge() {
     try {
-      const res = await fetch('/api/upload-chunked/merge-chunks', {
+      const res = await fetch(`${API_BASE}/api/upload-chunked/merge-chunks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uploadId: this.uploadId })
@@ -190,7 +191,7 @@ export class ChunkedUploader {
     
     if (this.uploadId) {
       try {
-        await fetch('/api/upload-chunked/cancel-upload', {
+        await fetch(`${API_BASE}/api/upload-chunked/cancel-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ uploadId: this.uploadId })

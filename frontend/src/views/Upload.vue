@@ -597,6 +597,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
+import { API_BASE } from '@/config'
 
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
@@ -1080,7 +1081,7 @@ const folderInputRef = ref(null)
 const pathParts = computed(() => currentPath.value ? currentPath.value.split('/').filter(p => p) : [])
 
 const api = async (url, data = {}) => {
-  const res = await fetch(`/api/upload${url}`, {
+  const res = await fetch(`${API_BASE}/api/upload${url}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ auth_code: authCode.value, ...data })
@@ -1571,7 +1572,7 @@ const uploadSingleFile = async (item) => {
         })
         xhr.addEventListener('error', () => reject(new Error('网络错误')))
         xhr.addEventListener('abort', () => reject(new Error('上传取消')))
-        xhr.open('POST', '/api/upload/upload-file')
+        xhr.open('POST', `${API_BASE}/api/upload/upload-file`)
         xhr.send(formData)
       })
       

@@ -1684,4 +1684,204 @@ router.post('/batch-publish', async (req, res) => {
   }
 });
 
+// 列出宝塔已有的网站（即 /www/server/panel/vhost/nginx 下的 .conf 文件）
+router.get('/bt-sites/:server_id', async (req, res) => {
+  try {
+    const server = await getServerById(req.params.server_id);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在或已禁用' });
+    }
+    
+    const sshService = getSshService(server);
+    const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+    
+    // 列出所有 .conf 文件
+    const result = await sshService.exec(`ls -1 ${shellQuote(nginxPath)}/*.conf 2>/dev/null | xargs -I{} basename {} .conf`);
+    
+    if (!result.success && !result.output) {
+      return res.json({ sites: [], nginx_path: nginxPath });
+    }
+    
+    const siteNames = (result.output || '').split('\n').map(s => s.trim()).filter(Boolean);
+    
+    // 检查每个站点是否已配置 SSL
+    const sites = [];
+    for (const name of siteNames) {
+      const confPath = `${nginxPath}/${name}.conf`;
+      const sslCheck = await sshService.exec(`grep -l "ssl_certificate" ${shellQuote(confPath)} 2>/dev/null && echo "HAS_SSL" || echo "NO_SSL"`);
+      const hasSsl = sslCheck.output?.includes('HAS_SSL');
+      sites.push({
+        name,
+        config_path: confPath,
+        has_ssl: hasSsl
+      });
+    }
+    
+    res.json({ 
+      sites, 
+      nginx_path: nginxPath,
+      server: { id: server.id, name: server.name, ip: server.ip }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 应用本地证书到宝塔已有网站（替换/插入 SSL 配置）
+router.post('/apply-to-bt-site', async (req, res) => {
+  const startTime = formatTime();
+  let log = `[${startTime}] 开始应用证书到宝塔网站\n`;
+  try {
+    const { domain_id, server_id, site_name, cert_dir, force_https } = req.body;
+    // domain_id: 提供证书的域名（本地必须有该域名的证书）
+    // server_id: 目标服务器
+    // site_name: 宝塔网站名（即 .conf 文件名，不含扩展名）
+    // cert_dir: 证书在服务器上的目录，默认 /www/server/panel/vhost/cert/{site_name}
+    // force_https: 是否强制 HTTPS 跳转
+    
+    if (!domain_id || !server_id || !site_name) {
+      return res.status(400).json({ error: '参数缺失: domain_id, server_id, site_name 必填' });
+    }
+    
+    const domain = await db.get('SELECT * FROM domains WHERE id = ?', [domain_id]);
+    if (!domain) {
+      return res.status(404).json({ error: '证书域名不存在' });
+    }
+    
+    // 检查本地证书
+    const localCert = await getLocalCertInfo(domain.domain);
+    if (!localCert.stored) {
+      log += `[${formatTime()}] 错误: 本地无 ${domain.domain} 的证书\n`;
+      return res.status(400).json({ error: '本地证书不存在，请先申请', log });
+    }
+    
+    const server = await getServerById(server_id);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在或已禁用' });
+    }
+    
+    // 读取证书
+    const localPaths = getLocalCertPaths(domain.domain);
+    const fullchainContent = await readTextIfExists(localPaths.fullchain);
+    const keyContent = await readTextIfExists(localPaths.key);
+    if (!fullchainContent || !keyContent) {
+      return res.status(400).json({ error: '本地证书文件不完整', log });
+    }
+    
+    const sshService = getSshService(server);
+    log += `[${formatTime()}] 服务器: ${getServerLabel(server)}\n`;
+    log += `[${formatTime()}] 网站: ${site_name}\n`;
+    
+    // 发布证书到宝塔约定路径
+    const remoteCertDir = (cert_dir || `/www/server/panel/vhost/cert/${site_name}`).replace(/\/$/, '');
+    const remoteFullchain = `${remoteCertDir}/fullchain.pem`;
+    const remoteKey = `${remoteCertDir}/privkey.pem`;
+    
+    const mkdirResult = await sshService.exec(`sudo mkdir -p ${shellQuote(remoteCertDir)}`);
+    if (!mkdirResult.success) {
+      throw new Error(mkdirResult.output || '创建证书目录失败');
+    }
+    
+    await writeRemoteFile(sshService, remoteFullchain, fullchainContent, '644');
+    log += `[${formatTime()}] ✓ 证书已发布: ${remoteFullchain}\n`;
+    await writeRemoteFile(sshService, remoteKey, keyContent, '600');
+    log += `[${formatTime()}] ✓ 私钥已发布: ${remoteKey}\n`;
+    
+    // 修改网站 nginx 配置
+    const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+    const confPath = `${nginxPath}/${site_name}.conf`;
+    const backupPath = `${confPath}.bak.${Date.now()}`;
+    
+    // 备份原配置
+    const backupResult = await sshService.exec(`sudo cp ${shellQuote(confPath)} ${shellQuote(backupPath)}`);
+    if (!backupResult.success) {
+      log += `[${formatTime()}] 警告: 备份失败 ${backupResult.output}\n`;
+    } else {
+      log += `[${formatTime()}] ✓ 已备份原配置: ${backupPath}\n`;
+    }
+    
+    // 读取现有配置
+    const readResult = await sshService.exec(`sudo cat ${shellQuote(confPath)}`);
+    if (!readResult.success) {
+      return res.status(400).json({ error: '读取网站配置失败: ' + readResult.output, log });
+    }
+    let configContent = readResult.output || '';
+    
+    // 处理 SSL 配置：先移除已有的 ssl_certificate / ssl_certificate_key 行，再插入新的
+    configContent = configContent.replace(/^\s*ssl_certificate\s+[^;]+;\s*$/gm, '');
+    configContent = configContent.replace(/^\s*ssl_certificate_key\s+[^;]+;\s*$/gm, '');
+    
+    // 找到 listen 443 块，注入 SSL 证书路径；如果没有 443 监听，则改造 80 块为 443 + 80 跳转
+    const has443 = /listen\s+443/i.test(configContent);
+    
+    if (has443) {
+      // 在 listen 443 后面插入新的证书配置
+      configContent = configContent.replace(
+        /(listen\s+443[^;]*;\s*\n)/i,
+        `$1    ssl_certificate ${remoteFullchain};\n    ssl_certificate_key ${remoteKey};\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:HIGH:!aNULL:!MD5;\n    ssl_prefer_server_ciphers on;\n`
+      );
+      log += `[${formatTime()}] ✓ 已更新现有 HTTPS 配置\n`;
+    } else {
+      // 没有 443，需要添加 SSL server 块
+      // 提取原有的 server 配置内容（root, location 等），用于复用
+      const serverMatch = configContent.match(/server\s*\{[\s\S]*?\}/);
+      if (!serverMatch) {
+        return res.status(400).json({ error: '无法解析现有 nginx 配置', log });
+      }
+      
+      // 把第一个 server 块的 listen 80 添加 443 ssl
+      configContent = configContent.replace(
+        /(server\s*\{[^}]*?listen\s+)80([^;]*;)/,
+        `$180$2\n    listen 443 ssl http2;\n    ssl_certificate ${remoteFullchain};\n    ssl_certificate_key ${remoteKey};\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:HIGH:!aNULL:!MD5;\n    ssl_prefer_server_ciphers on;`
+      );
+      log += `[${formatTime()}] ✓ 已为 80 端口添加 443 ssl 监听\n`;
+    }
+    
+    // 强制 HTTPS 跳转
+    if (force_https && !configContent.includes('return 301 https://')) {
+      // 在第一个 server 块顶部加入 if 跳转
+      configContent = configContent.replace(
+        /(server\s*\{[^}]*?listen\s+80[^;]*;)/,
+        `$1\n    if ($server_port = 80) { return 301 https://$host$request_uri; }`
+      );
+      log += `[${formatTime()}] ✓ 已开启 HTTPS 强制跳转\n`;
+    }
+    
+    // 写入新配置
+    await writeRemoteFile(sshService, confPath, configContent, '644');
+    log += `[${formatTime()}] ✓ 已写入新配置\n`;
+    
+    // 测试 nginx 配置
+    const testResult = await sshService.exec('sudo nginx -t 2>&1');
+    if (!testResult.output?.includes('successful') && !testResult.success) {
+      // 回滚
+      log += `[${formatTime()}] ✗ Nginx 配置检测失败，开始回滚\n`;
+      log += `--- 错误输出 ---\n${testResult.output}\n--- 输出结束 ---\n`;
+      await sshService.exec(`sudo cp ${shellQuote(backupPath)} ${shellQuote(confPath)}`);
+      log += `[${formatTime()}] ✓ 已回滚到原配置\n`;
+      return res.status(400).json({ error: 'Nginx 配置检测失败，已回滚', log });
+    }
+    log += `[${formatTime()}] ✓ Nginx 配置检测通过\n`;
+    
+    // 重载 nginx
+    const reloadResult = await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
+    log += `[${formatTime()}] ✓ Nginx 已重载\n`;
+    
+    // 清理备份（成功后保留备份还是删除？保留更安全，这里保留）
+    log += `[${formatTime()}] 完成！原配置备份保留在: ${backupPath}\n`;
+    
+    res.json({
+      success: true,
+      message: `证书已应用到 ${site_name}`,
+      site_name,
+      cert_dir: remoteCertDir,
+      backup_path: backupPath,
+      log
+    });
+  } catch (err) {
+    log += `[${formatTime()}] 失败: ${err.message}\n`;
+    res.status(500).json({ error: err.message, log });
+  }
+});
+
 module.exports = router;

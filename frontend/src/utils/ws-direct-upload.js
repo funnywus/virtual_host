@@ -2,6 +2,7 @@
  * WebSocket 直传上传工具
  * 通过 WebSocket 代理实现接近直连的上传速度
  */
+import { WS_BASE } from '@/config';
 
 const CHUNK_SIZE = 512 * 1024; // 每片 512KB（WebSocket 适合较小的分片）
 
@@ -23,9 +24,8 @@ export class WebSocketDirectUploader {
   // 连接到 WebSocket 服务器
   async connect() {
     return new Promise((resolve, reject) => {
-      // 使用当前页面的协议和端口，自动适配开发和生产环境
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws-upload`;
+      // 使用配置的 WS 地址，自动适配开发和生产环境
+      const wsUrl = `${WS_BASE}/ws-upload`;
       console.log(`[WS直传] 连接到: ${wsUrl}`);
       
       this.ws = new WebSocket(wsUrl);

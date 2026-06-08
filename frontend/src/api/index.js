@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { API_BASE } from '@/config'
 
 const api = axios.create({
-  baseURL: 'http://localhost:6002/api',
+  baseURL: `${API_BASE}/api`,
   timeout: 300000  // 5分钟超时，SSL证书申请需要较长时间
 })
 

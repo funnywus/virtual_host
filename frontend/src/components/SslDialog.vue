@@ -74,6 +74,7 @@
     <template #footer>
       <el-button @click="$emit('update:modelValue', false)">关闭</el-button>
       <el-button type="success" @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">发布证书</el-button>
+      <el-button type="info" @click="openApplyBtDialog" :disabled="!sslInfo.local_cert?.stored">应用到宝塔网站</el-button>
       <el-button type="warning" @click="renewCert" :loading="renewing" :disabled="!sslInfo.exists">续期证书</el-button>
       <el-button type="primary" @click="issueCert" :loading="issuing">申请证书</el-button>
     </template>
@@ -171,6 +172,79 @@
         <el-button type="success" @click="publishCert" :loading="publishing">发布</el-button>
       </template>
     </el-dialog>
+
+    <!-- 应用证书到宝塔网站对话框 -->
+    <el-dialog v-model="applyBtDialogVisible" title="应用证书到宝塔网站" width="720px" append-to-body top="5vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:15px">
+        <template #title>
+          <div style="font-size:13px;line-height:1.6">
+            选择目标服务器后，会自动列出宝塔已有的网站。选中需要应用证书的网站，证书会发布到 /www/server/panel/vhost/cert/ 下并自动改写网站 nginx 配置启用 HTTPS。
+          </div>
+        </template>
+      </el-alert>
+      <el-form :model="applyBtForm" label-width="100px">
+        <el-form-item label="目标服务器">
+          <el-select v-model="applyBtForm.server_id" placeholder="选择服务器" style="width:100%" @change="loadBtSites">
+            <el-option
+              v-for="s in servers"
+              :key="s.id"
+              :label="`${s.name || s.ip} (${s.ip})${s.is_default ? ' - 默认' : ''}`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="强制 HTTPS">
+          <el-switch v-model="applyBtForm.force_https" />
+          <span style="margin-left:10px;color:#909399;font-size:12px">开启后访问 HTTP 会自动跳转 HTTPS</span>
+        </el-form-item>
+      </el-form>
+      
+      <div v-if="applyBtForm.server_id" style="margin-top:15px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-weight:600">选择网站 ({{ btSites.length }} 个)</span>
+          <div>
+            <el-input
+              v-model="btSiteKeyword"
+              placeholder="搜索网站..."
+              size="small"
+              clearable
+              style="width:200px;margin-right:8px"
+            />
+            <el-button size="small" @click="loadBtSites" :loading="loadingBtSites">刷新</el-button>
+          </div>
+        </div>
+        <el-table :data="filteredBtSites" stripe max-height="350" v-loading="loadingBtSites" @selection-change="onBtSiteSelectionChange">
+          <el-table-column type="selection" width="44" />
+          <el-table-column prop="name" label="网站域名" min-width="200" />
+          <el-table-column label="当前SSL" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.has_ssl ? 'success' : 'info'" size="small">
+                {{ row.has_ssl ? '已启用' : '未启用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="config_path" label="配置路径" min-width="260" show-overflow-tooltip />
+        </el-table>
+        <div v-if="btSites.length === 0 && !loadingBtSites" style="text-align:center;color:#909399;padding:20px">
+          未找到宝塔网站
+        </div>
+      </div>
+      
+      <!-- 应用日志 -->
+      <div v-if="applyBtLog" class="log-box" style="margin-top:15px;max-height:300px">{{ applyBtLog }}</div>
+      
+      <template #footer>
+        <el-button @click="applyBtDialogVisible = false">关闭</el-button>
+        <el-button 
+          type="primary" 
+          @click="executeApplyBt" 
+          :loading="applyingBt" 
+          :disabled="selectedBtSites.length === 0"
+        >
+          应用到 {{ selectedBtSites.length }} 个网站
+        </el-button>
+      </template>
+    </el-dialog>
   </el-dialog>
 </template>
 
@@ -179,6 +253,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
 import { copyText } from '@/utils'
+import { API_BASE, WS_BASE } from '@/config'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -212,6 +287,25 @@ const certFiles = ref([])
 const certFilesInfo = reactive({ domain: '', stored: false, dir: '', metadata: null })
 const publishDialogVisible = ref(false)
 
+// 应用到宝塔网站
+const applyBtDialogVisible = ref(false)
+const applyingBt = ref(false)
+const loadingBtSites = ref(false)
+const btSites = ref([])
+const selectedBtSites = ref([])
+const btSiteKeyword = ref('')
+const applyBtLog = ref('')
+const applyBtForm = reactive({
+  server_id: '',
+  force_https: true
+})
+
+const filteredBtSites = computed(() => {
+  if (!btSiteKeyword.value) return btSites.value
+  const kw = btSiteKeyword.value.toLowerCase()
+  return btSites.value.filter(s => s.name.toLowerCase().includes(kw))
+})
+
 function scrollLogToBottom() {
   setTimeout(() => {
     const logBox = document.querySelector('.log-box')
@@ -225,8 +319,7 @@ function startSslLogSocket() {
   const token = localStorage.getItem('token')
   if (!token) return
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/api/ws-ssl-log?token=${encodeURIComponent(token)}&domainId=${props.domain.id}`
+  const wsUrl = `${WS_BASE}/api/ws-ssl-log?token=${encodeURIComponent(token)}&domainId=${props.domain.id}`
   const socket = new WebSocket(wsUrl)
 
   socket.onmessage = (event) => {
@@ -396,7 +489,7 @@ async function downloadCert() {
   downloading.value = true
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch(`/api/ssl/download/${props.domain.id}`, {
+    const response = await fetch(`${API_BASE}/api/ssl/download/${props.domain.id}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (!response.ok) throw new Error('下载失败')
@@ -469,6 +562,77 @@ async function publishCert() {
   } finally {
     publishing.value = false
   }
+}
+
+// 应用证书到宝塔网站
+function openApplyBtDialog() {
+  applyBtLog.value = ''
+  btSites.value = []
+  selectedBtSites.value = []
+  btSiteKeyword.value = ''
+  applyBtForm.server_id = defaultServer.value?.id || ''
+  applyBtForm.force_https = true
+  applyBtDialogVisible.value = true
+  if (applyBtForm.server_id) {
+    loadBtSites()
+  }
+}
+
+async function loadBtSites() {
+  if (!applyBtForm.server_id) return
+  loadingBtSites.value = true
+  selectedBtSites.value = []
+  try {
+    const res = await api.get(`/ssl/bt-sites/${applyBtForm.server_id}`)
+    btSites.value = res.sites || []
+  } catch (e) {
+    ElMessage.error(e.message || '加载宝塔网站失败')
+    btSites.value = []
+  } finally {
+    loadingBtSites.value = false
+  }
+}
+
+function onBtSiteSelectionChange(rows) {
+  selectedBtSites.value = rows
+}
+
+async function executeApplyBt() {
+  if (!props.domain) return
+  if (selectedBtSites.value.length === 0) {
+    ElMessage.warning('请选择要应用证书的网站')
+    return
+  }
+  
+  applyingBt.value = true
+  applyBtLog.value = ''
+  let successCount = 0
+  let failedCount = 0
+  
+  for (const site of selectedBtSites.value) {
+    applyBtLog.value += `\n>>> 处理 ${site.name}...\n`
+    try {
+      const res = await api.post('/ssl/apply-to-bt-site', {
+        domain_id: props.domain.id,
+        server_id: applyBtForm.server_id,
+        site_name: site.name,
+        force_https: applyBtForm.force_https
+      })
+      applyBtLog.value += res.log || ''
+      successCount++
+    } catch (e) {
+      const serverLog = e.response?.data?.log
+      applyBtLog.value += serverLog || `错误: ${e.message}\n`
+      failedCount++
+    }
+  }
+  
+  applyBtLog.value += `\n========== 完成: 成功 ${successCount} 个, 失败 ${failedCount} 个 ==========\n`
+  ElMessage.success(`应用完成: 成功 ${successCount} 个, 失败 ${failedCount} 个`)
+  
+  // 刷新宝塔网站列表（更新 has_ssl 状态）
+  await loadBtSites()
+  applyingBt.value = false
 }
 </script>
 
