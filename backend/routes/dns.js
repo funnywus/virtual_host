@@ -536,6 +536,48 @@ router.get('/subdomains', async (req, res) => {
   }
 });
 
+// 获取子域名的 FTP 账号信息（按需查看，不在列表默认返回）
+router.get('/subdomains/:id/ftp-info', async (req, res) => {
+  try {
+    const sub = await db.get(`
+      SELECT s.subdomain, d.domain as main_domain, sv.ip as server_ip, sv.port as ssh_port
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) {
+      return res.status(404).json({ error: '子域名不存在' });
+    }
+
+    const ftp = await db.get(
+      'SELECT username, password, port, home_dir, auth_code, status, sync_status, sync_message FROM ftp_accounts WHERE subdomain_id = ?',
+      [req.params.id]
+    );
+
+    if (!ftp) {
+      return res.json({ has_ftp: false, full_domain: `${sub.subdomain}.${sub.main_domain}` });
+    }
+
+    res.json({
+      has_ftp: true,
+      full_domain: `${sub.subdomain}.${sub.main_domain}`,
+      server_ip: sub.server_ip,
+      username: ftp.username,
+      password: ftp.password,
+      port: ftp.port,
+      home_dir: ftp.home_dir,
+      auth_code: ftp.auth_code,
+      status: ftp.status,
+      sync_status: ftp.sync_status,
+      sync_message: ftp.sync_message
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 更新子域名使用状态
 router.put('/subdomains/:id/status', async (req, res) => {
   try {

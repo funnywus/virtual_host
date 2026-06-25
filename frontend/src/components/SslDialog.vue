@@ -5,10 +5,10 @@
       <el-tag v-if="form.verify_method === 'dns'" type="info" style="margin-right:10px">*.{{ domain.domain }}</el-tag>
       <el-tag :type="getSslStatusType(sslInfo.status)" size="small">{{ getSslStatusText(sslInfo.status) }}</el-tag>
       <el-button type="text" size="small" @click="refreshStatus" :loading="refreshing" style="margin-left:10px">刷新状态</el-button>
-      <el-button type="primary" size="small" plain @click="showCertFiles" :loading="loadingFiles">
+      <el-button type="primary" size="small" @click="showCertFiles" :loading="loadingFiles">
         <el-icon><FolderOpened /></el-icon>证书文件
       </el-button>
-      <el-button type="success" size="small" plain @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">
+      <el-button type="success" size="small" @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">
         <el-icon><Upload /></el-icon>发布证书
       </el-button>
     </div>

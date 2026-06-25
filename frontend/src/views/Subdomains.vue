@@ -107,11 +107,11 @@
             <el-button v-if="row.ftp_auth_code" type="primary" size="small" @click="handleShare(row)">分享</el-button>
             <el-button type="warning" size="small" @click="openRenewDialog(row)">续费</el-button>
             <el-button type="info" size="small" @click="openStatusDialog(row)">状态</el-button>
-          </div>
-          <el-dropdown trigger="click" class="more-actions">
+            <el-dropdown trigger="click" class="more-actions">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="openFtpInfoDialog(row)">FTP 信息</el-dropdown-item>
                 <el-dropdown-item @click="openNginxDialog(row)">Nginx 配置</el-dropdown-item>
                 <el-dropdown-item @click="openRateLimitDialog(row)">限流配置</el-dropdown-item>
                 <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
@@ -122,6 +122,7 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -408,6 +409,48 @@
         >
           确认调整
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- FTP信息对话框 -->
+    <el-dialog v-model="ftpInfoDialogVisible" title="FTP 账号信息" width="480px" append-to-body>
+      <div v-loading="ftpInfoLoading">
+        <template v-if="ftpInfo.has_ftp">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="网站域名">{{ ftpInfo.full_domain }}</el-descriptions-item>
+            <el-descriptions-item label="服务器IP">{{ ftpInfo.server_ip || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="FTP用户名">
+              <span class="ftp-value">{{ ftpInfo.username }}</span>
+              <el-button type="primary" link size="small" @click="copyFtpText(ftpInfo.username)">复制</el-button>
+            </el-descriptions-item>
+            <el-descriptions-item label="FTP密码">
+              <span class="ftp-value">{{ showFtpPassword ? ftpInfo.password : '••••••••' }}</span>
+              <el-button type="primary" link size="small" @click="showFtpPassword = !showFtpPassword">
+                {{ showFtpPassword ? '隐藏' : '显示' }}
+              </el-button>
+              <el-button type="primary" link size="small" @click="copyFtpText(ftpInfo.password)">复制</el-button>
+            </el-descriptions-item>
+            <el-descriptions-item label="端口">{{ ftpInfo.port || 21 }}</el-descriptions-item>
+            <el-descriptions-item label="目录">
+              <span class="ftp-value">{{ ftpInfo.home_dir }}</span>
+              <el-button type="primary" link size="small" @click="copyFtpText(ftpInfo.home_dir)">复制</el-button>
+            </el-descriptions-item>
+            <el-descriptions-item label="授权码">
+              <span class="ftp-value" style="color:#e6a23c;font-weight:bold">{{ ftpInfo.auth_code }}</span>
+              <el-button type="primary" link size="small" @click="copyFtpText(ftpInfo.auth_code)">复制</el-button>
+            </el-descriptions-item>
+            <el-descriptions-item label="同步状态">
+              <el-tag :type="ftpInfo.sync_status === 'synced' ? 'success' : ftpInfo.sync_status === 'error' ? 'danger' : 'warning'" size="small">
+                {{ ftpInfo.sync_status === 'synced' ? '已同步' : ftpInfo.sync_status === 'error' ? '同步失败' : '待同步' }}
+              </el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+        </template>
+        <el-empty v-else-if="!ftpInfoLoading" description="该子域名没有 FTP 账号" />
+      </div>
+      <template #footer>
+        <el-button @click="ftpInfoDialogVisible = false">关闭</el-button>
+        <el-button v-if="ftpInfo.has_ftp" type="primary" @click="copyAllFtpInfo">复制全部</el-button>
       </template>
     </el-dialog>
 
@@ -864,6 +907,22 @@ const remarkForm = reactive({
   remark: ''
 })
 
+// FTP信息相关
+const ftpInfoDialogVisible = ref(false)
+const ftpInfoLoading = ref(false)
+const showFtpPassword = ref(false)
+const ftpInfo = reactive({
+  has_ftp: false,
+  full_domain: '',
+  server_ip: '',
+  username: '',
+  password: '',
+  port: 21,
+  home_dir: '',
+  auth_code: '',
+  sync_status: ''
+})
+
 // 限流配置相关
 const rateLimitDialogVisible = ref(false)
 const rateLimitSaving = ref(false)
@@ -882,6 +941,41 @@ function openRemarkDialog(row) {
   remarkForm.fullDomain = `${row.subdomain}.${row.main_domain}`
   remarkForm.remark = row.remark || ''
   remarkDialogVisible.value = true
+}
+
+async function openFtpInfoDialog(row) {
+  ftpInfoDialogVisible.value = true
+  ftpInfoLoading.value = true
+  showFtpPassword.value = false
+  ftpInfo.has_ftp = false
+  try {
+    const res = await api.get(`/dns/subdomains/${row.id}/ftp-info`)
+    Object.assign(ftpInfo, res)
+  } catch (e) {
+    ElMessage.error(e.message || '获取FTP信息失败')
+  } finally {
+    ftpInfoLoading.value = false
+  }
+}
+
+function copyFtpText(text) {
+  if (!text) return
+  navigator.clipboard.writeText(String(text)).then(() => {
+    ElMessage.success('已复制')
+  }).catch(() => {
+    const textarea = document.createElement('textarea')
+    textarea.value = String(text)
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('已复制')
+  })
+}
+
+function copyAllFtpInfo() {
+  const text = `网站域名：${ftpInfo.full_domain}\n服务器IP：${ftpInfo.server_ip || '-'}\nFTP用户名：${ftpInfo.username}\nFTP密码：${ftpInfo.password}\n端口：${ftpInfo.port || 21}\n目录：${ftpInfo.home_dir}\n授权码：${ftpInfo.auth_code}`
+  copyFtpText(text)
 }
 
 async function handleRemarkSave() {
@@ -1435,7 +1529,8 @@ async function handleRateLimitSave() {
 
 .row-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
 }
 
@@ -1444,7 +1539,13 @@ async function handleRateLimitSave() {
 }
 
 .more-actions {
-  margin-top: 6px;
+  margin-top: 0;
+}
+
+.ftp-value {
+  font-family: monospace;
+  margin-right: 8px;
+  word-break: break-all;
 }
 
 :deep(.el-table) {

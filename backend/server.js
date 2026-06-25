@@ -312,6 +312,11 @@ const PORT = process.env.PORT || 3000;
 // 创建 HTTP 服务器
 const server = http.createServer(app);
 
+// 取消 HTTP server 级别的请求超时限制（Node 18+ requestTimeout 默认 5 分钟会中断大文件上传/合并）
+server.requestTimeout = 0;   // 单个请求最大时长，0 = 永久不超时
+server.timeout = 0;          // socket 空闲超时，0 = 不超时
+server.headersTimeout = 0;   // 接收请求头超时，0 = 不超时
+
 // 启动 WebSocket SFTP 代理
 new WebSocketSFTPProxy(server);
 initSslLogWebSocket(server);

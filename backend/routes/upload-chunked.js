@@ -8,6 +8,14 @@ const SshFtpService = require('../services/ssh-ftp');
 
 const router = express.Router();
 
+// 分片上传相关接口取消超时限制（大文件合并 + SFTP 上传可能耗时很久）
+// setTimeout(0) 表示永久不超时，覆盖全局 30 分钟限制
+router.use((req, res, next) => {
+  req.setTimeout(0);
+  res.setTimeout(0);
+  next();
+});
+
 // 配置 multer 用于分片上传
 const upload = multer({ 
   storage: multer.memoryStorage(),
