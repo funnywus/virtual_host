@@ -28,6 +28,21 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
+// 合并上传任务表（内存）：taskId -> { status, phase, progress, error, filename, ... }
+// status: merging | uploading | completed | error
+const mergeTasks = new Map();
+const MERGE_TASK_TTL = 30 * 60 * 1000; // 完成后保留 30 分钟供前端查询
+
+// 定期清理过期任务，避免内存泄漏
+setInterval(() => {
+  const now = Date.now();
+  for (const [taskId, task] of mergeTasks.entries()) {
+    if (task.finished_at && now - task.finished_at > MERGE_TASK_TTL) {
+      mergeTasks.delete(taskId);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // 检查磁盘空间（返回可用空间，单位：字节）
 function getAvailableDiskSpace() {
   try {
@@ -198,146 +213,190 @@ router.post('/upload-chunk', upload.single('chunk'), async (req, res) => {
 
 // 合并分片并上传到远程服务器
 router.post('/merge-chunks', async (req, res) => {
-  let chunkDir, uploadInfo;
-  
   try {
     const { uploadId } = req.body;
-    
-    console.log(`[合并分片] 开始合并 uploadId: ${uploadId}`);
-    
-    chunkDir = path.join(TEMP_DIR, uploadId);
+
+    console.log(`[合并分片] 收到合并请求 uploadId: ${uploadId}`);
+
+    const chunkDir = path.join(TEMP_DIR, uploadId);
     const infoPath = path.join(chunkDir, 'info.json');
-    
+
     if (!fs.existsSync(infoPath)) {
       console.error(`[合并分片] 错误: 上传会话不存在 - ${uploadId}`);
       return res.status(404).json({ error: '上传会话不存在' });
     }
-    
-    uploadInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-    console.log(`[合并分片] 文件: ${uploadInfo.filename}, 总分片: ${uploadInfo.total_chunks}`);
-    
-    // 检查是否所有分片都已上传
+
+    const uploadInfo = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+
+    // 同步快速校验分片完整性，便于立即反馈错误
     if (uploadInfo.uploaded_chunks.length !== uploadInfo.total_chunks) {
       console.error(`[合并分片] 错误: 分片不完整 ${uploadInfo.uploaded_chunks.length}/${uploadInfo.total_chunks}`);
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: '分片不完整',
         uploaded: uploadInfo.uploaded_chunks.length,
         total: uploadInfo.total_chunks
       });
     }
-    
-    // 使用流式合并，避免内存溢出
-    const mergedPath = path.join(chunkDir, 'merged');
-    console.log(`[合并分片] 开始流式合并到: ${mergedPath}`);
-    
-    await new Promise((resolve, reject) => {
-      const writeStream = fs.createWriteStream(mergedPath);
-      let currentChunk = 0;
-      
-      const writeNextChunk = () => {
-        if (currentChunk >= uploadInfo.total_chunks) {
-          writeStream.end();
-          return;
-        }
-        
-        const chunkPath = path.join(chunkDir, `chunk_${currentChunk}`);
-        
-        if (!fs.existsSync(chunkPath)) {
-          reject(new Error(`分片 ${currentChunk} 不存在`));
-          return;
-        }
-        
-        // 使用流式读取，避免一次性加载到内存
-        const readStream = fs.createReadStream(chunkPath);
-        
-        readStream.on('data', (chunk) => {
-          if (!writeStream.write(chunk)) {
-            readStream.pause();
-          }
-        });
-        
-        readStream.on('end', () => {
-          currentChunk++;
-          console.log(`[合并分片] 已合并 ${currentChunk}/${uploadInfo.total_chunks} 分片`);
-          writeNextChunk();
-        });
-        
-        readStream.on('error', (err) => {
-          reject(new Error(`读取分片 ${currentChunk} 失败: ${err.message}`));
-        });
-        
-        writeStream.on('drain', () => {
-          readStream.resume();
-        });
-      };
-      
-      writeStream.on('finish', () => {
-        console.log(`[合并分片] 合并完成`);
-        resolve();
-      });
-      
-      writeStream.on('error', (err) => {
-        reject(new Error(`写入合并文件失败: ${err.message}`));
-      });
-      
-      writeNextChunk();
+
+    // 创建后台任务，立即返回 taskId，避免长 HTTP 请求被网关超时中断
+    const taskId = crypto.randomBytes(16).toString('hex');
+    mergeTasks.set(taskId, {
+      taskId,
+      uploadId,
+      filename: uploadInfo.filename,
+      status: 'merging',      // merging -> uploading -> completed/error
+      phase: '合并分片中',
+      progress: 0,            // 0-100
+      total_size: uploadInfo.file_size || 0,
+      uploaded_bytes: 0,
+      error: null,
+      created_at: Date.now(),
+      finished_at: null
     });
-    
-    console.log(`[合并分片] 开始上传到远程服务器`);
-    
-    // 上传到远程服务器
-    const sshService = new SshFtpService({
-      ip: uploadInfo.ftp_info.ip,
-      port: uploadInfo.ftp_info.port,
-      username: uploadInfo.ftp_info.username,
-      password: uploadInfo.ftp_info.password
+
+    // 立即响应
+    res.json({ success: true, taskId, message: '已开始后台合并上传' });
+
+    // 后台异步执行合并 + 上传
+    processMergeAndUpload(taskId, chunkDir, uploadInfo).catch(err => {
+      console.error(`[合并分片] 后台任务异常: ${err.message}`, err.stack);
+      const task = mergeTasks.get(taskId);
+      if (task) {
+        task.status = 'error';
+        task.error = err.message;
+        task.finished_at = Date.now();
+      }
+      // 清理临时文件
+      try {
+        if (fs.existsSync(chunkDir)) fs.rmSync(chunkDir, { recursive: true, force: true });
+      } catch (e) {}
     });
-    
-    const targetDir = uploadInfo.dirPath 
-      ? path.join(uploadInfo.ftp_info.home_dir, uploadInfo.dirPath)
-      : uploadInfo.ftp_info.home_dir;
-    
-    const targetFile = path.join(targetDir, uploadInfo.filename);
-    
-    // 创建目录
-    await sshService.exec(`mkdir -p "${targetDir}"`);
-    
-    // 使用流式上传，避免内存溢出
-    console.log(`[合并分片] 开始流式上传到远程服务器`);
-    
-    // 获取文件大小
-    const fileStats = fs.statSync(mergedPath);
-    console.log(`[合并分片] 文件大小: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
-    
-    // 使用流式上传
-    await sshService.uploadFileStream(mergedPath, targetFile);
-    console.log(`[合并分片] 上传完成`);
-    
-    // 设置权限
-    await sshService.exec(`chmod 644 "${targetFile}"`);
-    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www-data:www-data "${targetFile}" 2>/dev/null`);
-    
-    // 清理临时文件
-    console.log(`[合并分片] 清理临时文件`);
-    fs.rmSync(chunkDir, { recursive: true, force: true });
-    
-    console.log(`[合并分片] 完成`);
-    res.json({ success: true, message: '上传成功' });
   } catch (err) {
     console.error(`[合并分片] 错误: ${err.message}`, err.stack);
-    
-    // 清理临时文件
-    if (chunkDir && fs.existsSync(chunkDir)) {
-      try {
-        fs.rmSync(chunkDir, { recursive: true, force: true });
-      } catch (cleanupErr) {
-        console.error(`[合并分片] 清理失败: ${cleanupErr.message}`);
-      }
-    }
-    
     res.status(500).json({ error: '合并上传失败: ' + err.message });
   }
 });
+
+// 查询合并上传任务状态
+router.get('/merge-status/:taskId', (req, res) => {
+  const task = mergeTasks.get(req.params.taskId);
+  if (!task) {
+    return res.status(404).json({ error: '任务不存在或已过期' });
+  }
+  res.json({
+    taskId: task.taskId,
+    status: task.status,
+    phase: task.phase,
+    progress: task.progress,
+    total_size: task.total_size,
+    uploaded_bytes: task.uploaded_bytes,
+    error: task.error,
+    filename: task.filename
+  });
+});
+
+// 后台执行：合并分片 + 流式上传到远程服务器
+async function processMergeAndUpload(taskId, chunkDir, uploadInfo) {
+  const task = mergeTasks.get(taskId);
+  console.log(`[合并分片] 后台开始 taskId: ${taskId}, 文件: ${uploadInfo.filename}`);
+
+  // 1. 流式合并分片
+  const mergedPath = path.join(chunkDir, 'merged');
+  task.status = 'merging';
+  task.phase = '合并分片中';
+
+  await new Promise((resolve, reject) => {
+    const writeStream = fs.createWriteStream(mergedPath);
+    let currentChunk = 0;
+
+    const writeNextChunk = () => {
+      if (currentChunk >= uploadInfo.total_chunks) {
+        writeStream.end();
+        return;
+      }
+
+      const chunkPath = path.join(chunkDir, `chunk_${currentChunk}`);
+      if (!fs.existsSync(chunkPath)) {
+        reject(new Error(`分片 ${currentChunk} 不存在`));
+        return;
+      }
+
+      const readStream = fs.createReadStream(chunkPath);
+      readStream.on('data', (chunk) => {
+        if (!writeStream.write(chunk)) {
+          readStream.pause();
+        }
+      });
+      readStream.on('end', () => {
+        currentChunk++;
+        // 合并占总进度的前 50%
+        task.progress = Math.round((currentChunk / uploadInfo.total_chunks) * 50);
+        writeNextChunk();
+      });
+      readStream.on('error', (err) => {
+        reject(new Error(`读取分片 ${currentChunk} 失败: ${err.message}`));
+      });
+      writeStream.on('drain', () => {
+        readStream.resume();
+      });
+    };
+
+    writeStream.on('finish', () => {
+      console.log(`[合并分片] 合并完成 taskId: ${taskId}`);
+      resolve();
+    });
+    writeStream.on('error', (err) => {
+      reject(new Error(`写入合并文件失败: ${err.message}`));
+    });
+
+    writeNextChunk();
+  });
+
+  // 2. 流式上传到远程服务器
+  task.status = 'uploading';
+  task.phase = '上传到服务器中';
+
+  const sshService = new SshFtpService({
+    ip: uploadInfo.ftp_info.ip,
+    port: uploadInfo.ftp_info.port,
+    username: uploadInfo.ftp_info.username,
+    password: uploadInfo.ftp_info.password
+  });
+
+  const targetDir = uploadInfo.dirPath
+    ? path.posix.join(uploadInfo.ftp_info.home_dir, uploadInfo.dirPath)
+    : uploadInfo.ftp_info.home_dir;
+  const targetFile = path.posix.join(targetDir, uploadInfo.filename);
+
+  await sshService.exec(`mkdir -p "${targetDir}"`);
+
+  const fileStats = fs.statSync(mergedPath);
+  const totalSize = fileStats.size;
+  task.total_size = totalSize;
+  console.log(`[合并分片] 开始上传，文件大小: ${(totalSize / 1024 / 1024).toFixed(2)}MB`);
+
+  await sshService.uploadFileStream(mergedPath, targetFile, (bytesWritten) => {
+    task.uploaded_bytes = bytesWritten;
+    // 上传占总进度的后 50%
+    if (totalSize > 0) {
+      task.progress = 50 + Math.min(50, Math.round((bytesWritten / totalSize) * 50));
+    }
+  });
+  console.log(`[合并分片] 上传完成 taskId: ${taskId}`);
+
+  // 设置权限
+  await sshService.exec(`chmod 644 "${targetFile}"`);
+  await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www-data:www-data "${targetFile}" 2>/dev/null`);
+
+  // 清理临时文件
+  fs.rmSync(chunkDir, { recursive: true, force: true });
+
+  task.status = 'completed';
+  task.phase = '完成';
+  task.progress = 100;
+  task.finished_at = Date.now();
+  console.log(`[合并分片] 任务完成 taskId: ${taskId}`);
+}
 
 // 取消上传
 router.post('/cancel-upload', async (req, res) => {

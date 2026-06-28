@@ -354,11 +354,18 @@
                 <div v-if="item.status === 'error' && item.errorMessage" style="font-size:11px;color:#f56c6c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.errorMessage }}</div>
               </div>
               <span style="color:#909399;font-size:12px;margin:0 10px;white-space:nowrap">{{ formatSize(item.file.size) }}</span>
-              <div v-if="item.status === 'uploading'" style="flex:1;max-width:150px;margin:0 10px">
-                <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" />
+              <div v-if="item.status === 'uploading'" style="flex:1;max-width:220px;margin:0 10px">
+                <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" :status="item.step === 2 ? 'success' : ''" />
+                <div style="font-size:11px;color:#909399;margin-top:2px;display:flex;justify-content:space-between;white-space:nowrap">
+                  <span>
+                    <span style="color:#409eff">[步骤{{ item.step || 1 }}/2]</span>
+                    {{ item.stepLabel }}
+                  </span>
+                  <span v-if="item.step === 1 && item.eta">{{ item.speed }} · 剩余 {{ item.eta }}</span>
+                </div>
               </div>
               <el-tag :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
-                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (shouldUseChunkedUpload(item.file.size) ? (item.progress >= 90 ? '合并中...' : item.progress + '%') : (item.progress >= 50 ? '处理中...' : item.progress + '%')) : '等待' }}
+                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (item.progress + '%') : '等待' }}
               </el-tag>
               <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px"><el-icon><Close /></el-icon></el-button>
               <el-button v-if="item.status === 'uploading' && item.uploader" type="danger" size="small" text @click="cancelUpload(item)" style="margin-left:5px" title="取消上传"><el-icon><Close /></el-icon></el-button>
@@ -1503,6 +1510,15 @@ const uploadSingleFile = async (item) => {
   
   item.status = 'uploading'
   item.progress = 0
+  // 重置进度/速度/步骤相关字段
+  item.step = 1
+  item.stepLabel = '准备中'
+  item.speed = ''
+  item.eta = ''
+  item.serverPhase = ''
+  item.speedRaw = null
+  item._lastTime = null
+  item._lastBytes = 0
   
   try {
     let uploadDir = currentPath.value
@@ -1518,8 +1534,35 @@ const uploadSingleFile = async (item) => {
         authCode: authCode.value,
         path: uploadDir,
         onProgress: (progress) => {
-          // 分片上传进度占 90%，合并占 10%
-          item.progress = Math.round(progress.percentage * 0.9)
+          if (progress.serverPhase) {
+            // 步骤 2：保存到服务器（后端合并 + 上传到目标服务器）
+            item.step = 2
+            item.stepLabel = progress.serverPhase  // 合并分片中 / 上传到服务器中
+            item.progress = progress.serverProgress || 0
+            item.speed = ''
+            item.eta = ''
+          } else {
+            // 步骤 1：上传文件（浏览器 → 后端），真实字节进度 + 实时速度
+            item.step = 1
+            item.stepLabel = '上传文件'
+            item.progress = progress.percentage
+            const now = Date.now()
+            if (item._lastTime != null) {
+              const deltaBytes = progress.loadedBytes - (item._lastBytes || 0)
+              const deltaTime = (now - item._lastTime) / 1000
+              if (deltaTime > 0 && deltaBytes > 0) {
+                const speed = deltaBytes / deltaTime
+                item.speedRaw = item.speedRaw != null
+                  ? item.speedRaw * 0.6 + speed * 0.4
+                  : speed
+                item.speed = formatSize(item.speedRaw) + '/s'
+                const remainBytes = progress.totalBytes - progress.loadedBytes
+                item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
+              }
+            }
+            item._lastTime = now
+            item._lastBytes = progress.loadedBytes
+          }
         },
         onSuccess: () => {
           item.progress = 100
@@ -1553,8 +1596,32 @@ const uploadSingleFile = async (item) => {
         const xhr = new XMLHttpRequest()
         xhr.upload.addEventListener('progress', (e) => {
           if (e.lengthComputable) {
-            // 上传到后端服务器占 50%，后端处理占 50%
-            item.progress = Math.round((e.loaded / e.total) * 50)
+            // 步骤 1：上传文件（浏览器 → 后端）
+            item.step = 1
+            item.stepLabel = '上传文件'
+            item.progress = Math.round((e.loaded / e.total) * 100)
+            const now = Date.now()
+            if (item._lastTime != null) {
+              const deltaBytes = e.loaded - (item._lastBytes || 0)
+              const deltaTime = (now - item._lastTime) / 1000
+              if (deltaTime > 0 && deltaBytes > 0) {
+                const speed = deltaBytes / deltaTime
+                item.speedRaw = item.speedRaw != null ? item.speedRaw * 0.6 + speed * 0.4 : speed
+                item.speed = formatSize(item.speedRaw) + '/s'
+                const remainBytes = e.total - e.loaded
+                item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
+              }
+            }
+            item._lastTime = now
+            item._lastBytes = e.loaded
+            // 上传完毕进入步骤 2：保存到服务器
+            if (e.loaded >= e.total) {
+              item.step = 2
+              item.stepLabel = '保存到服务器中'
+              item.progress = 100
+              item.speed = ''
+              item.eta = ''
+            }
           }
         })
         xhr.addEventListener('load', () => {

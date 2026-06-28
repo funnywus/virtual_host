@@ -32,6 +32,7 @@
           <el-option label="已停用" value="disabled" />
         </el-select>
         <el-checkbox v-model="filterExpiringSoon" size="small" @change="onFilterChange">快过期</el-checkbox>
+        <el-checkbox v-model="filterExpired" size="small" @change="onFilterChange">已过期</el-checkbox>
         <el-dropdown v-if="selectedRows.length > 0" trigger="click">
           <el-button type="warning" size="small">
             批量操作 ({{ selectedRows.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -118,7 +119,7 @@
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
                 <el-dropdown-item v-if="row.use_status !== 'disabled'" @click="handleDisable(row)">停用</el-dropdown-item>
                 <el-dropdown-item v-if="row.use_status === 'disabled'" @click="handleEnable(row)">启用</el-dropdown-item>
-                <el-dropdown-item divided @click="handleDelete(row.id)" style="color:#f56c6c">删除</el-dropdown-item>
+                <el-dropdown-item divided @click="handleDelete(row)" style="color:#f56c6c">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -412,6 +413,32 @@
       </template>
     </el-dialog>
 
+    <!-- 删除选项对话框 -->
+    <el-dialog v-model="deleteDialogVisible" title="删除子域名" width="460px" append-to-body>
+      <div style="margin-bottom:15px">
+        <el-alert type="warning" :closable="false">
+          <template #title>
+            <span style="font-size:13px">
+              即将删除 <strong style="color:#f56c6c">{{ deleteForm.rows.length }}</strong> 个子域名，将同时删除 <strong>DNS 解析记录</strong> 和子域名记录，此操作不可恢复。
+            </span>
+          </template>
+        </el-alert>
+      </div>
+      <div style="margin-bottom:10px;color:#606266;font-size:13px">可选清理服务器上的残留资源：</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <el-checkbox v-model="deleteForm.delete_ftp">
+          删除服务器上的 FTP 账号（系统用户）
+        </el-checkbox>
+        <el-checkbox v-model="deleteForm.delete_files">
+          <span style="color:#f56c6c">删除网站文件（rm -rf 网站目录，不可恢复）</span>
+        </el-checkbox>
+      </div>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="confirmDelete" :loading="deleting">确认删除</el-button>
+      </template>
+    </el-dialog>
+
     <!-- FTP信息对话框 -->
     <el-dialog v-model="ftpInfoDialogVisible" title="FTP 账号信息" width="480px" append-to-body>
       <div v-loading="ftpInfoLoading">
@@ -651,6 +678,16 @@ const searchTimer = ref(null)
 const filterServerId = ref(null)
 const filterStatus = ref('')
 const filterExpiringSoon = ref(false)
+const filterExpired = ref(false)
+
+// 删除选项对话框
+const deleteDialogVisible = ref(false)
+const deleting = ref(false)
+const deleteForm = reactive({
+  rows: [],
+  delete_ftp: false,
+  delete_files: false
+})
 const currentPage = ref(1)
 const pageSize = ref(10)
 const selectedRows = ref([])
@@ -1093,22 +1130,47 @@ async function handleBatchAdjustDuration(duration) {
   }
 }
 
-async function batchDelete() {
+function batchDelete() {
   if (selectedRows.value.length === 0) return
-  await ElMessageBox.confirm(`确定删除 ${selectedRows.value.length} 个子域名？此操作不可恢复！`, '批量删除', { type: 'warning' })
-  
-  let success = 0, failed = 0
-  for (const row of selectedRows.value) {
-    try {
-      await api.delete(`/dns/subdomains/${row.id}`)
-      success++
-    } catch (e) {
-      failed++
+  openDeleteDialog(selectedRows.value)
+}
+
+// 打开删除选项对话框（单个/批量共用）
+function openDeleteDialog(rows) {
+  deleteForm.rows = rows
+  deleteForm.delete_ftp = false
+  deleteForm.delete_files = false
+  deleteDialogVisible.value = true
+}
+
+// 执行删除
+async function confirmDelete() {
+  const rows = deleteForm.rows
+  if (!rows || rows.length === 0) return
+
+  deleting.value = true
+  try {
+    if (rows.length === 1) {
+      await api.delete(`/dns/subdomains/${rows[0].id}`, {
+        data: { delete_ftp: deleteForm.delete_ftp, delete_files: deleteForm.delete_files }
+      })
+      ElMessage.success('删除成功')
+    } else {
+      const res = await api.post('/dns/subdomains/batch-delete', {
+        ids: rows.map(r => r.id),
+        delete_ftp: deleteForm.delete_ftp,
+        delete_files: deleteForm.delete_files
+      })
+      ElMessage.success(`删除完成: 成功 ${res.success} 个, 失败 ${res.failed} 个`)
     }
+    deleteDialogVisible.value = false
+    selectedRows.value = []
+    loadData()
+  } catch (e) {
+    ElMessage.error(e.message || '删除失败')
+  } finally {
+    deleting.value = false
   }
-  ElMessage.success(`删除完成: 成功${success}个, 失败${failed}个`)
-  selectedRows.value = []
-  loadData()
 }
 
 const form = reactive({
@@ -1161,6 +1223,7 @@ async function loadData() {
       server_id: filterServerId.value,
       use_status: filterStatus.value,
       expiring_soon: filterExpiringSoon.value,
+      expired: filterExpired.value,
       keyword: searchKeyword.value.trim()
     })
   } finally {
@@ -1272,11 +1335,8 @@ async function handleSave() {
   }
 }
 
-async function handleDelete(id) {
-  await ElMessageBox.confirm('删除子域名将同时删除关联的FTP账号和Nginx配置，确定？', '提示')
-  await api.delete(`/dns/subdomains/${id}`)
-  ElMessage.success('删除成功')
-  loadData()
+function handleDelete(row) {
+  openDeleteDialog([row])
 }
 
 async function handleBatchCreate() {

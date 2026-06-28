@@ -16,6 +16,11 @@ function formatTime(date = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// shell 参数转义，防止命令注入
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 // 根据平台获取DNS服务实例
 function getDnsService(platform, accessKey, secretKey) {
   switch (platform) {
@@ -457,7 +462,7 @@ router.post('/batch-create', async (req, res) => {
 // 获取子域名列表
 router.get('/subdomains', async (req, res) => {
   try {
-    const { domain_id, server_id, use_status, expiring_soon, keyword, page = 1, pageSize = 20 } = req.query;
+    const { domain_id, server_id, use_status, expiring_soon, expired, keyword, page = 1, pageSize = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(pageSize);
     
     const whereParts = [];
@@ -487,6 +492,11 @@ router.get('/subdomains', async (req, res) => {
       soon.setDate(soon.getDate() + 5);
       whereParts.push('s.expire_at IS NOT NULL AND s.expire_at >= ? AND s.expire_at < ?');
       params.push(now, formatTime(soon));
+    }
+
+    if (expired === '1' || expired === 'true') {
+      whereParts.push('s.expire_at IS NOT NULL AND s.expire_at < ?');
+      params.push(formatTime());
     }
 
     if (keyword && keyword.trim()) {
@@ -1031,36 +1041,134 @@ router.put('/subdomains/:id', async (req, res) => {
   }
 });
 
-// 删除子域名
+// 删除子域名（可选清理服务器上的 FTP 用户和网站文件）
+// body: { delete_ftp: bool, delete_files: bool }
 router.delete('/subdomains/:id', async (req, res) => {
   try {
-    const sub = await db.get(`
-      SELECT s.*, d.domain as main_domain, ac.access_key, ac.secret_key, ac.platform 
-      FROM subdomains s 
-      LEFT JOIN domains d ON s.domain_id = d.id 
-      LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id 
-      WHERE s.id = ?
-    `, [req.params.id]);
-    
-    if (sub && sub.aliyun_record_id && sub.access_key && sub.secret_key) {
-      const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
-      try { 
-        if (sub.platform === 'tencent') {
-          await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
-        } else {
-          await dns.deleteRecord(sub.aliyun_record_id);
-        }
-      } catch (e) {}
-    }
-    
-    // 删除关联的FTP账号
-    await db.run('DELETE FROM ftp_accounts WHERE subdomain_id = ?', [req.params.id]);
-    await db.run('DELETE FROM subdomains WHERE id = ?', [req.params.id]);
-    res.json({ message: 'Subdomain deleted' });
+    const { delete_ftp, delete_files } = req.body || {};
+    const result = await deleteSubdomainWithResources(req.params.id, { delete_ftp, delete_files });
+    res.json({ message: 'Subdomain deleted', ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// 批量删除子域名（可选清理 FTP 用户和网站文件）
+// body: { ids: [], delete_ftp: bool, delete_files: bool }
+router.post('/subdomains/batch-delete', async (req, res) => {
+  try {
+    const { ids, delete_ftp, delete_files } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请选择要删除的子域名' });
+    }
+
+    let success = 0;
+    let failed = 0;
+    const results = [];
+
+    for (const id of ids) {
+      try {
+        const result = await deleteSubdomainWithResources(id, { delete_ftp, delete_files });
+        success++;
+        results.push({ id, success: true, ...result });
+      } catch (e) {
+        failed++;
+        results.push({ id, success: false, error: e.message });
+      }
+    }
+
+    res.json({ total: ids.length, success, failed, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 删除子域名及其资源的核心逻辑（供单个/批量复用）
+async function deleteSubdomainWithResources(subdomainId, options = {}) {
+  const { delete_ftp = false, delete_files = false } = options;
+  const cleanup = { dns: false, ftp: false, files: false };
+  const warnings = [];
+
+  // 获取子域名 + 域名DNS配置 + 服务器信息
+  const sub = await db.get(`
+    SELECT s.*, d.domain as main_domain,
+           ac.access_key, ac.secret_key, ac.platform,
+           sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
+    FROM subdomains s
+    LEFT JOIN domains d ON s.domain_id = d.id
+    LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id
+    LEFT JOIN servers sv ON s.server_id = sv.id
+    WHERE s.id = ?
+  `, [subdomainId]);
+
+  if (!sub) {
+    throw new Error('子域名不存在');
+  }
+
+  // 获取 FTP 账号信息
+  const ftp = await db.get('SELECT username, home_dir FROM ftp_accounts WHERE subdomain_id = ?', [subdomainId]);
+
+  // 1. 删除 DNS 解析记录（必做）
+  if (sub.aliyun_record_id && sub.access_key && sub.secret_key) {
+    try {
+      const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
+      if (sub.platform === 'tencent') {
+        await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
+      } else {
+        await dns.deleteRecord(sub.aliyun_record_id);
+      }
+      cleanup.dns = true;
+    } catch (e) {
+      warnings.push(`DNS记录删除失败: ${e.message}`);
+    }
+  }
+
+  // 2. 可选：删除服务器上的 FTP 用户 / 网站文件
+  if ((delete_ftp || delete_files) && sub.server_ip) {
+    const SshFtpService = require('../services/ssh-ftp');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: sub.server_pass
+    });
+
+    if (delete_ftp && ftp?.username) {
+      try {
+        await sshService.deleteFtpUser(ftp.username);
+        cleanup.ftp = true;
+      } catch (e) {
+        warnings.push(`FTP用户删除失败: ${e.message}`);
+      }
+    }
+
+    if (delete_files && ftp?.home_dir) {
+      // 安全校验：只允许删除预期的网站目录，避免误删系统目录
+      const homeDir = String(ftp.home_dir).trim();
+      const isSafePath = homeDir.startsWith('/www/wwwroot/') && homeDir.length > '/www/wwwroot/'.length;
+      if (!isSafePath) {
+        warnings.push(`网站文件未删除: 目录路径不安全 (${homeDir})`);
+      } else {
+        try {
+          const rmResult = await sshService.exec(`rm -rf ${shellQuote(homeDir)}`);
+          if (rmResult.success) {
+            cleanup.files = true;
+          } else {
+            warnings.push(`网站文件删除失败: ${rmResult.output || '未知错误'}`);
+          }
+        } catch (e) {
+          warnings.push(`网站文件删除失败: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  // 3. 删除数据库记录（必做）
+  await db.run('DELETE FROM ftp_accounts WHERE subdomain_id = ?', [subdomainId]);
+  await db.run('DELETE FROM subdomains WHERE id = ?', [subdomainId]);
+
+  return { cleanup, warnings };
+}
 
 // ========== DNS平台配置（多个厂商） ==========
 

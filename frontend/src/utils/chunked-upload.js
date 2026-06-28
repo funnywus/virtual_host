@@ -17,6 +17,8 @@ export class ChunkedUploader {
     
     this.totalChunks = Math.ceil(file.size / this.chunkSize);
     this.uploadedChunks = [];
+    this.uploadedBytes = 0;        // 已成功上传的字节数（用于真实进度和速度）
+    this.totalBytes = file.size;   // 文件总字节数
     this.uploadId = null;
     this.aborted = false;
     
@@ -83,10 +85,13 @@ export class ChunkedUploader {
       const data = await res.json();
       
       this.uploadedChunks.push(chunkIndex);
+      this.uploadedBytes += (end - start);  // 累加该分片实际字节数
       this.onProgress({
         uploaded: this.uploadedChunks.length,
         total: this.totalChunks,
-        percentage: Math.round((this.uploadedChunks.length / this.totalChunks) * 100)
+        loadedBytes: this.uploadedBytes,
+        totalBytes: this.totalBytes,
+        percentage: Math.min(100, Math.round((this.uploadedBytes / this.totalBytes) * 100))
       });
       
       return data;
@@ -146,27 +151,92 @@ export class ChunkedUploader {
     }
   }
   
-  // 合并分片
+  // 合并分片（异步：发起合并任务后轮询进度，避免长 HTTP 请求被网关超时中断）
   async merge() {
     try {
+      // 1. 发起合并任务，立即拿到 taskId
       const res = await fetch(`${API_BASE}/api/upload-chunked/merge-chunks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uploadId: this.uploadId })
       });
-      
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
         throw new Error(data.error || '合并分片失败');
       }
-      
-      const data = await res.json();
-      this.onSuccess(data);
-      return data;
+
+      const { taskId } = await res.json();
+      if (!taskId) {
+        throw new Error('未获取到合并任务ID');
+      }
+
+      // 2. 轮询任务状态直到完成或失败
+      const result = await this.pollMergeStatus(taskId);
+      this.onSuccess(result);
+      return result;
     } catch (err) {
       const errorMsg = err.message || '合并分片失败';
       this.onError(new Error(errorMsg));
       throw new Error(errorMsg);
+    }
+  }
+
+  // 轮询合并上传任务进度
+  async pollMergeStatus(taskId) {
+    const POLL_INTERVAL = 2000;     // 每 2 秒查询一次
+    const MAX_FAILURES = 5;         // 连续查询失败容忍次数（应对短暂网络抖动）
+    let consecutiveFailures = 0;
+
+    while (true) {
+      if (this.aborted) {
+        throw new Error('上传已取消');
+      }
+
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+
+      let statusRes;
+      try {
+        statusRes = await fetch(`${API_BASE}/api/upload-chunked/merge-status/${taskId}`);
+      } catch (e) {
+        // 网络抖动，重试
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES) {
+          throw new Error('无法获取合并进度，请检查网络');
+        }
+        continue;
+      }
+
+      if (!statusRes.ok) {
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES) {
+          const data = await statusRes.json().catch(() => ({}));
+          throw new Error(data.error || '合并任务已丢失');
+        }
+        continue;
+      }
+
+      consecutiveFailures = 0;
+      const status = await statusRes.json();
+
+      // 上报服务器处理进度（合并/上传阶段），phase 标记进入服务器处理
+      this.onProgress({
+        uploaded: this.totalChunks,
+        total: this.totalChunks,
+        loadedBytes: this.totalBytes,
+        totalBytes: this.totalBytes,
+        percentage: 100,
+        serverPhase: status.phase,
+        serverProgress: status.progress
+      });
+
+      if (status.status === 'completed') {
+        return { success: true, message: '上传成功' };
+      }
+      if (status.status === 'error') {
+        throw new Error(status.error || '服务器合并上传失败');
+      }
+      // merging / uploading 继续轮询
     }
   }
   

@@ -332,13 +332,16 @@ EOF'`);
         port: this.server.port || 22,
         username: this.server.username,
         password: this.server.password,
-        readyTimeout: 30000
+        readyTimeout: 30000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 360
       });
     });
   }
 
   // SFTP流式上传文件（避免内存溢出，适合大文件）
-  uploadFileStream(localPath, remotePath) {
+  // onProgress(bytesWritten) 可选，用于实时上报上传进度
+  uploadFileStream(localPath, remotePath, onProgress) {
     return new Promise((resolve, reject) => {
       const fs = require('fs');
       const conn = new Client();
@@ -352,10 +355,11 @@ EOF'`);
 
           const readStream = fs.createReadStream(localPath);
           const writeStream = sftp.createWriteStream(remotePath);
-          
+          let bytesWritten = 0;
+
           writeStream.on('close', () => {
             conn.end();
-            resolve({ success: true, message: '上传成功' });
+            resolve({ success: true, message: '上传成功', bytesWritten });
           });
 
           writeStream.on('error', (err) => {
@@ -366,6 +370,14 @@ EOF'`);
           readStream.on('error', (err) => {
             conn.end();
             reject(err);
+          });
+
+          // 统计已传输字节并上报进度
+          readStream.on('data', (chunk) => {
+            bytesWritten += chunk.length;
+            if (typeof onProgress === 'function') {
+              onProgress(bytesWritten);
+            }
           });
 
           // 流式传输
@@ -382,7 +394,9 @@ EOF'`);
         port: this.server.port || 22,
         username: this.server.username,
         password: this.server.password,
-        readyTimeout: 30000
+        readyTimeout: 30000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 360
       });
     });
   }

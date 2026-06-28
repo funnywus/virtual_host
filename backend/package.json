@@ -8,6 +8,25 @@
     "dev": "nodemon --max-old-space-size=2048 server.js",
     "create-admin": "node scripts/init-admin.js"
   },
+  "nodemonConfig": {
+    "watch": [
+      "server.js",
+      "routes",
+      "services",
+      "db",
+      "middleware",
+      "scripts"
+    ],
+    "ext": "js,json",
+    "ignore": [
+      "temp/",
+      "uploads/",
+      "data/",
+      "public/",
+      "*.db",
+      "*.sqlite"
+    ]
+  },
   "dependencies": {
     "aliyun-sdk": "^1.11.12",
     "archiver": "^7.0.1",

@@ -23,6 +23,7 @@ export const useDataStore = defineStore('data', () => {
     if (filters.server_id) url += `&server_id=${filters.server_id}`
     if (filters.use_status) url += `&use_status=${filters.use_status}`
     if (filters.expiring_soon) url += '&expiring_soon=1'
+    if (filters.expired) url += '&expired=1'
     if (filters.keyword) url += `&keyword=${encodeURIComponent(filters.keyword)}`
     const res = await api.get(url)
     subdomains.value = res.list || []
