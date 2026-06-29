@@ -358,7 +358,7 @@
                 <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" :status="item.step === 2 ? 'success' : ''" />
                 <div style="font-size:11px;color:#909399;margin-top:2px;display:flex;justify-content:space-between;white-space:nowrap">
                   <span>
-                    <span style="color:#409eff">[步骤{{ item.step || 1 }}/2]</span>
+                    <span style="color:#409eff">[步骤{{ item.step || 1 }}/{{ item.totalSteps || 2 }}]</span>
                     {{ item.stepLabel }}
                   </span>
                   <span v-if="item.step === 1 && item.eta">{{ item.speed }} · 剩余 {{ item.eta }}</span>
@@ -603,7 +603,8 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
-import { ChunkedUploader, shouldUseChunkedUpload } from '@/utils/chunked-upload'
+import { ChunkedUploader } from '@/utils/chunked-upload'
+import { PhpDirectUploader } from '@/utils/php-direct-upload'
 import { API_BASE } from '@/config'
 
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
@@ -612,6 +613,9 @@ const verifying = ref(false)
 const domain = ref('')
 const homeDir = ref('')
 const maxUploadSize = ref(209715200)
+// PHP 直传配置
+const directConfig = ref(null)
+const directUploadOk = ref(false)
 const usedSize = ref(0)
 const expireAt = ref(null)
 const remainingDays = ref(null)
@@ -1112,7 +1116,29 @@ const verifyAuth = async () => {
   authorized.value = true
   localStorage.setItem('upload_auth_code', authCode.value)
   await loadFiles()
+  // 加载 PHP 直传配置（失败则自动回退到 Node 中转上传）
+  await loadDirectUploadConfig()
   verifying.value = false
+}
+
+// 获取并探测 PHP 直传配置
+const loadDirectUploadConfig = async () => {
+  directUploadOk.value = false
+  directConfig.value = null
+  try {
+    const cfg = await api('/direct-config')
+    // 探测目标站点 upload.php 是否就绪
+    const ok = await PhpDirectUploader.probe(cfg.domain)
+    if (ok) {
+      directConfig.value = cfg
+      directUploadOk.value = true
+      console.log('[直传] PHP 直传可用')
+    } else {
+      console.log('[直传] upload.php 未就绪，回退中转上传')
+    }
+  } catch (e) {
+    console.log('[直传] 获取直传配置失败，回退中转上传:', e.message)
+  }
 }
 
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
@@ -1504,6 +1530,24 @@ const startUpload = async () => {
   }
 }
 
+// 统一计算上传速度和剩余时间
+const updateItemSpeed = (item, loadedBytes, totalBytes) => {
+  const now = Date.now()
+  if (item._lastTime != null) {
+    const deltaBytes = loadedBytes - (item._lastBytes || 0)
+    const deltaTime = (now - item._lastTime) / 1000
+    if (deltaTime > 0 && deltaBytes > 0) {
+      const speed = deltaBytes / deltaTime
+      item.speedRaw = item.speedRaw != null ? item.speedRaw * 0.6 + speed * 0.4 : speed
+      item.speed = formatSize(item.speedRaw) + '/s'
+      const remainBytes = totalBytes - loadedBytes
+      item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
+    }
+  }
+  item._lastTime = now
+  item._lastBytes = loadedBytes
+}
+
 // 上传单个文件（提取出来以支持并发）
 const uploadSingleFile = async (item) => {
   if (item.status !== 'pending') return
@@ -1512,6 +1556,7 @@ const uploadSingleFile = async (item) => {
   item.progress = 0
   // 重置进度/速度/步骤相关字段
   item.step = 1
+  item.totalSteps = 2
   item.stepLabel = '准备中'
   item.speed = ''
   item.eta = ''
@@ -1527,126 +1572,71 @@ const uploadSingleFile = async (item) => {
     const fileName = pathParts.pop()
     if (pathParts.length > 0) uploadDir = currentPath.value ? currentPath.value + '/' + pathParts.join('/') : pathParts.join('/')
     
-    // 判断是否使用分片上传（大于 5MB）
-    if (shouldUseChunkedUpload(item.file.size)) {
-      // 使用分片上传
+    // 三种上传方式封装
+    // 中转分片上传（浏览器→后端→目标服务器）
+    const runChunked = async () => {
+      item.totalSteps = 2
       const uploader = new ChunkedUploader(item.file, {
         authCode: authCode.value,
         path: uploadDir,
         onProgress: (progress) => {
           if (progress.serverPhase) {
-            // 步骤 2：保存到服务器（后端合并 + 上传到目标服务器）
             item.step = 2
-            item.stepLabel = progress.serverPhase  // 合并分片中 / 上传到服务器中
+            item.stepLabel = progress.serverPhase
             item.progress = progress.serverProgress || 0
             item.speed = ''
             item.eta = ''
           } else {
-            // 步骤 1：上传文件（浏览器 → 后端），真实字节进度 + 实时速度
             item.step = 1
             item.stepLabel = '上传文件'
             item.progress = progress.percentage
-            const now = Date.now()
-            if (item._lastTime != null) {
-              const deltaBytes = progress.loadedBytes - (item._lastBytes || 0)
-              const deltaTime = (now - item._lastTime) / 1000
-              if (deltaTime > 0 && deltaBytes > 0) {
-                const speed = deltaBytes / deltaTime
-                item.speedRaw = item.speedRaw != null
-                  ? item.speedRaw * 0.6 + speed * 0.4
-                  : speed
-                item.speed = formatSize(item.speedRaw) + '/s'
-                const remainBytes = progress.totalBytes - progress.loadedBytes
-                item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
-              }
-            }
-            item._lastTime = now
-            item._lastBytes = progress.loadedBytes
+            updateItemSpeed(item, progress.loadedBytes, progress.totalBytes)
           }
         },
-        onSuccess: () => {
-          item.progress = 100
-        },
-        onError: (err) => {
-          console.error('分片上传失败:', err)
-          item.errorMessage = err.message || '分片上传失败'
-        }
+        onSuccess: () => { item.progress = 100 },
+        onError: (err) => { console.error('分片上传失败:', err) }
       })
-      
-      // 保存 uploader 实例以便取消
       item.uploader = uploader
-      
+      await uploader.start()
+    }
+
+    // 统一使用分片上传（不区分大小）：优先 PHP 直传，失败自动回退中转分片
+    if (directUploadOk.value) {
       try {
+        item.totalSteps = 1
+        const uploader = new PhpDirectUploader(item.file, {
+          domain: directConfig.value.domain,
+          token: directConfig.value.token,
+          expires: directConfig.value.expires,
+          path: uploadDir,
+          onProgress: (progress) => {
+            item.step = 1
+            item.stepLabel = '直传到服务器'
+            item.progress = progress.percentage
+            updateItemSpeed(item, progress.loadedBytes, progress.totalBytes)
+          },
+          onError: (err) => { console.error('直传失败:', err) }
+        })
+        item.uploader = uploader
         await uploader.start()
-        item.status = 'done'
-        item.progress = 100
-        usedSize.value += item.file.size
       } catch (err) {
-        throw new Error(`分片上传失败: ${err.message}`)
+        console.warn('直传失败，自动回退中转上传:', err.message)
+        // 重置进度后回退
+        item.progress = 0
+        item.speed = ''
+        item.eta = ''
+        item.speedRaw = null
+        item._lastTime = null
+        item._lastBytes = 0
+        await runChunked()
       }
     } else {
-      // 使用普通上传（小文件）
-      const formData = new FormData()
-      formData.append('auth_code', authCode.value)
-      formData.append('path', uploadDir)
-      formData.append('filename', fileName)
-      formData.append('file', item.file)
-      
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            // 步骤 1：上传文件（浏览器 → 后端）
-            item.step = 1
-            item.stepLabel = '上传文件'
-            item.progress = Math.round((e.loaded / e.total) * 100)
-            const now = Date.now()
-            if (item._lastTime != null) {
-              const deltaBytes = e.loaded - (item._lastBytes || 0)
-              const deltaTime = (now - item._lastTime) / 1000
-              if (deltaTime > 0 && deltaBytes > 0) {
-                const speed = deltaBytes / deltaTime
-                item.speedRaw = item.speedRaw != null ? item.speedRaw * 0.6 + speed * 0.4 : speed
-                item.speed = formatSize(item.speedRaw) + '/s'
-                const remainBytes = e.total - e.loaded
-                item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
-              }
-            }
-            item._lastTime = now
-            item._lastBytes = e.loaded
-            // 上传完毕进入步骤 2：保存到服务器
-            if (e.loaded >= e.total) {
-              item.step = 2
-              item.stepLabel = '保存到服务器中'
-              item.progress = 100
-              item.speed = ''
-              item.eta = ''
-            }
-          }
-        })
-        xhr.addEventListener('load', () => {
-          if (xhr.status === 200) {
-            const res = JSON.parse(xhr.responseText)
-            if (res.error) reject(new Error(res.error))
-            else {
-              // 后端处理完成，显示 100%
-              item.progress = 100
-              resolve(res)
-            }
-          } else {
-            reject(new Error('上传失败'))
-          }
-        })
-        xhr.addEventListener('error', () => reject(new Error('网络错误')))
-        xhr.addEventListener('abort', () => reject(new Error('上传取消')))
-        xhr.open('POST', `${API_BASE}/api/upload/upload-file`)
-        xhr.send(formData)
-      })
-      
-      item.status = 'done'
-      item.progress = 100
-      usedSize.value += item.file.size
+      await runChunked()
     }
+
+    item.status = 'done'
+    item.progress = 100
+    usedSize.value += item.file.size
   } catch (e) { 
     item.status = 'error'
     item.errorMessage = e.message || '上传失败'

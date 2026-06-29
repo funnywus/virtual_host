@@ -27,6 +27,7 @@ function getDomainAuthCode(domain) {
   return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
 }
 
+
 // 通过授权码验证 (授权码 = 域名的MD5前8位)
 router.post('/auth', async (req, res) => {
   try {
@@ -111,6 +112,36 @@ router.post('/auth', async (req, res) => {
       server_port: ftp.ssh_port || 22,
       ftp_username: ftp.ssh_user,
       ftp_password: ftp.ssh_pass
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取 PHP 直传配置（前端用授权码换取直传地址 + 签名 token）
+router.post('/direct-config', async (req, res) => {
+  try {
+    const { auth_code } = req.body;
+    if (!auth_code) {
+      return res.status(400).json({ error: '请输入授权码' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp) {
+      return res.status(401).json({ error: '授权码无效或已禁用' });
+    }
+
+    // token 时效 24 小时（覆盖几小时的大文件上传全程）
+    const expires = Math.floor(Date.now() / 1000) + 24 * 3600;
+    const token = generateDirectUploadToken(expires);
+
+    res.json({
+      success: true,
+      // 直传到用户自己的域名（同协议，需该域名已配置 SSL）
+      upload_url: `/upload.php`,
+      domain: ftp.full_domain,
+      token,
+      expires
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

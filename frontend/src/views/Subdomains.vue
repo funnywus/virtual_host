@@ -50,6 +50,7 @@
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加子域名</el-button>
         <el-button type="success" size="small" @click="openBatchDialog">批量生成</el-button>
+        <el-button size="small" @click="batchDeployUploadScript" :loading="deployingScript">补发直传脚本</el-button>
       </div>
     </div>
     <el-table :data="dataStore.subdomains" stripe class="subdomain-table" @selection-change="onSelectionChange">
@@ -113,6 +114,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="openFtpInfoDialog(row)">FTP 信息</el-dropdown-item>
+                <el-dropdown-item @click="checkDirectUpload(row)">检测直传</el-dropdown-item>
                 <el-dropdown-item @click="openNginxDialog(row)">Nginx 配置</el-dropdown-item>
                 <el-dropdown-item @click="openRateLimitDialog(row)">限流配置</el-dropdown-item>
                 <el-dropdown-item @click="openRemarkDialog(row)">修改备注</el-dropdown-item>
@@ -439,6 +441,53 @@
       </template>
     </el-dialog>
 
+    <!-- 检测直传对话框 -->
+    <el-dialog v-model="checkDirectDialogVisible" title="直传可用性检测" width="460px" append-to-body>
+      <div v-loading="checkingDirect">
+        <div v-if="directCheckResult">
+          <div style="margin-bottom:15px;font-weight:600">{{ directCheckResult.domain }}</div>
+          <el-result
+            :icon="directCheckResult.usable ? 'success' : 'warning'"
+            :title="directCheckResult.usable ? '直传已就绪' : '直传不可用，将回退中转上传'"
+          >
+            <template #sub-title>
+              <div style="text-align:left">
+                <div style="display:flex;justify-content:space-between;padding:4px 0">
+                  <span>upload.php 已部署</span>
+                  <el-tag :type="directCheckResult.checks.script_exists ? 'success' : 'danger'" size="small">
+                    {{ directCheckResult.checks.script_exists ? '是' : '否' }}
+                  </el-tag>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:4px 0">
+                  <span>网站已配置 SSL</span>
+                  <el-tag :type="directCheckResult.checks.has_ssl ? 'success' : 'danger'" size="small">
+                    {{ directCheckResult.checks.has_ssl ? '是' : '否' }}
+                  </el-tag>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:4px 0">
+                  <span>网站支持 PHP</span>
+                  <el-tag :type="(directCheckResult.checks.php_enabled || directCheckResult.checks.php_installed) ? 'success' : 'danger'" size="small">
+                    {{ (directCheckResult.checks.php_enabled || directCheckResult.checks.php_installed) ? '是' : '否' }}
+                  </el-tag>
+                </div>
+              </div>
+            </template>
+          </el-result>
+          <div v-if="directCheckResult.problems && directCheckResult.problems.length" style="margin-top:10px">
+            <el-alert type="warning" :closable="false">
+              <template #title>
+                <div v-for="(p, i) in directCheckResult.problems" :key="i" style="font-size:12px;line-height:1.6">• {{ p }}</div>
+              </template>
+            </el-alert>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="checkDirectDialogVisible = false">关闭</el-button>
+        <el-button v-if="directCheckResult && !directCheckResult.checks.script_exists" type="primary" @click="deployForChecked" :loading="deployingScript">补发脚本</el-button>
+      </template>
+    </el-dialog>
+
     <!-- FTP信息对话框 -->
     <el-dialog v-model="ftpInfoDialogVisible" title="FTP 账号信息" width="480px" append-to-body>
       <div v-loading="ftpInfoLoading">
@@ -683,6 +732,12 @@ const filterExpired = ref(false)
 // 删除选项对话框
 const deleteDialogVisible = ref(false)
 const deleting = ref(false)
+const deployingScript = ref(false)
+// 检测直传
+const checkDirectDialogVisible = ref(false)
+const checkingDirect = ref(false)
+const directCheckResult = ref(null)
+const directCheckRow = ref(null)
 const deleteForm = reactive({
   rows: [],
   delete_ftp: false,
@@ -1133,6 +1188,58 @@ async function handleBatchAdjustDuration(duration) {
 function batchDelete() {
   if (selectedRows.value.length === 0) return
   openDeleteDialog(selectedRows.value)
+}
+
+// 批量补发 PHP 直传脚本（选中的则只补选中的，否则全部）
+async function batchDeployUploadScript() {
+  const ids = selectedRows.value.map(r => r.id)
+  const scope = ids.length > 0 ? `选中的 ${ids.length} 个` : '所有'
+  try {
+    await ElMessageBox.confirm(`确定给${scope}子域名补发直传脚本 upload.php？`, '补发直传脚本')
+  } catch (e) {
+    return
+  }
+  deployingScript.value = true
+  try {
+    const res = await api.post('/dns/subdomains/batch-deploy-upload-script', { ids })
+    ElMessage.success(`补发完成: 成功 ${res.success} 个, 失败 ${res.failed} 个`)
+  } catch (e) {
+    ElMessage.error(e.message || '补发失败')
+  } finally {
+    deployingScript.value = false
+  }
+}
+
+// 检测单个子域名的直传可用性
+async function checkDirectUpload(row) {
+  directCheckRow.value = row
+  directCheckResult.value = null
+  checkDirectDialogVisible.value = true
+  checkingDirect.value = true
+  try {
+    const res = await api.get(`/dns/subdomains/${row.id}/check-direct-upload`)
+    directCheckResult.value = res
+  } catch (e) {
+    ElMessage.error(e.message || '检测失败')
+    checkDirectDialogVisible.value = false
+  } finally {
+    checkingDirect.value = false
+  }
+}
+
+// 检测结果里直接补发脚本并重新检测
+async function deployForChecked() {
+  if (!directCheckRow.value) return
+  deployingScript.value = true
+  try {
+    await api.post(`/dns/subdomains/${directCheckRow.value.id}/deploy-upload-script`)
+    ElMessage.success('补发成功，重新检测中...')
+    await checkDirectUpload(directCheckRow.value)
+  } catch (e) {
+    ElMessage.error(e.message || '补发失败')
+  } finally {
+    deployingScript.value = false
+  }
 }
 
 // 打开删除选项对话框（单个/批量共用）

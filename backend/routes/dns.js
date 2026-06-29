@@ -743,6 +743,278 @@ router.post('/subdomains/check-expire', async (req, res) => {
   }
 });
 
+// 批量给所有现有子域名补发 PHP 直传脚本（按服务器分组复用连接）
+router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
+  try {
+    const userClause = req.user.role === 'admin' ? '' : ' AND d.user_id = ?';
+    const userParams = req.user.role === 'admin' ? [] : [req.user.id];
+
+    const rows = await db.all(`
+      SELECT s.id as subdomain_id, f.home_dir,
+             sv.id as server_id, sv.ip, sv.port, sv.username, sv.password,
+             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
+      FROM subdomains s
+      JOIN ftp_accounts f ON f.subdomain_id = s.id
+      JOIN servers sv ON s.server_id = sv.id
+      LEFT JOIN domains d ON s.domain_id = d.id
+      WHERE f.home_dir IS NOT NULL AND sv.ip IS NOT NULL
+        AND (sv.status IS NULL OR sv.status != 'disabled')${userClause}
+    `, userParams);
+
+    if (rows.length === 0) {
+      return res.json({ total: 0, success: 0, failed: 0, results: [], message: '没有可下发的子域名' });
+    }
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const { deployUploadScript } = require('../services/deploy-upload-script');
+
+    // 按服务器分组，复用同一个 SSH 连接
+    const byServer = new Map();
+    for (const row of rows) {
+      if (!byServer.has(row.server_id)) byServer.set(row.server_id, []);
+      byServer.get(row.server_id).push(row);
+    }
+
+    let success = 0;
+    let failed = 0;
+    const results = [];
+
+    for (const [, items] of byServer) {
+      const first = items[0];
+      const sshService = new SshFtpService({
+        ip: first.ip,
+        port: first.port,
+        username: first.username,
+        password: first.password
+      });
+
+      for (const item of items) {
+        try {
+          const r = await deployUploadScript(sshService, item.home_dir);
+          if (r.success) {
+            success++;
+            results.push({ domain: item.full_domain, success: true });
+          } else {
+            failed++;
+            results.push({ domain: item.full_domain, success: false, error: r.message });
+          }
+        } catch (e) {
+          failed++;
+          results.push({ domain: item.full_domain, success: false, error: e.message });
+        }
+      }
+    }
+
+    res.json({ total: rows.length, success, failed, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 为已有子域名补发 PHP 直传脚本（单个）
+router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
+  try {
+    const sub = await db.get(`
+      SELECT s.*, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
+             sv.nginx_path, f.home_dir
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      LEFT JOIN ftp_accounts f ON f.subdomain_id = s.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) {
+      return res.status(404).json({ error: '子域名不存在' });
+    }
+    if (!sub.server_ip) {
+      return res.status(400).json({ error: '该子域名未绑定服务器' });
+    }
+    if (!sub.home_dir) {
+      return res.status(400).json({ error: '该子域名没有 FTP 站点目录' });
+    }
+
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+    const nginxPath = (sub.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+    const confPath = `${nginxPath}/${fullDomain}.conf`;
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const { deployUploadScript, fixSitePhpSock } = require('../services/deploy-upload-script');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: sub.server_pass
+    });
+
+    const result = await deployUploadScript(sshService, sub.home_dir);
+    if (!result.success) {
+      return res.status(500).json({ error: result.message });
+    }
+
+    // 同时修正 PHP sock，解决 502
+    const phpFix = await fixSitePhpSock(sshService, confPath);
+
+    res.json({
+      success: true,
+      message: result.message,
+      path: result.remotePath,
+      php_fix: phpFix
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 检测某子域名的 PHP 直传是否就绪（SSH 实测：脚本/PHP/SSL）
+router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
+  try {
+    const sub = await db.get(`
+      SELECT s.*, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
+             sv.nginx_path, f.home_dir
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      LEFT JOIN ftp_accounts f ON f.subdomain_id = s.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) return res.status(404).json({ error: '子域名不存在' });
+    if (!sub.server_ip) return res.status(400).json({ error: '该子域名未绑定服务器' });
+    if (!sub.home_dir) return res.status(400).json({ error: '该子域名没有 FTP 站点目录' });
+
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+    const nginxPath = (sub.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+    const confPath = `${nginxPath}/${fullDomain}.conf`;
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: sub.server_pass
+    });
+
+    // 一条命令检测三项
+    const checkCmd = [
+      `echo "SCRIPT:$(test -f ${shellQuote(sub.home_dir + '/upload.php')} && echo 1 || echo 0)"`,
+      `echo "SSL:$(grep -q 'listen 443' ${shellQuote(confPath)} 2>/dev/null && echo 1 || echo 0)"`,
+      `echo "PHP:$(grep -qiE 'enable-php|fastcgi_pass|php-cgi|php.*\\.sock' ${shellQuote(confPath)} 2>/dev/null && echo 1 || echo 0)"`,
+      `echo "PHPBIN:$(ls /www/server/php/*/bin/php >/dev/null 2>&1 && echo 1 || (command -v php >/dev/null 2>&1 && echo 1 || echo 0))"`
+    ].join('; ');
+
+    const result = await sshService.exec(checkCmd);
+    const out = result.output || '';
+    const pick = (key) => new RegExp(`${key}:(\\d)`).test(out) && out.match(new RegExp(`${key}:(\\d)`))[1] === '1';
+
+    const checks = {
+      script_exists: pick('SCRIPT'),
+      has_ssl: pick('SSL'),
+      php_enabled: pick('PHP'),
+      php_installed: pick('PHPBIN')
+    };
+
+    const usable = checks.script_exists && checks.has_ssl && (checks.php_enabled || checks.php_installed);
+
+    const problems = [];
+    if (!checks.script_exists) problems.push('upload.php 未部署（点"补发直传脚本"）');
+    if (!checks.has_ssl) problems.push('网站未配置 SSL（直传需 HTTPS，请先申请并部署证书）');
+    if (!checks.php_enabled && !checks.php_installed) problems.push('网站未绑定 PHP（纯静态站点无法解析 .php）');
+
+    res.json({
+      domain: fullDomain,
+      checks,
+      usable,
+      message: usable ? '直传已就绪 ✓' : problems.join('；'),
+      problems
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量为现有子域名补发 PHP 直传脚本（给所有绑定了服务器+FTP的子域名）
+router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+
+    // 指定 ids 则只处理这些，否则处理全部（管理员全部，普通用户自己的）
+    let sql = `
+      SELECT s.id, s.subdomain, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
+             sv.nginx_path, f.home_dir
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      LEFT JOIN ftp_accounts f ON f.subdomain_id = s.id
+      WHERE sv.ip IS NOT NULL AND f.home_dir IS NOT NULL
+    `;
+    const params = [];
+    if (Array.isArray(ids) && ids.length > 0) {
+      sql += ` AND s.id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    } else if (req.user.role !== 'admin') {
+      sql += ' AND d.user_id = ?';
+      params.push(req.user.id);
+    }
+
+    const subs = await db.all(sql, params);
+    if (subs.length === 0) {
+      return res.json({ total: 0, success: 0, failed: 0, message: '没有可下发的子域名' });
+    }
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const { deployUploadScript, fixSitePhpSock } = require('../services/deploy-upload-script');
+
+    // 按服务器复用 SSH 连接，减少连接开销
+    const byServer = {};
+    for (const s of subs) {
+      const key = `${s.server_ip}:${s.server_port}`;
+      if (!byServer[key]) byServer[key] = { server: s, items: [] };
+      byServer[key].items.push(s);
+    }
+
+    let success = 0;
+    let failed = 0;
+    const results = [];
+
+    for (const key of Object.keys(byServer)) {
+      const { server, items } = byServer[key];
+      const sshService = new SshFtpService({
+        ip: server.server_ip,
+        port: server.server_port,
+        username: server.server_user,
+        password: server.server_pass
+      });
+      const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+      for (const item of items) {
+        const fullDomain = item.subdomain === '@' ? item.main_domain : `${item.subdomain}.${item.main_domain}`;
+        try {
+          const r = await deployUploadScript(sshService, item.home_dir);
+          if (r.success) {
+            // 顺带修正 PHP sock，解决 502
+            const phpFix = await fixSitePhpSock(sshService, `${nginxPath}/${fullDomain}.conf`);
+            success++;
+            results.push({ id: item.id, domain: fullDomain, success: true, php_fix: phpFix.message });
+          } else {
+            failed++;
+            results.push({ id: item.id, domain: fullDomain, success: false, error: r.message });
+          }
+        } catch (e) {
+          failed++;
+          results.push({ id: item.id, domain: fullDomain, success: false, error: e.message });
+        }
+      }
+    }
+
+    res.json({ total: subs.length, success, failed, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 添加子域名并解析DNS
 router.post('/subdomains', async (req, res) => {
   try {
@@ -810,6 +1082,14 @@ router.post('/subdomains', async (req, res) => {
           [ftpResult.success ? 'synced' : 'error', ftpResult.message, subdomainId]
         );
         ftpInfo.sync_status = ftpResult.success ? 'synced' : 'error';
+
+        // 下发 PHP 直传脚本到站点目录（供前端直传使用，失败不影响主流程）
+        try {
+          const { deployUploadScript } = require('../services/deploy-upload-script');
+          await deployUploadScript(sshService, ftpHomeDir);
+        } catch (deployErr) {
+          console.error('下发 upload.php 失败:', deployErr.message);
+        }
       } catch (err) {
         console.error('FTP sync error:', err);
         ftpInfo.sync_status = 'error';
@@ -839,7 +1119,15 @@ router.post('/subdomains', async (req, res) => {
         const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
         const escapedConfig = config.replace(/'/g, "'\\''");
         await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
-        
+
+        // 配置写入后，修正 PHP sock（避免直传 502），再测试 reload
+        try {
+          const { fixSitePhpSock } = require('../services/deploy-upload-script');
+          await fixSitePhpSock(sshService, configPath);
+        } catch (e) {
+          console.error('修正 PHP sock 失败:', e.message);
+        }
+
         const testResult = await sshService.exec('sudo nginx -t 2>&1');
         if (testResult.success || testResult.output.includes('successful')) {
           await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
