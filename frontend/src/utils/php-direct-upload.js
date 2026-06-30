@@ -6,17 +6,10 @@
 const CHUNK_SIZE = 4 * 1024 * 1024; // 每片 4MB
 const MAX_CONCURRENT = 3;
 const MAX_RETRIES = 3;
+const DEFAULT_UPLOAD_PATH = '/_vhost/upload.php';
+const LEGACY_UPLOAD_PATH = '/upload.php';
 
 export class PhpDirectUploader {
-  /**
-   * @param {File} file
-   * @param {Object} options
-   *   - domain: 用户域名（如 sub.example.com）
-   *   - token: 签名 token
-   *   - expires: token 过期时间戳
-   *   - path: 目标子目录（相对站点根）
-   *   - onProgress/onSuccess/onError
-   */
   constructor(file, options = {}) {
     this.file = file;
     this.domain = options.domain;
@@ -25,15 +18,18 @@ export class PhpDirectUploader {
     this.path = options.path || '';
     this.chunkSize = options.chunkSize || CHUNK_SIZE;
     this.maxConcurrent = options.maxConcurrent || MAX_CONCURRENT;
+    this.uploadPath = options.uploadPath || DEFAULT_UPLOAD_PATH;
 
     this.totalChunks = Math.ceil(file.size / this.chunkSize);
-    this.uploadedChunks = 0;
-    this.uploadedBytes = 0;
-    this.totalBytes = file.size;
-    // 同协议直传到用户域名，避免 https 页面请求 http 被拦截
-    this.uploadUrl = `${window.location.protocol}//${this.domain}/upload.php`;
     this.uploadId = this._genId();
     this.aborted = false;
+
+    // 已完成字节 + 各分片进行中的已发送字节（并发时用于准确进度/网速）
+    this.completedBytes = 0;
+    this.inFlightBytes = new Map();
+    this.totalBytes = file.size;
+
+    this.uploadUrl = `https://${this.domain}${this.uploadPath}`;
 
     this.onProgress = options.onProgress || (() => {});
     this.onSuccess = options.onSuccess || (() => {});
@@ -46,11 +42,73 @@ export class PhpDirectUploader {
     return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  _emitProgress() {
+    let inFlight = 0;
+    for (const n of this.inFlightBytes.values()) inFlight += n;
+    const loadedBytes = Math.min(this.totalBytes, this.completedBytes + inFlight);
+    this.onProgress({
+      uploaded: Math.ceil(loadedBytes / this.chunkSize),
+      total: this.totalChunks,
+      loadedBytes,
+      totalBytes: this.totalBytes,
+      percentage: Math.min(100, Math.round((loadedBytes / this.totalBytes) * 100))
+    });
+  }
+
+  _postForm(formData, trackKey, trackBytes) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', this.uploadUrl);
+
+      if (trackBytes > 0) {
+        xhr.upload.onprogress = (e) => {
+          if (this.aborted) return;
+          const sent = e.lengthComputable ? e.loaded : 0;
+          this.inFlightBytes.set(trackKey, Math.min(sent, trackBytes));
+          this._emitProgress();
+        };
+      }
+
+      xhr.onload = () => {
+        if (trackBytes > 0) this.inFlightBytes.delete(trackKey);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          let data = null;
+          try {
+            data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          } catch (_) { /* ignore */ }
+          resolve(data);
+          return;
+        }
+        let msg = `HTTP ${xhr.status}`;
+        try {
+          const data = JSON.parse(xhr.responseText);
+          msg = data.error || msg;
+        } catch (_) { /* ignore */ }
+        reject(new Error(msg));
+      };
+
+      xhr.onerror = () => reject(new Error('网络错误'));
+      xhr.onabort = () => reject(new Error('上传已取消'));
+
+      if (this.aborted) {
+        xhr.abort();
+        reject(new Error('上传已取消'));
+        return;
+      }
+
+      xhr.send(formData);
+      this._activeXhrs = this._activeXhrs || new Set();
+      this._activeXhrs.add(xhr);
+      xhr.addEventListener('loadend', () => this._activeXhrs?.delete(xhr));
+    });
+  }
+
   async uploadChunk(chunkIndex) {
     if (this.aborted) return;
 
     const start = chunkIndex * this.chunkSize;
     const end = Math.min(start + this.chunkSize, this.file.size);
+    const chunkBytes = end - start;
     const chunk = this.file.slice(start, end);
 
     const formData = new FormData();
@@ -61,21 +119,10 @@ export class PhpDirectUploader {
     formData.append('index', chunkIndex);
     formData.append('chunk', chunk);
 
-    const res = await fetch(this.uploadUrl, { method: 'POST', body: formData });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(data.error || `分片 ${chunkIndex} 上传失败`);
-    }
-
-    this.uploadedChunks++;
-    this.uploadedBytes += (end - start);
-    this.onProgress({
-      uploaded: this.uploadedChunks,
-      total: this.totalChunks,
-      loadedBytes: this.uploadedBytes,
-      totalBytes: this.totalBytes,
-      percentage: Math.min(100, Math.round((this.uploadedBytes / this.totalBytes) * 100))
-    });
+    this.inFlightBytes.set(chunkIndex, 0);
+    await this._postForm(formData, chunkIndex, chunkBytes);
+    this.completedBytes += chunkBytes;
+    this._emitProgress();
   }
 
   async uploadAllChunks() {
@@ -86,6 +133,7 @@ export class PhpDirectUploader {
       try {
         await this.uploadChunk(idx);
       } catch (err) {
+        this.inFlightBytes.delete(idx);
         if (retries < MAX_RETRIES && !this.aborted) {
           await new Promise(r => setTimeout(r, 1000));
           return uploadWithRetry(idx, retries + 1);
@@ -124,12 +172,8 @@ export class PhpDirectUploader {
     formData.append('filename', this.file.name);
     formData.append('path', this.path);
 
-    const res = await fetch(this.uploadUrl, { method: 'POST', body: formData });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(data.error || '合并失败');
-    }
-    return res.json();
+    const data = await this._postForm(formData, 'merge', 0);
+    return data || { success: true, filename: this.file.name, size: this.file.size };
   }
 
   async start() {
@@ -147,26 +191,34 @@ export class PhpDirectUploader {
 
   abort() {
     this.aborted = true;
+    if (this._activeXhrs) {
+      for (const xhr of this._activeXhrs) xhr.abort();
+    }
   }
 
-  // 预检：探测目标站点 upload.php 是否可用（用于决定是否走直传）
-  static async probe(domain, timeout = 4000) {
-    const url = `${window.location.protocol}//${domain}/upload.php?action=status&uploadId=probecheck0`;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-      // 不带 token，预期返回 403（说明脚本存在且在运行）
-      const res = await fetch(url, { method: 'POST', signal: controller.signal });
-      clearTimeout(timer);
-      // 403（鉴权失败）或 200 都说明 PHP 脚本存在
-      return res.status === 403 || res.status === 200;
-    } catch (e) {
-      return false;
+  static async probe(domain, timeout = 4000, preferredPath) {
+    // 优先探测指定路径，再回退其他已知路径（避免只配置了 _vhost 但站点仍是旧版时 probe 失败）
+    const paths = [...new Set([preferredPath, DEFAULT_UPLOAD_PATH, LEGACY_UPLOAD_PATH].filter(Boolean))];
+    for (const p of paths) {
+      const url = `https://${domain}${p}?action=status&uploadId=probecheck0`;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
+        const res = await fetch(url, { method: 'POST', signal: controller.signal });
+        clearTimeout(timer);
+        if (res.status === 403 || res.status === 200) {
+          console.log('[直传] probe 成功:', p, 'status:', res.status);
+          return p;
+        }
+        console.log('[直传] probe 不可用:', p, 'status:', res.status);
+      } catch (e) {
+        console.log('[直传] probe 失败:', p, e.message);
+      }
     }
+    return false;
   }
 }
 
-// 大于 5MB 才用直传/分片
 export function shouldUseDirectUpload(fileSize) {
   return fileSize > 5 * 1024 * 1024;
 }

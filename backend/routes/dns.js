@@ -393,6 +393,16 @@ router.post('/batch-create', async (req, res) => {
                 [ftpResult.success ? 'synced' : 'error', ftpResult.message, subdomainId]
               );
               ftpInfo.sync_status = ftpResult.success ? 'synced' : 'error';
+
+              if (ftpResult.success) {
+                try {
+                  const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+                  await deployUploadScript(sshService, ftpHomeDir);
+                  await ensureSitePhpAfterDeploy(sshService, fullDomain, server.nginx_path);
+                } catch (deployErr) {
+                  console.error('下发直传脚本失败:', deployErr.message);
+                }
+              }
             } catch (err) {
               ftpInfo.sync_status = 'error';
             }
@@ -413,6 +423,13 @@ router.post('/batch-create', async (req, res) => {
             const escapedConfig = config.replace(/'/g, "'\\''");
             await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
             await db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [subdomainId]);
+
+            try {
+              const { fixSitePhpSock } = require('../services/deploy-upload-script');
+              await fixSitePhpSock(sshService, configPath);
+            } catch (e) {
+              console.error('修正 PHP sock 失败:', e.message);
+            }
           } catch (err) {}
         }
 
@@ -751,7 +768,7 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
 
     const rows = await db.all(`
       SELECT s.id as subdomain_id, f.home_dir,
-             sv.id as server_id, sv.ip, sv.port, sv.username, sv.password,
+             sv.id as server_id, sv.ip, sv.port, sv.username, sv.password, sv.nginx_path,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM subdomains s
       JOIN ftp_accounts f ON f.subdomain_id = s.id
@@ -766,7 +783,7 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
     }
 
     const SshFtpService = require('../services/ssh-ftp');
-    const { deployUploadScript } = require('../services/deploy-upload-script');
+    const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
 
     // 按服务器分组，复用同一个 SSH 连接
     const byServer = new Map();
@@ -792,8 +809,9 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
         try {
           const r = await deployUploadScript(sshService, item.home_dir);
           if (r.success) {
+            const phpFix = await ensureSitePhpAfterDeploy(sshService, item.full_domain, item.nginx_path);
             success++;
-            results.push({ domain: item.full_domain, success: true });
+            results.push({ domain: item.full_domain, success: true, php_fix: phpFix.message });
           } else {
             failed++;
             results.push({ domain: item.full_domain, success: false, error: r.message });
@@ -853,7 +871,7 @@ router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
       return res.status(500).json({ error: result.message });
     }
 
-    // 同时修正 PHP sock，解决 502
+    // 同时补齐/修正 PHP 配置，解决老站点缺 PHP 或 502
     const phpFix = await fixSitePhpSock(sshService, confPath);
 
     res.json({
@@ -862,6 +880,47 @@ router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
       path: result.remotePath,
       php_fix: phpFix
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 仅补齐站点 nginx 的 PHP 配置（不下发 upload.php）
+router.post('/subdomains/:id/fix-php-config', async (req, res) => {
+  try {
+    const sub = await db.get(`
+      SELECT s.*, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
+             sv.nginx_path
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) {
+      return res.status(404).json({ error: '子域名不存在' });
+    }
+    if (!sub.server_ip) {
+      return res.status(400).json({ error: '该子域名未绑定服务器' });
+    }
+
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+    const { ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+    const SshFtpService = require('../services/ssh-ftp');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: sub.server_pass
+    });
+
+    const phpFix = await ensureSitePhpAfterDeploy(sshService, fullDomain, sub.nginx_path);
+    if (!phpFix.success) {
+      return res.status(500).json({ error: phpFix.message, php_fix: phpFix });
+    }
+
+    res.json({ success: true, domain: fullDomain, php_fix: phpFix });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -897,12 +956,17 @@ router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
       password: sub.server_pass
     });
 
-    // 一条命令检测三项
+    const tmpDir = sub.home_dir + '/_vhost/.upload_tmp';
+    const scriptPath = sub.home_dir + '/_vhost/upload.php';
+    const legacyScript = sub.home_dir + '/upload.php';
+    // 一条命令检测：脚本 / SSL / PHP / 目录可写
     const checkCmd = [
-      `echo "SCRIPT:$(test -f ${shellQuote(sub.home_dir + '/upload.php')} && echo 1 || echo 0)"`,
+      `echo "SCRIPT:$([ -f ${shellQuote(scriptPath)} ] || [ -f ${shellQuote(legacyScript)} ] && echo 1 || echo 0)"`,
       `echo "SSL:$(grep -q 'listen 443' ${shellQuote(confPath)} 2>/dev/null && echo 1 || echo 0)"`,
       `echo "PHP:$(grep -qiE 'enable-php|fastcgi_pass|php-cgi|php.*\\.sock' ${shellQuote(confPath)} 2>/dev/null && echo 1 || echo 0)"`,
-      `echo "PHPBIN:$(ls /www/server/php/*/bin/php >/dev/null 2>&1 && echo 1 || (command -v php >/dev/null 2>&1 && echo 1 || echo 0))"`
+      `echo "PHPBIN:$(ls /www/server/php/*/bin/php >/dev/null 2>&1 && echo 1 || (command -v php >/dev/null 2>&1 && echo 1 || echo 0))"`,
+      `echo "TMPWRITE:$([ -w ${shellQuote(tmpDir)} ] && echo 1 || echo 0)"`,
+      `echo "ROOTWRITE:$([ -w ${shellQuote(sub.home_dir)} ] && echo 1 || echo 0)"`
     ].join('; ');
 
     const result = await sshService.exec(checkCmd);
@@ -913,15 +977,20 @@ router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
       script_exists: pick('SCRIPT'),
       has_ssl: pick('SSL'),
       php_enabled: pick('PHP'),
-      php_installed: pick('PHPBIN')
+      php_installed: pick('PHPBIN'),
+      tmp_writable: pick('TMPWRITE'),
+      root_writable: pick('ROOTWRITE')
     };
 
-    const usable = checks.script_exists && checks.has_ssl && (checks.php_enabled || checks.php_installed);
+    const usable = checks.script_exists && checks.has_ssl && (checks.php_enabled || checks.php_installed)
+      && checks.tmp_writable && checks.root_writable;
 
     const problems = [];
     if (!checks.script_exists) problems.push('upload.php 未部署（点"补发直传脚本"）');
     if (!checks.has_ssl) problems.push('网站未配置 SSL（直传需 HTTPS，请先申请并部署证书）');
-    if (!checks.php_enabled && !checks.php_installed) problems.push('网站未绑定 PHP（纯静态站点无法解析 .php）');
+    if (!checks.php_enabled && !checks.php_installed) problems.push('网站未绑定 PHP（纯静态站点无法解析 .php，可点「补齐 PHP 配置」）');
+    if (!checks.tmp_writable) problems.push('_vhost/.upload_tmp 不可写（请补发直传脚本）');
+    if (!checks.root_writable) problems.push('站点根目录 PHP 不可写（合并文件会失败，请检查目录属主/权限）');
 
     res.json({
       domain: fullDomain,
@@ -1085,8 +1154,9 @@ router.post('/subdomains', async (req, res) => {
 
         // 下发 PHP 直传脚本到站点目录（供前端直传使用，失败不影响主流程）
         try {
-          const { deployUploadScript } = require('../services/deploy-upload-script');
+          const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
           await deployUploadScript(sshService, ftpHomeDir);
+          await ensureSitePhpAfterDeploy(sshService, fullDomain, server.nginx_path);
         } catch (deployErr) {
           console.error('下发 upload.php 失败:', deployErr.message);
         }

@@ -1121,20 +1121,43 @@ const verifyAuth = async () => {
   verifying.value = false
 }
 
-// 获取并探测 PHP 直传配置
+// 获取并探测 PHP 直传配置（缺失脚本时后台自动下发）
 const loadDirectUploadConfig = async () => {
   directUploadOk.value = false
   directConfig.value = null
   try {
+    console.log('[直传] 请求直传配置...')
     const cfg = await api('/direct-config')
-    // 探测目标站点 upload.php 是否就绪
-    const ok = await PhpDirectUploader.probe(cfg.domain)
-    if (ok) {
-      directConfig.value = cfg
+    if (cfg.script_status === 'exists') {
+      console.log('[直传] 脚本已存在，跳过创建:', cfg.script_message)
+    } else if (cfg.script_status === 'deployed') {
+      console.log('[直传] 脚本不存在，已自动创建:', cfg.script_message)
+    } else if (cfg.script_status === 'migrated') {
+      console.log('[直传] 已从旧版迁移:', cfg.script_message)
+    } else if (cfg.script_status === 'exists_legacy') {
+      console.warn('[直传] 使用旧版路径:', cfg.script_message)
+    } else if (cfg.script_status === 'failed') {
+      console.warn('[直传] 自动创建脚本失败:', cfg.script_message)
+    } else if (cfg.script_status === 'no_server') {
+      console.warn('[直传] 未绑定服务器，无法自动创建脚本')
+    }
+
+    if (cfg.php_fix) {
+      if (cfg.php_fix.success) {
+        console.log('[直传] PHP 配置:', cfg.php_fix.message)
+      } else {
+        console.warn('[直传] PHP 配置补齐失败:', cfg.php_fix.message)
+      }
+    }
+
+    console.log('[直传] 探测直传端点:', cfg.domain, cfg.upload_url)
+    const uploadPath = await PhpDirectUploader.probe(cfg.domain, 4000, cfg.upload_url)
+    if (uploadPath) {
+      directConfig.value = { ...cfg, upload_url: uploadPath }
       directUploadOk.value = true
-      console.log('[直传] PHP 直传可用')
+      console.log('[直传] PHP 直传可用，路径:', uploadPath)
     } else {
-      console.log('[直传] upload.php 未就绪，回退中转上传')
+      console.log('[直传] 端点未响应，回退中转上传')
     }
   } catch (e) {
     console.log('[直传] 获取直传配置失败，回退中转上传:', e.message)
@@ -1530,19 +1553,18 @@ const startUpload = async () => {
   }
 }
 
-// 统一计算上传速度和剩余时间
+// 统一计算上传速度和剩余时间（基于总耗时平均速度，适配并发分片）
 const updateItemSpeed = (item, loadedBytes, totalBytes) => {
   const now = Date.now()
-  if (item._lastTime != null) {
-    const deltaBytes = loadedBytes - (item._lastBytes || 0)
-    const deltaTime = (now - item._lastTime) / 1000
-    if (deltaTime > 0 && deltaBytes > 0) {
-      const speed = deltaBytes / deltaTime
-      item.speedRaw = item.speedRaw != null ? item.speedRaw * 0.6 + speed * 0.4 : speed
-      item.speed = formatSize(item.speedRaw) + '/s'
-      const remainBytes = totalBytes - loadedBytes
-      item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
-    }
+  if (item._uploadStartTime == null) item._uploadStartTime = now
+
+  const elapsedSec = (now - item._uploadStartTime) / 1000
+  if (elapsedSec >= 0.5 && loadedBytes > 0) {
+    const avgSpeed = loadedBytes / elapsedSec
+    item.speedRaw = item.speedRaw != null ? item.speedRaw * 0.85 + avgSpeed * 0.15 : avgSpeed
+    item.speed = formatSize(item.speedRaw) + '/s'
+    const remainBytes = Math.max(0, totalBytes - loadedBytes)
+    item.eta = item.speedRaw > 0 ? formatDuration((remainBytes / item.speedRaw) * 1000) : ''
   }
   item._lastTime = now
   item._lastBytes = loadedBytes
@@ -1564,6 +1586,7 @@ const uploadSingleFile = async (item) => {
   item.speedRaw = null
   item._lastTime = null
   item._lastBytes = 0
+  item._uploadStartTime = null
   
   try {
     let uploadDir = currentPath.value
@@ -1576,6 +1599,7 @@ const uploadSingleFile = async (item) => {
     // 中转分片上传（浏览器→后端→目标服务器）
     const runChunked = async () => {
       item.totalSteps = 2
+      item._uploadStartTime = Date.now()
       const uploader = new ChunkedUploader(item.file, {
         authCode: authCode.value,
         path: uploadDir,
@@ -1604,10 +1628,12 @@ const uploadSingleFile = async (item) => {
     if (directUploadOk.value) {
       try {
         item.totalSteps = 1
+        item._uploadStartTime = Date.now()
         const uploader = new PhpDirectUploader(item.file, {
           domain: directConfig.value.domain,
           token: directConfig.value.token,
           expires: directConfig.value.expires,
+          uploadPath: directConfig.value.upload_url,
           path: uploadDir,
           onProgress: (progress) => {
             item.step = 1
@@ -1628,6 +1654,7 @@ const uploadSingleFile = async (item) => {
         item.speedRaw = null
         item._lastTime = null
         item._lastBytes = 0
+        item._uploadStartTime = null
         await runChunked()
       }
     } else {

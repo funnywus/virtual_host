@@ -149,7 +149,7 @@ router.post('/', async (req, res) => {
     
     // 获取子域名和服务器信息
     const subdomain = await db.get(`
-      SELECT s.*, d.domain as main_domain, sv.id as server_id, sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
+      SELECT s.*, d.domain as main_domain, sv.id as server_id, sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass, sv.nginx_path
       FROM subdomains s 
       LEFT JOIN domains d ON s.domain_id = d.id 
       LEFT JOIN servers sv ON s.server_id = sv.id
@@ -187,6 +187,19 @@ router.post('/', async (req, res) => {
         const result = await sshService.createFtpUser(ftpUsername, ftpPassword, ftpHomeDir);
         syncStatus = result.success ? 'synced' : 'error';
         syncMessage = result.message;
+
+        if (result.success) {
+          try {
+            const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+            await deployUploadScript(sshService, ftpHomeDir);
+            const fullDomain = subdomain.subdomain === '@'
+              ? subdomain.main_domain
+              : `${subdomain.subdomain}.${subdomain.main_domain}`;
+            await ensureSitePhpAfterDeploy(sshService, fullDomain, subdomain.nginx_path);
+          } catch (deployErr) {
+            console.error('下发直传脚本失败:', deployErr.message);
+          }
+        }
       } catch (err) {
         syncStatus = 'error';
         syncMessage = err.message;
@@ -219,7 +232,7 @@ router.post('/:id/sync', async (req, res) => {
   try {
     const ftp = await db.get(`
       SELECT f.*, s.subdomain, d.domain as main_domain, 
-             sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
+             sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass, sv.nginx_path
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
@@ -248,6 +261,19 @@ router.post('/:id/sync', async (req, res) => {
       'UPDATE ftp_accounts SET sync_status = ?, sync_message = ? WHERE id = ?',
       [result.success ? 'synced' : 'error', result.message, req.params.id]
     );
+
+    if (result.success) {
+      try {
+        const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+        await deployUploadScript(sshService, ftp.home_dir);
+        const fullDomain = ftp.subdomain === '@'
+          ? ftp.main_domain
+          : `${ftp.subdomain}.${ftp.main_domain}`;
+        await ensureSitePhpAfterDeploy(sshService, fullDomain, ftp.nginx_path);
+      } catch (deployErr) {
+        console.error('下发直传脚本失败:', deployErr.message);
+      }
+    }
     
     res.json(result);
   } catch (err) {

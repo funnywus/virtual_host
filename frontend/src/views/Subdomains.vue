@@ -453,7 +453,7 @@
             <template #sub-title>
               <div style="text-align:left">
                 <div style="display:flex;justify-content:space-between;padding:4px 0">
-                  <span>upload.php 已部署</span>
+                  <span>直传脚本已部署</span>
                   <el-tag :type="directCheckResult.checks.script_exists ? 'success' : 'danger'" size="small">
                     {{ directCheckResult.checks.script_exists ? '是' : '否' }}
                   </el-tag>
@@ -1195,7 +1195,7 @@ async function batchDeployUploadScript() {
   const ids = selectedRows.value.map(r => r.id)
   const scope = ids.length > 0 ? `选中的 ${ids.length} 个` : '所有'
   try {
-    await ElMessageBox.confirm(`确定给${scope}子域名补发直传脚本 upload.php？`, '补发直传脚本')
+    await ElMessageBox.confirm(`确定给${scope}子域名补发直传脚本（_vhost/upload.php）？`, '补发直传脚本')
   } catch (e) {
     return
   }

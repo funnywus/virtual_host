@@ -22,7 +22,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 
 // ===== 配置（下发时替换占位符）=====
 define('SIGN_SECRET', '__SIGN_SECRET__');
-define('ROOT_DIR', __DIR__);                       // 网站根目录
+define('ROOT_DIR', dirname(__DIR__));              // 网站根目录（脚本在 _vhost/ 下）
 define('TEMP_BASE', __DIR__ . '/.upload_tmp');     // 分片临时目录
 
 function jsonOut($data, $code = 200) {
@@ -69,6 +69,18 @@ function safeUploadId($id) {
     return preg_match('/^[a-f0-9]{8,64}$/i', (string)$id) ? $id : false;
 }
 
+// 确保分片临时目录存在且 PHP 进程可写
+function ensureTempBase() {
+    if (is_dir(TEMP_BASE) && is_writable(TEMP_BASE)) {
+        return true;
+    }
+    if (!is_dir(TEMP_BASE) && !@mkdir(TEMP_BASE, 0777, true)) {
+        return false;
+    }
+    @chmod(TEMP_BASE, 0777);
+    return is_writable(TEMP_BASE);
+}
+
 // ===== 入口 =====
 $action  = $_POST['action']  ?? $_GET['action']  ?? '';
 $token   = $_POST['token']   ?? $_GET['token']   ?? '';
@@ -78,8 +90,8 @@ if (!verifyToken($token, $expires)) {
     jsonOut(['error' => '鉴权失败或链接已过期'], 403);
 }
 
-if (!is_dir(TEMP_BASE)) {
-    @mkdir(TEMP_BASE, 0755, true);
+if (!ensureTempBase()) {
+    jsonOut(['error' => '临时目录不可写，请在管理后台对该子域名「补发直传脚本」'], 500);
 }
 
 switch ($action) {
@@ -104,12 +116,13 @@ function handleChunk() {
         jsonOut(['error' => '参数错误'], 400);
     }
     if (!isset($_FILES['chunk']) || $_FILES['chunk']['error'] !== UPLOAD_ERR_OK) {
-        jsonOut(['error' => '分片数据缺失'], 400);
+        $code = isset($_FILES['chunk']) ? intval($_FILES['chunk']['error']) : -1;
+        jsonOut(['error' => '分片数据缺失', 'upload_error' => $code], 400);
     }
 
     $chunkDir = TEMP_BASE . '/' . $uploadId;
-    if (!is_dir($chunkDir) && !@mkdir($chunkDir, 0755, true)) {
-        jsonOut(['error' => '创建临时目录失败'], 500);
+    if (!is_dir($chunkDir) && !@mkdir($chunkDir, 0777, true)) {
+        jsonOut(['error' => '创建临时目录失败，请补发直传脚本或检查 .upload_tmp 权限'], 500);
     }
 
     $dest = $chunkDir . '/chunk_' . intval($index);

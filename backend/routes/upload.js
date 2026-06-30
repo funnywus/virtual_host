@@ -7,6 +7,8 @@ const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
 const WorkerPool = require('../utils/worker-pool');
 const sshPool = require('../utils/ssh-connection-pool');
+const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath } = require('../services/upload-system-files');
+const pathPosix = require('path').posix;
 
 const router = express.Router();
 
@@ -27,6 +29,11 @@ function getDomainAuthCode(domain) {
   return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
 }
 
+// PHP 直传 token：HMAC-SHA256(expires, UPLOAD_SIGN_SECRET)，与 upload.php 验签一致
+function generateDirectUploadToken(expires) {
+  const secret = process.env.UPLOAD_SIGN_SECRET || 'change_this_to_a_long_random_secret_string';
+  return crypto.createHmac('sha256', secret).update(String(expires)).digest('hex');
+}
 
 // 通过授权码验证 (授权码 = 域名的MD5前8位)
 router.post('/auth', async (req, res) => {
@@ -118,7 +125,7 @@ router.post('/auth', async (req, res) => {
   }
 });
 
-// 获取 PHP 直传配置（前端用授权码换取直传地址 + 签名 token）
+// 获取 PHP 直传配置（前端用授权码换取直传地址 + 签名 token；脚本缺失时自动下发）
 router.post('/direct-config', async (req, res) => {
   try {
     const { auth_code } = req.body;
@@ -131,17 +138,91 @@ router.post('/direct-config', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或已禁用' });
     }
 
-    // token 时效 24 小时（覆盖几小时的大文件上传全程）
+    let scriptStatus = 'skipped';
+    let scriptMessage = '';
+    let uploadUrl = UPLOAD_PUBLIC_PATH;
+    let phpFix = null;
+
+    if (ftp.ip && ftp.home_dir) {
+      const SshFtpService = require('../services/ssh-ftp');
+      const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+      const sshService = new SshFtpService({
+        ip: ftp.ip,
+        port: ftp.ssh_port,
+        username: ftp.ssh_user,
+        password: ftp.ssh_pass
+      });
+
+      const newScript = pathPosix.join(ftp.home_dir, scriptRelPath());
+      const legacyScript = pathPosix.join(ftp.home_dir, UPLOAD_SCRIPT);
+      const check = await sshService.exec(
+        `[ -f ${JSON.stringify(newScript)} ] && echo new || ([ -f ${JSON.stringify(legacyScript)} ] && echo legacy || echo missing)`
+      );
+      const found = (check.output || '').trim();
+
+      if (found === 'new') {
+        scriptStatus = 'exists';
+        scriptMessage = '_vhost/upload.php 已存在';
+        uploadUrl = UPLOAD_PUBLIC_PATH;
+        console.log(`[直传] ${ftp.full_domain} ${scriptMessage}，跳过下发`);
+      } else if (found === 'legacy') {
+        console.log(`[直传] ${ftp.full_domain} 发现旧版 upload.php，迁移到 _vhost/...`);
+        const deploy = await deployUploadScript(sshService, ftp.home_dir);
+        if (deploy.success) {
+          scriptStatus = 'migrated';
+          scriptMessage = '已从旧版迁移到 _vhost/upload.php';
+          uploadUrl = UPLOAD_PUBLIC_PATH;
+          console.log(`[直传] ${ftp.full_domain} 迁移成功: ${deploy.remotePath}`);
+        } else {
+          scriptStatus = 'exists_legacy';
+          scriptMessage = `旧版可用，迁移失败: ${deploy.message}`;
+          uploadUrl = `/${UPLOAD_SCRIPT}`;
+          console.warn(`[直传] ${ftp.full_domain} 迁移失败，暂用旧版路径: ${uploadUrl}`);
+        }
+      } else {
+        console.log(`[直传] ${ftp.full_domain} 直传脚本不存在，自动下发...`);
+        const deploy = await deployUploadScript(sshService, ftp.home_dir);
+        if (deploy.success) {
+          scriptStatus = 'deployed';
+          scriptMessage = deploy.message;
+          uploadUrl = UPLOAD_PUBLIC_PATH;
+          console.log(`[直传] ${ftp.full_domain} 自动下发成功: ${deploy.remotePath}`);
+        } else {
+          scriptStatus = 'failed';
+          scriptMessage = deploy.message;
+          console.error(`[直传] ${ftp.full_domain} 自动下发失败: ${deploy.message}`);
+        }
+      }
+
+      // 补齐 nginx PHP 配置（老站点可能缺 PHP 段或 sock 路径错误导致 502）
+      try {
+        phpFix = await ensureSitePhpAfterDeploy(sshService, ftp.full_domain, ftp.nginx_path);
+        if (phpFix.success) {
+          console.log(`[直传] ${ftp.full_domain} PHP 配置: ${phpFix.message}`);
+        } else {
+          console.warn(`[直传] ${ftp.full_domain} PHP 配置补齐失败: ${phpFix.message}`);
+        }
+      } catch (phpErr) {
+        console.warn(`[直传] ${ftp.full_domain} PHP 配置补齐异常:`, phpErr.message);
+      }
+    } else {
+      scriptStatus = 'no_server';
+      scriptMessage = '未绑定服务器或缺少站点目录';
+      console.warn(`[直传] ${ftp.full_domain} ${scriptMessage}`);
+    }
+
     const expires = Math.floor(Date.now() / 1000) + 24 * 3600;
     const token = generateDirectUploadToken(expires);
 
     res.json({
       success: true,
-      // 直传到用户自己的域名（同协议，需该域名已配置 SSL）
-      upload_url: `/upload.php`,
+      upload_url: uploadUrl,
       domain: ftp.full_domain,
       token,
-      expires
+      expires,
+      script_status: scriptStatus,
+      script_message: scriptMessage,
+      php_fix: phpFix
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -153,7 +234,8 @@ async function findFtpByAuthCode(auth_code) {
   const ftpAccounts = await db.all(`
     SELECT f.*, s.subdomain, d.domain as main_domain,
            CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
-           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
+           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
+           sv.nginx_path
     FROM ftp_accounts f
     LEFT JOIN subdomains s ON f.subdomain_id = s.id
     LEFT JOIN domains d ON s.domain_id = d.id
@@ -257,6 +339,7 @@ router.post('/list', async (req, res) => {
       const name = parts.slice(8).join(' ');
       
       if (name === '.' || name === '..') return null;
+      if (shouldHideInList(name, dirPath || '')) return null;
       
       return {
         name,
@@ -316,6 +399,9 @@ router.post('/upload', async (req, res) => {
     const targetDir = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
+    }
+    if (dirPath && isProtectedPath(dirPath)) {
+      return res.status(403).json({ error: '不可上传到系统目录' });
     }
     
     const targetFile = path.join(targetDir, filename);
@@ -399,6 +485,9 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
+    if (dirPath && isProtectedPath(dirPath)) {
+      return res.status(403).json({ error: '不可上传到系统目录' });
+    }
     
     const targetFile = path.join(targetDir, filename);
     
@@ -447,6 +536,10 @@ router.post('/mkdir', async (req, res) => {
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
+    const relDir = dirPath ? (dirPath + (name ? '/' + name : '')) : name;
+    if (isProtectedPath(relDir) || (dirPath && isProtectedPath(dirPath))) {
+      return res.status(403).json({ error: '不可在系统目录下创建' });
+    }
     
     const result = await sshService.exec(`mkdir -p "${targetDir}"`);
     
@@ -483,6 +576,10 @@ router.post('/create-file', async (req, res) => {
     const targetFile = dirPath ? path.join(ftp.home_dir, dirPath, name) : path.join(ftp.home_dir, name);
     if (!targetFile.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
+    }
+    const relFile = dirPath ? `${dirPath}/${name}` : name;
+    if (isProtectedPath(relFile) || (dirPath && isProtectedPath(dirPath))) {
+      return res.status(403).json({ error: '不可在系统目录下创建文件' });
     }
     
     // 使用 cat 写入文件内容，转义特殊字符
@@ -521,6 +618,9 @@ router.post('/delete', async (req, res) => {
     if (!targetPath.startsWith(ftp.home_dir) || targetPath === ftp.home_dir) {
       return res.status(403).json({ error: '无权删除该文件' });
     }
+    if (isProtectedPath(filePath)) {
+      return res.status(403).json({ error: '系统文件不可删除' });
+    }
     
     const result = await sshService.exec(`rm -rf "${targetPath}"`);
     
@@ -551,6 +651,9 @@ router.post('/read', async (req, res) => {
     const targetPath = path.join(ftp.home_dir, filePath);
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
+    }
+    if (isProtectedPath(filePath)) {
+      return res.status(403).json({ error: '系统文件不可访问' });
     }
     
     const result = await sshService.exec(`cat "${targetPath}" 2>/dev/null`);
@@ -583,6 +686,9 @@ router.post('/read-binary', async (req, res) => {
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
+    if (isProtectedPath(filePath)) {
+      return res.status(403).json({ error: '系统文件不可访问' });
+    }
     
     const result = await sshService.exec(`base64 "${targetPath}" 2>/dev/null | tr -d '\\n'`);
     
@@ -613,6 +719,9 @@ router.post('/write', async (req, res) => {
     const targetPath = path.join(ftp.home_dir, filePath);
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
+    }
+    if (isProtectedPath(filePath)) {
+      return res.status(403).json({ error: '系统文件不可修改' });
     }
     
     // 将内容转为base64后写入，避免特殊字符问题
@@ -655,6 +764,9 @@ router.post('/rename', async (req, res) => {
     if (!targetOldPath.startsWith(ftp.home_dir) || !targetNewPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
     }
+    if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
+      return res.status(403).json({ error: '系统文件不可修改' });
+    }
     
     const result = await sshService.exec(`mv "${targetOldPath}" "${targetNewPath}"`);
     
@@ -678,6 +790,9 @@ router.post('/extract', async (req, res) => {
     const targetFile = path.join(ftp.home_dir, filePath);
     if (!targetFile.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
+    }
+    if (isProtectedPath(filePath) || (target_dir && isProtectedPath(target_dir))) {
+      return res.status(403).json({ error: '系统目录不可操作' });
     }
     
     // 确定解压目标目录
@@ -738,6 +853,9 @@ router.post('/compress', async (req, res) => {
     if (!fullPaths.every(p => p.startsWith(ftp.home_dir))) {
       return res.status(403).json({ error: '无权访问某些文件' });
     }
+    if (paths.some(p => isProtectedPath(p))) {
+      return res.status(403).json({ error: '系统文件不可压缩' });
+    }
     
     const archiveFormat = format || 'zip';
     
@@ -784,6 +902,9 @@ router.post('/copy', async (req, res) => {
     
     if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
+    }
+    if (isProtectedPath(source_path) || isProtectedPath(target_path)) {
+      return res.status(403).json({ error: '系统文件不可复制' });
     }
     
     // 使用工作线程处理复制
@@ -834,6 +955,9 @@ router.post('/cut', async (req, res) => {
     
     if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
+    }
+    if (isProtectedPath(source_path) || isProtectedPath(target_path)) {
+      return res.status(403).json({ error: '系统文件不可移动' });
     }
     
     // 使用 mv 移动
