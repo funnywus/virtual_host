@@ -25,14 +25,33 @@
     <div v-else class="main-container">
       <div class="header">
         <div class="header-left">
-          <span class="domain-info">{{ domain }}</span>
+          <div class="domain-badge" @click="copyDomain" title="点击复制网站地址">
+            <span class="domain-badge-label">网站域名</span>
+            <span class="domain-badge-value">{{ siteUrl }}</span>
+            <el-icon class="domain-copy-icon"><DocumentCopy /></el-icon>
+          </div>
           <el-tag type="success" size="small">已连接</el-tag>
         </div>
         <div class="header-actions">
           <el-button @click="showContactDialog = true" type="success"><el-icon style="margin-right:5px"><Service /></el-icon> 联系客服</el-button>
-          <el-button @click="showTutorialDialog = true"><el-icon style="margin-right:5px"><QuestionFilled /></el-icon> 帮助中心</el-button>
+          <el-button @click="showTutorialDialog = true"><el-icon style="margin-right:5px"><QuestionFilled /></el-icon> 上传教程</el-button>
           <el-button @click="openWebsite"><el-icon style="margin-right:5px"><Link /></el-icon> 访问网站</el-button>
           <el-button @click="logout">退出</el-button>
+        </div>
+      </div>
+
+      <!-- 全页拖拽上传提示 -->
+      <div class="drag-hint-bar">
+        <el-icon class="drag-hint-icon"><Upload /></el-icon>
+        <span>可直接将文件或文件夹<strong>拖到页面任意位置</strong>上传，添加后请确认再点击「开始上传」</span>
+      </div>
+
+      <!-- 全页拖拽遮罩 -->
+      <div v-if="isPageDragOver" class="page-drag-overlay">
+        <div class="page-drag-content">
+          <div class="page-drag-icon">📤</div>
+          <div class="page-drag-title">松开鼠标开始上传</div>
+          <div class="page-drag-sub">松开后请确认文件列表，再点击「开始上传」</div>
         </div>
       </div>
 
@@ -75,13 +94,10 @@
           <div class="stat-value">{{ files.filter(f => f.type === 'directory').length }}</div>
           <div class="stat-label">文件夹数量</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-value">{{ formatSize(usedSize) }}</div>
-          <div class="stat-label">已用空间</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">{{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
-          <div class="stat-label">剩余空间</div>
+        <div class="stat-card stat-card-storage">
+          <div class="stat-label">存储空间</div>
+          <div class="stat-storage-text">{{ formatSize(usedSize) }} / {{ formatSize(maxUploadSize) }}（{{ storagePercent }}%）</div>
+          <el-progress :percentage="storagePercent" :status="storageStatus" :stroke-width="6" :show-text="false" class="stat-storage-progress" />
         </div>
         <div class="stat-card stat-card-time" :class="{ 'expired': remainingDays !== null && remainingDays <= 0, 'warning': remainingDays !== null && remainingDays > 0 && remainingDays <= 7 }">
           <div class="stat-icon">
@@ -285,7 +301,7 @@
           <div v-if="!loading && files.length === 0" class="empty-tip">
             <div class="empty-icon">📂</div>
             <p style="font-size:16px;margin-bottom:10px">当前目录为空</p>
-            <p>点击上方按钮上传文件或创建文件夹</p>
+            <p class="empty-hint">拖拽文件到页面任意位置 · 点击上传 · 或 Ctrl+V 粘贴</p>
             <div class="quick-actions">
               <el-button type="primary" @click="showUploadDialog = true">上传文件</el-button>
               <el-button @click="showMkdirDialog = true">新建文件夹</el-button>
@@ -300,11 +316,25 @@
       </div>
 
       <!-- 上传对话框 -->
-      <el-dialog v-model="showUploadDialog" title="上传文件/文件夹" width="600px" :fullscreen="isMobile" append-to-body>
+      <el-dialog
+        v-model="showUploadDialog"
+        width="640px"
+        :fullscreen="isMobile"
+        append-to-body
+        :close-on-click-modal="!uploading"
+        :before-close="handleUploadDialogClose"
+      >
+        <template #header>
+          <div class="upload-dialog-header">
+            <span class="upload-dialog-title">上传文件/文件夹</span>
+            <el-tag v-if="directUploadOk" type="success" size="small" effect="plain">⚡ 直传加速</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">中转上传</el-tag>
+          </div>
+        </template>
         <!-- 上传区域 - 上传时自动折叠 -->
         <div v-if="!uploading" class="upload-area" :class="{ dragover: isDragover }" @dragover.prevent="isDragover = true" @dragleave="isDragover = false" @drop.prevent="handleDrop">
           <div class="upload-icon">📤</div>
-          <div class="upload-text">拖拽文件或文件夹到此处</div>
+          <div class="upload-text">拖拽文件或文件夹到页面任意位置</div>
           <div class="upload-or">或</div>
           <el-dropdown trigger="click" @command="handleUploadCommand">
             <el-button type="primary" size="large">
@@ -317,9 +347,22 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <div class="upload-hint">💾 剩余空间 {{ formatSize(Math.max(0, maxUploadSize - usedSize)) }}</div>
+          <div class="upload-hint">💾 剩余 {{ formatSize(Math.max(0, maxUploadSize - usedSize)) }} · Ctrl+V 粘贴 · 添加后自动上传</div>
+          <div class="upload-help-link" @click="showUploadDialog = false; showTutorialDialog = true">
+            <el-icon><QuestionFilled /></el-icon>
+            <span><code>index.html</code> 需在根目录，上传前请检查路径 · 查看上传教程</span>
+          </div>
           <input ref="fileInputRef" type="file" multiple hidden @change="handleFileSelect">
           <input ref="folderInputRef" type="file" webkitdirectory hidden @change="handleFolderSelect">
+        </div>
+
+        <!-- 总进度 -->
+        <div v-if="uploadQueue.length > 0" class="upload-overall-progress">
+          <div class="upload-overall-header">
+            <span>{{ uploading ? '正在上传' : '上传队列' }} · {{ uploadQueueStats.done }}/{{ uploadQueueStats.total }} 完成</span>
+            <span v-if="uploading">{{ overallUploadProgress }}%</span>
+          </div>
+          <el-progress :percentage="overallUploadProgress" :stroke-width="10" :status="uploadQueueStats.error > 0 && !uploading ? 'exception' : (overallUploadProgress === 100 && !uploading ? 'success' : '')" />
         </div>
         
         <!-- 上传统计信息 -->
@@ -340,12 +383,15 @@
           </div>
         </div>
         
-        <div v-if="uploadQueue.length > 0" style="margin-top:20px">
-          <div style="margin-bottom:10px;color:#606266;display:flex;justify-content:space-between;align-items:center">
-            <span>待上传 ({{ uploadQueue.length }} 个文件，共 {{ formatSize(uploadQueue.reduce((s,f) => s + f.file.size, 0)) }})</span>
-            <el-button type="danger" size="small" text @click="uploadQueue = []">清空列表</el-button>
+        <div v-if="uploadQueue.length > 0" style="margin-top:16px">
+          <div class="upload-queue-header">
+            <span>{{ uploadQueue.length }} 个文件 · {{ formatSize(uploadQueueStats.totalBytes) }}</span>
+            <div class="upload-queue-actions">
+              <el-button v-if="uploadQueueStats.done > 0 && !uploading" size="small" text @click="clearCompletedUploads">清除已完成</el-button>
+              <el-button v-if="!uploading" type="danger" size="small" text @click="uploadQueue = []">清空列表</el-button>
+            </div>
           </div>
-          <div style="max-height:250px;overflow-y:auto">
+          <div class="upload-queue-list">
             <div v-for="(item, index) in uploadQueue" :key="index" style="display:flex;align-items:center;padding:10px;background:#fafafa;border-radius:6px;margin-bottom:8px">
               <span style="font-size:20px;margin-right:10px">{{ getFileIcon(item.name) }}</span>
               <div style="flex:1;overflow:hidden;min-width:0">
@@ -374,12 +420,36 @@
           </div>
         </div>
         <template #footer>
-          <el-button @click="showUploadDialog = false; uploadQueue = []">关闭</el-button>
-          <el-button type="primary" @click="startUpload" :loading="uploading" :disabled="uploadQueue.filter(f => f.status === 'pending').length === 0">
-            开始上传 ({{ uploadQueue.filter(f => f.status === 'pending').length }})
-          </el-button>
+          <div class="upload-dialog-footer">
+            <el-checkbox v-model="autoStartUpload" :disabled="uploading" size="small">添加后自动上传</el-checkbox>
+            <div class="upload-dialog-footer-btns">
+              <el-button v-if="uploadQueueStats.error > 0 && !uploading" type="warning" @click="retryAllFailed">
+                重试失败 ({{ uploadQueueStats.error }})
+              </el-button>
+              <el-button @click="uploading ? (showUploadDialog = false) : handleUploadDialogClose(() => { showUploadDialog = false })">
+                {{ uploading ? '最小化' : '关闭' }}
+              </el-button>
+              <el-button type="primary" @click="startUpload" :loading="uploading" :disabled="uploadQueueStats.pending === 0">
+                {{ uploading ? '上传中...' : `开始上传 (${uploadQueueStats.pending})` }}
+              </el-button>
+            </div>
+          </div>
         </template>
       </el-dialog>
+
+      <!-- 上传进度浮窗（对话框最小化后仍可见） -->
+      <Transition name="slide-up">
+        <div v-if="showUploadFloat" class="upload-float-panel" @click="showUploadDialog = true">
+          <div class="upload-float-content">
+            <div class="upload-float-info">
+              <span class="upload-float-title">{{ uploading ? '上传中' : '待上传' }}</span>
+              <span class="upload-float-detail">{{ uploadQueueStats.done }}/{{ uploadQueueStats.total }} · {{ overallUploadProgress }}%</span>
+            </div>
+            <el-progress :percentage="overallUploadProgress" :stroke-width="4" :show-text="false" style="flex:1;margin:0 12px" />
+            <el-button type="primary" size="small" round @click.stop="showUploadDialog = true">查看</el-button>
+          </div>
+        </div>
+      </Transition>
 
       <!-- 新建文件夹对话框 -->
       <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px" :fullscreen="isMobile" append-to-body>
@@ -472,97 +542,75 @@
       </el-dialog>
 
       <!-- 使用教程对话框 -->
-      <el-dialog v-model="showTutorialDialog" title="📖 帮助中心" width="650px" :fullscreen="isMobile" append-to-body>
-        <div class="help-layout">
-          <div class="help-left">
-            <el-icon class="help-icon-el"><Upload /></el-icon>
-            <h3>快捷上传</h3>
-            <p>拖拽文件夹即可一键上传整个网站</p>
-            <el-button type="primary" @click="showTutorialDialog = false; showUploadDialog = true" style="margin-top:15px">
-              <el-icon style="margin-right:5px"><Upload /></el-icon>立即上传
-            </el-button>
+      <el-dialog v-model="showTutorialDialog" title="📖 上传教程" width="860px" align-center :fullscreen="isMobile" append-to-body class="help-dialog">
+        <div class="help-compact">
+          <div class="help-rule-bar">
+            <span class="help-rule-key">index.html 必须在网站根目录</span>
+            <span class="help-rule-domain">您的域名：<code>{{ domain || 'yourdomain.com' }}</code></span>
           </div>
-          <div class="help-right">
-            <div class="help-step">
-              <div class="help-step-num">1</div>
-              <div class="help-step-text">准备网站文件，<strong style="color:#f56c6c">首页文件名必须是 index.html</strong>（注意是小写）</div>
-            </div>
-            <div class="help-step">
-              <div class="help-step-num">2</div>
-              <div class="help-step-text">将文件或文件夹拖拽到上传区域</div>
-            </div>
-            <div class="help-step">
-              <div class="help-step-num">3</div>
-              <div class="help-step-text">确认文件列表后点击上传</div>
-            </div>
-            <div class="help-step">
-              <div class="help-step-num">4</div>
-              <div class="help-step-text">上传完成后点击"访问网站"查看效果</div>
-            </div>
-            <div class="help-tip">
-              <el-icon><InfoFilled /></el-icon>
-              <span><strong style="white-space:nowrap">重要：</strong>首页文件名必须是 index.html，否则网站无法正常访问！</span>
-            </div>
-            <div class="help-tip" style="background:#fef0f0;color:#f56c6c">
-              <el-icon><InfoFilled /></el-icon>
-              支持 HTML、CSS、JS、图片等常见文件
-            </div>
-          </div>
-        </div>
-      </el-dialog>
 
-      <!-- 快捷上传教程对话框 -->
-      <el-dialog v-model="showQuickTutorial" title="🚀 快捷上传教程" width="550px" :fullscreen="isMobile" append-to-body>
-        <div class="quick-tutorial">
-          <div class="quick-header">
-            <div class="quick-icon">📂</div>
-            <div class="quick-intro">
-              <h3>一键上传整个网站</h3>
-              <p>只需拖拽文件夹，系统自动保持目录结构</p>
+          <div class="help-steps-inline">
+            <div class="help-step-pill"><span>1</span>确认结构</div>
+            <div class="help-step-arrow">→</div>
+            <div class="help-step-pill"><span>2</span>拖到页面任意位置</div>
+            <div class="help-step-arrow">→</div>
+            <div class="help-step-pill"><span>3</span>检查路径</div>
+            <div class="help-step-arrow">→</div>
+            <div class="help-step-pill"><span>4</span>访问网站</div>
+          </div>
+
+          <div class="help-main-grid">
+            <div class="help-tree-card help-tree-good">
+              <div class="help-tree-badge">✅ 正确</div>
+              <div class="help-tree help-tree-sm">
+                <div class="help-tree-line help-tree-root">📁 根目录</div>
+                <div class="help-tree-line"><span class="help-tree-branch">├──</span> <span class="help-tree-highlight">index.html</span></div>
+                <div class="help-tree-line"><span class="help-tree-branch">├──</span> css/</div>
+                <div class="help-tree-line"><span class="help-tree-branch">└──</span> js/</div>
+              </div>
+              <div class="help-tree-foot">列表显示 <code>index.html</code></div>
+            </div>
+
+            <div class="help-tree-card help-tree-bad">
+              <div class="help-tree-badge">❌ 多套一层</div>
+              <div class="help-tree help-tree-sm">
+                <div class="help-tree-line help-tree-root">📁 根目录</div>
+                <div class="help-tree-line"><span class="help-tree-branch">└──</span> my-site/ <span class="help-tree-warn">多一层</span></div>
+                <div class="help-tree-line"><span class="help-tree-branch">&nbsp;&nbsp;&nbsp;&nbsp;</span> └── index.html</div>
+              </div>
+              <div class="help-tree-foot">拖入外层文件夹导致，应拖<strong>内部文件</strong></div>
+            </div>
+
+            <div class="help-tree-card help-tree-bad">
+              <div class="help-tree-badge">❌ 首页在子目录</div>
+              <div class="help-tree help-tree-sm">
+                <div class="help-tree-line help-tree-root">📁 根目录</div>
+                <div class="help-tree-line"><span class="help-tree-branch">├──</span> src/</div>
+                <div class="help-tree-line"><span class="help-tree-branch">└──</span> dist/ <span class="help-tree-warn">网站在这</span></div>
+                <div class="help-tree-line"><span class="help-tree-branch">&nbsp;&nbsp;&nbsp;&nbsp;</span> └── index.html</div>
+              </div>
+              <div class="help-tree-foot">只上传 <strong>dist 里的内容</strong>，不传 src 等</div>
             </div>
           </div>
-          <div class="quick-steps">
-            <div class="quick-step">
-              <div class="quick-step-num">1</div>
-              <div class="quick-step-content">
-                <div class="quick-step-title">准备网站文件</div>
-                <div class="quick-step-desc"><strong style="color:#f56c6c">首页文件名必须是 index.html</strong>（注意是小写），这是网站入口</div>
-              </div>
+
+          <div class="help-bottom-row">
+            <div class="help-path-mini help-path-good">
+              <span class="help-path-mini-label">✅ 路径正确</span>
+              <code>index.html</code> · <code>css/style.css</code>
             </div>
-            <div class="quick-step">
-              <div class="quick-step-num">2</div>
-              <div class="quick-step-content">
-                <div class="quick-step-title">拖拽上传</div>
-                <div class="quick-step-desc">将整个文件夹直接拖到上传区域</div>
-              </div>
-            </div>
-            <div class="quick-step">
-              <div class="quick-step-num">3</div>
-              <div class="quick-step-content">
-                <div class="quick-step-title">点击开始上传</div>
-                <div class="quick-step-desc">确认文件列表后点击上传按钮</div>
-              </div>
-            </div>
-            <div class="quick-step">
-              <div class="quick-step-num">4</div>
-              <div class="quick-step-content">
-                <div class="quick-step-title">访问网站</div>
-                <div class="quick-step-desc">上传完成后点击"访问网站"查看效果</div>
-              </div>
+            <div class="help-path-mini help-path-bad">
+              <span class="help-path-mini-label">❌ 路径错误</span>
+              <code>my-website/index.html</code>
             </div>
           </div>
-          <div class="quick-tip" style="background:#fef0f0;color:#f56c6c">
-            <el-icon><InfoFilled /></el-icon>
-            <span><strong style="white-space:nowrap">重要：</strong>首页文件名必须是 index.html，否则网站无法正常访问！</span>
-          </div>
-          <div class="quick-tip">
-            <el-icon><InfoFilled /></el-icon>
-            <span>支持的文件类型包括 HTML、CSS、JS、图片等常见网页文件</span>
+
+          <div class="help-footnote">
+            <code>index.html</code> 全小写 · 支持 HTML/CSS/JS/图片 · 可拖到页面任意位置上传
           </div>
         </div>
         <template #footer>
-          <el-button @click="showQuickTutorial = false">关闭</el-button>
-          <el-button type="primary" @click="showQuickTutorial = false; showUploadDialog = true">
+          <el-button @click="showTutorialDialog = false">关闭</el-button>
+          <el-button type="primary" @click="showTutorialDialog = false; showUploadDialog = true">
             <el-icon style="margin-right:5px"><Upload /></el-icon>立即上传
           </el-button>
         </template>
@@ -1064,15 +1112,16 @@ watch(useTemplate, (val) => {
   }
 })
 const showTutorialDialog = ref(false)
-const showQuickTutorial = ref(false)
 const showContactDialog = ref(false)
 const showRenameDialog = ref(false)
 const renamingFile = ref(null)
 const renaming = ref(false)
 const uploadQueue = ref([])
 const uploading = ref(false)
+const autoStartUpload = ref(localStorage.getItem('upload_auto_start') !== 'false')
 const isDragover = ref(false)
 const isFileDragOver = ref(false)
+const isPageDragOver = ref(false)
 const newFolderName = ref('')
 const creating = ref(false)
 
@@ -1090,6 +1139,53 @@ const fileInputRef = ref(null)
 const folderInputRef = ref(null)
 
 const pathParts = computed(() => currentPath.value ? currentPath.value.split('/').filter(p => p) : [])
+
+const siteUrl = computed(() => domain.value ? `https://${domain.value}` : '')
+
+const uploadQueueStats = computed(() => {
+  const q = uploadQueue.value
+  return {
+    total: q.length,
+    pending: q.filter(f => f.status === 'pending').length,
+    uploading: q.filter(f => f.status === 'uploading').length,
+    done: q.filter(f => f.status === 'done').length,
+    error: q.filter(f => f.status === 'error').length,
+    totalBytes: q.reduce((s, f) => s + f.file.size, 0),
+  }
+})
+
+const overallUploadProgress = computed(() => {
+  const total = uploadQueueStats.value.totalBytes
+  if (!total) return 0
+  const done = uploadQueue.value.filter(f => f.status === 'done').reduce((s, f) => s + f.file.size, 0)
+  const uploadingBytes = uploadQueue.value
+    .filter(f => f.status === 'uploading')
+    .reduce((s, f) => s + f.file.size * (f.progress || 0) / 100, 0)
+  return Math.min(100, Math.round((done + uploadingBytes) / total * 100))
+})
+
+const showUploadFloat = computed(() =>
+  !showUploadDialog.value && (
+    uploading.value ||
+    uploadQueue.value.some(f => f.status === 'uploading' || f.status === 'pending')
+  )
+)
+
+const storagePercent = computed(() => {
+  if (!maxUploadSize.value) return 0
+  return Math.min(100, Math.round((usedSize.value / maxUploadSize.value) * 100))
+})
+
+const storageStatus = computed(() => {
+  const p = storagePercent.value
+  if (p >= 95) return 'exception'
+  if (p >= 80) return 'warning'
+  return ''
+})
+
+watch(autoStartUpload, (val) => {
+  localStorage.setItem('upload_auto_start', val ? 'true' : 'false')
+})
 
 const api = async (url, data = {}) => {
   const res = await fetch(`${API_BASE}/api/upload${url}`, {
@@ -1165,14 +1261,24 @@ const loadDirectUploadConfig = async () => {
 }
 
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
-const openWebsite = () => window.open(`http://${domain.value}`, '_blank')
+const openWebsite = () => window.open(siteUrl.value, '_blank')
 const openFileUrl = (file) => {
   const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-  window.open(`http://${domain.value}/${filePath}`, '_blank')
+  window.open(`${siteUrl.value}/${filePath}`, '_blank')
 }
 const copyWechat = () => {
   navigator.clipboard.writeText('feiyu3305')
   ElMessage.success('微信号已复制')
+}
+
+const copyDomain = async () => {
+  if (!siteUrl.value) return
+  try {
+    await navigator.clipboard.writeText(siteUrl.value)
+    ElMessage.success(`已复制：${siteUrl.value}`)
+  } catch {
+    ElMessage.error('复制失败，请手动选择复制')
+  }
 }
 
 const loadFiles = async (skipUsage = false) => {
@@ -1264,10 +1370,11 @@ const checkAndAddFiles = async (fileList, keepPath = false) => {
   } else {
     uploadQueue.value.push(...filesToAdd)
   }
+  maybeAutoStartUpload()
 }
 
 // 处理文件冲突
-const handleFileConflict = async (allFiles, existingFiles) => {
+const handleFileConflict = async (allFiles, existingFiles, { autoStart = true } = {}) => {
   if (existingFiles.length === 1) {
     // 单个文件冲突
     try {
@@ -1282,12 +1389,14 @@ const handleFileConflict = async (allFiles, existingFiles) => {
       )
       // 用户选择覆盖，添加所有文件
       uploadQueue.value.push(...allFiles)
+      if (autoStart) maybeAutoStartUpload()
     } catch (e) {
       // 用户选择跳过，只添加不存在的文件
       const filesToAdd = allFiles.filter(f => !existingFiles.includes(f))
       uploadQueue.value.push(...filesToAdd)
       if (filesToAdd.length > 0) {
         ElMessage.info(`已跳过 1 个文件，添加了 ${filesToAdd.length} 个文件`)
+        if (autoStart) maybeAutoStartUpload()
       } else {
         ElMessage.info('已跳过该文件')
       }
@@ -1309,18 +1418,18 @@ const handleFileConflict = async (allFiles, existingFiles) => {
       // 用户选择全部覆盖
       uploadQueue.value.push(...allFiles)
       ElMessage.success(`已添加 ${allFiles.length} 个文件（将覆盖已存在的文件）`)
+      if (autoStart) maybeAutoStartUpload()
     } catch (action) {
       if (action === 'cancel') {
-        // 用户选择全部跳过
         const filesToAdd = allFiles.filter(f => !existingFiles.includes(f))
         uploadQueue.value.push(...filesToAdd)
         if (filesToAdd.length > 0) {
           ElMessage.info(`已跳过 ${existingFiles.length} 个文件，添加了 ${filesToAdd.length} 个文件`)
+          if (autoStart) maybeAutoStartUpload()
         } else {
           ElMessage.info(`已跳过所有文件`)
         }
       } else {
-        // 用户关闭对话框，不添加任何文件
         ElMessage.info('已取消添加文件')
       }
     }
@@ -1335,9 +1444,14 @@ const addFilesToQueue = (fileList, keepPath = false) => {
   uploadQueue.value.push(...newFiles)
 }
 
-const handleDrop = async (e) => {
-  isDragover.value = false
-  const items = e.dataTransfer.items
+const hasFileDrag = (e) => {
+  const types = e.dataTransfer?.types
+  return types ? [...types].includes('Files') : false
+}
+
+const collectFilesFromDrop = async (e) => {
+  const items = e.dataTransfer?.items
+  if (!items) return []
   const filesList = []
   const readEntry = async (entry, path = '') => {
     if (entry.isFile) {
@@ -1354,7 +1468,10 @@ const handleDrop = async (e) => {
         const readEntries = () => {
           dirReader.readEntries(async (entries) => {
             if (entries.length === 0) { resolve() }
-            else { for (const ent of entries) { await readEntry(ent, path ? path + '/' + entry.name : entry.name) }; readEntries() }
+            else {
+              for (const ent of entries) { await readEntry(ent, path ? path + '/' + entry.name : entry.name) }
+              readEntries()
+            }
           })
         }
         readEntries()
@@ -1365,32 +1482,49 @@ const handleDrop = async (e) => {
   for (const item of items) {
     const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null
     if (entry) { promises.push(readEntry(entry)) }
-    else if (item.kind === 'file') { const file = item.getAsFile(); if (file) filesList.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' }) }
+    else if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) filesList.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' })
+    }
   }
   await Promise.all(promises)
-  
-  // 检查文件冲突
+  return filesList
+}
+
+const enqueueDroppedFiles = async (filesList, { showMessage = false, autoStart = true } = {}) => {
+  if (filesList.length === 0) return
+
   const existingFiles = []
   for (const item of filesList) {
     const filePath = item.relativePath || item.name
     const pathParts = filePath.split('/')
     const fileName = pathParts[pathParts.length - 1]
-    
-    // 检查文件是否存在（只检查当前目录的文件）
     if (!item.relativePath || pathParts.length === 1) {
       const exists = files.value.some(f => f.type === 'file' && f.name === fileName)
-      if (exists) {
-        existingFiles.push(item)
-      }
+      if (exists) existingFiles.push(item)
     }
   }
-  
-  // 如果有文件已存在，显示确认对话框
+
   if (existingFiles.length > 0) {
-    await handleFileConflict(filesList, existingFiles)
+    await handleFileConflict(filesList, existingFiles, { autoStart })
   } else {
     uploadQueue.value.push(...filesList)
   }
+
+  if (showMessage) {
+    ElMessage.success(autoStart
+      ? `已添加 ${filesList.length} 个文件到上传队列`
+      : `已添加 ${filesList.length} 个文件，请确认后点击「开始上传」`)
+  }
+  if (autoStart) maybeAutoStartUpload()
+}
+
+const handleDrop = async (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  isDragover.value = false
+  const filesList = await collectFilesFromDrop(e)
+  await enqueueDroppedFiles(filesList, { autoStart: false })
 }
 
 // 文件列表区域拖拽处理
@@ -1400,7 +1534,6 @@ const handleFileDragOver = (e) => {
 }
 
 const handleFileDragLeave = (e) => {
-  // 只有当离开整个文件列表区域时才取消高亮
   if (e.target.classList.contains('file-list')) {
     isFileDragOver.value = false
   }
@@ -1408,84 +1541,118 @@ const handleFileDragLeave = (e) => {
 
 const handleFileListDrop = async (e) => {
   e.preventDefault()
+  e.stopPropagation()
   isFileDragOver.value = false
-  
-  // 自动打开上传对话框
+  isPageDragOver.value = false
   showUploadDialog.value = true
-  
-  // 处理拖拽的文件
-  const items = e.dataTransfer.items
-  const filesList = []
-  
-  const readEntry = async (entry, path = '') => {
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        entry.file(file => {
-          const relativePath = path ? path + '/' + file.name : file.name
-          filesList.push({ file, name: file.name, relativePath: path ? relativePath : '', uploadPath: relativePath, status: 'pending' })
-          resolve()
-        })
-      })
-    } else if (entry.isDirectory) {
-      const dirReader = entry.createReader()
-      return new Promise((resolve) => {
-        const readEntries = () => {
-          dirReader.readEntries(async (entries) => {
-            if (entries.length === 0) { resolve() }
-            else { 
-              for (const ent of entries) { 
-                await readEntry(ent, path ? path + '/' + entry.name : entry.name) 
-              }
-              readEntries() 
-            }
-          })
-        }
-        readEntries()
-      })
-    }
+  const filesList = await collectFilesFromDrop(e)
+  await enqueueDroppedFiles(filesList, { showMessage: true, autoStart: false })
+}
+
+const handlePageDragOver = (e) => {
+  if (!authorized.value || showUploadDialog.value || !hasFileDrag(e)) return
+  e.preventDefault()
+  isPageDragOver.value = true
+}
+
+const handlePageDragLeave = (e) => {
+  if (!hasFileDrag(e)) return
+  if (e.relatedTarget === null) isPageDragOver.value = false
+}
+
+const handlePageDrop = async (e) => {
+  if (!authorized.value || showUploadDialog.value || !hasFileDrag(e)) return
+  if (e.target.closest?.('.file-list') || e.target.closest?.('.upload-area')) return
+  e.preventDefault()
+  e.stopPropagation()
+  isPageDragOver.value = false
+  showUploadDialog.value = true
+  const filesList = await collectFilesFromDrop(e)
+  await enqueueDroppedFiles(filesList, { showMessage: true, autoStart: false })
+}
+
+const bindPageDragEvents = () => {
+  unbindPageDragEvents()
+  window.addEventListener('dragover', handlePageDragOver)
+  window.addEventListener('dragleave', handlePageDragLeave)
+  window.addEventListener('drop', handlePageDrop)
+}
+
+const unbindPageDragEvents = () => {
+  window.removeEventListener('dragover', handlePageDragOver)
+  window.removeEventListener('dragleave', handlePageDragLeave)
+  window.removeEventListener('drop', handlePageDrop)
+}
+
+const updatePageDragEvents = () => {
+  if (authorized.value && !showUploadDialog.value) {
+    bindPageDragEvents()
+  } else {
+    unbindPageDragEvents()
+    isPageDragOver.value = false
   }
-  
-  const promises = []
+}
+
+const maybeAutoStartUpload = () => {
+  if (!autoStartUpload.value || uploading.value) return
+  if (!uploadQueue.value.some(f => f.status === 'pending')) return
+  setTimeout(() => {
+    if (!uploading.value && uploadQueue.value.some(f => f.status === 'pending')) {
+      startUpload()
+    }
+  }, 400)
+}
+
+const handleUploadDialogClose = (done) => {
+  if (uploading.value) {
+    done()
+    return
+  }
+  if (uploadQueue.value.length === 0) {
+    done()
+    return
+  }
+  ElMessageBox.confirm('关闭将清空当前上传列表，确定吗？', '提示', {
+    type: 'warning',
+    confirmButtonText: '清空并关闭',
+    cancelButtonText: '继续编辑',
+  }).then(() => {
+    uploadQueue.value = []
+    done()
+  }).catch(() => {})
+}
+
+const clearCompletedUploads = () => {
+  uploadQueue.value = uploadQueue.value.filter(f => f.status !== 'done')
+}
+
+const retryAllFailed = async () => {
+  const failed = uploadQueue.value.filter(f => f.status === 'error')
+  if (failed.length === 0) return
+  failed.forEach(f => {
+    f.status = 'pending'
+    f.progress = 0
+    f.errorMessage = ''
+  })
+  await startUpload()
+}
+
+const handlePaste = (e) => {
+  if (!authorized.value || showEditDialog.value) return
+  const items = e.clipboardData?.items
+  if (!items) return
+  const pastedFiles = []
   for (const item of items) {
-    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null
-    if (entry) { 
-      promises.push(readEntry(entry)) 
-    } else if (item.kind === 'file') { 
+    if (item.kind === 'file') {
       const file = item.getAsFile()
-      if (file) {
-        filesList.push({ file, name: file.name, relativePath: '', uploadPath: file.name, status: 'pending' })
-      }
+      if (file) pastedFiles.push(file)
     }
   }
-  
-  await Promise.all(promises)
-  
-  if (filesList.length > 0) {
-    // 检查文件冲突
-    const existingFiles = []
-    for (const item of filesList) {
-      const filePath = item.relativePath || item.name
-      const pathParts = filePath.split('/')
-      const fileName = pathParts[pathParts.length - 1]
-      
-      // 检查文件是否存在（只检查当前目录的文件）
-      if (!item.relativePath || pathParts.length === 1) {
-        const exists = files.value.some(f => f.type === 'file' && f.name === fileName)
-        if (exists) {
-          existingFiles.push(item)
-        }
-      }
-    }
-    
-    // 如果有文件已存在，显示确认对话框
-    if (existingFiles.length > 0) {
-      await handleFileConflict(filesList, existingFiles)
-    } else {
-      uploadQueue.value.push(...filesList)
-    }
-    
-    ElMessage.success(`已添加 ${filesList.length} 个文件到上传队列`)
-  }
+  if (pastedFiles.length === 0) return
+  e.preventDefault()
+  showUploadDialog.value = true
+  checkAndAddFiles(pastedFiles, false)
+  ElMessage.info(`已从剪贴板添加 ${pastedFiles.length} 个文件`)
 }
 
 const startUpload = async () => {
@@ -2040,18 +2207,22 @@ onMounted(() => {
   const codeFromUrl = urlParams.get('code')
   if (codeFromUrl) {
     authCode.value = codeFromUrl
-    // 清除 URL 参数
     window.history.replaceState({}, '', window.location.pathname)
   }
-  
+
   if (authCode.value) verifyAuth()
-  
-  // 监听窗口大小变化
+
   window.addEventListener('resize', handleResize)
+  window.addEventListener('paste', handlePaste)
 })
+
+watch([authorized, showUploadDialog], updatePageDragEvents, { immediate: true })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('paste', handlePaste)
+  unbindPageDragEvents()
+  if (uploadStatsInterval.value) clearInterval(uploadStatsInterval.value)
 })
 
 const handleResize = () => {
@@ -2168,12 +2339,86 @@ const handleResize = () => {
     0 1px 3px rgba(0, 0, 0, 0.02);
   border: 0.5px solid rgba(255, 255, 255, 1);
 }
-.header-left { display: flex; align-items: center; gap: 15px; }
-.domain-info { font-size: 19px; font-weight: 600; color: #1c1c1e; letter-spacing: -0.3px; }
+.header-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.domain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 14px;
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.08) 0%, rgba(0, 122, 255, 0.04) 100%);
+  border: 0.5px solid rgba(0, 122, 255, 0.18);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 100%;
+}
+.domain-badge:hover {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
+  border-color: rgba(0, 122, 255, 0.35);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.1);
+}
+.domain-badge:active {
+  transform: translateY(0);
+}
+.domain-badge-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #86868b;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.domain-badge-label::after {
+  content: '：';
+}
+.domain-badge-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: #007aff;
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.domain-copy-icon {
+  font-size: 14px;
+  color: #86868b;
+  flex-shrink: 0;
+  transition: color 0.2s;
+}
+.domain-badge:hover .domain-copy-icon {
+  color: #007aff;
+}
 .header-actions { display: flex; gap: 10px; }
+
+/* 全页拖拽上传 */
+.drag-hint-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+  padding: 10px 16px; background: linear-gradient(135deg, #ecf5ff 0%, #f0f9ff 100%);
+  border: 1px solid rgba(64, 158, 255, 0.2); border-radius: 10px;
+  font-size: 13px; color: #606266;
+}
+.drag-hint-icon { color: #409eff; font-size: 16px; flex-shrink: 0; }
+.drag-hint-bar strong { color: #409eff; font-weight: 600; }
+.page-drag-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(64, 158, 255, 0.12); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.page-drag-content {
+  text-align: center; padding: 36px 48px;
+  background: rgba(255, 255, 255, 0.95); border-radius: 16px;
+  border: 2px dashed #409eff; box-shadow: 0 8px 32px rgba(64, 158, 255, 0.2);
+}
+.page-drag-icon { font-size: 48px; margin-bottom: 12px; }
+.page-drag-title { font-size: 20px; font-weight: 600; color: #409eff; margin-bottom: 6px; }
+.page-drag-sub { font-size: 13px; color: #909399; }
+
 .stats-row { 
   display: grid; 
-  grid-template-columns: repeat(5, 1fr); 
+  grid-template-columns: repeat(4, 1fr); 
   gap: 15px; 
   margin-bottom: 20px; 
 }
@@ -2234,11 +2479,29 @@ const handleResize = () => {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.85) 100%);
 }
 .stat-card:nth-child(4) { 
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.85) 100%);
-}
-.stat-card:nth-child(5) { 
   background: linear-gradient(135deg, rgba(255, 249, 240, 0.95) 0%, rgba(255, 249, 240, 0.85) 100%);
   border-color: rgba(255, 149, 0, 0.1);
+}
+.stat-card-storage {
+  gap: 6px;
+  padding: 14px 16px;
+}
+.stat-card-storage .stat-label {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.stat-storage-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1c1c1e;
+  letter-spacing: -0.2px;
+  position: relative;
+  z-index: 1;
+}
+.stat-storage-progress {
+  width: 100%;
+  position: relative;
+  z-index: 1;
 }
 .stat-value { 
   font-size: 28px; 
@@ -2739,6 +3002,96 @@ const handleResize = () => {
 .grid-size { font-size: 10px; color: #007aff; text-align: center; margin-top: 2px; font-weight: 500; }
 .grid-more { position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity 0.2s; }
 .grid-item:hover .grid-more { opacity: 1; }
+
+.upload-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.upload-dialog-title { font-size: 16px; font-weight: 600; color: #1c1c1e; }
+
+.upload-overall-progress {
+  margin-top: 16px;
+  padding: 14px;
+  background: rgba(0, 122, 255, 0.06);
+  border-radius: 12px;
+  border: 0.5px solid rgba(0, 122, 255, 0.12);
+}
+.upload-overall-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.upload-queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  color: #606266;
+  font-size: 13px;
+}
+.upload-queue-actions { display: flex; gap: 4px; }
+.upload-queue-list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.upload-dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.upload-dialog-footer-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.upload-float-panel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  left: 24px;
+  max-width: 420px;
+  margin-left: auto;
+  z-index: 2000;
+  cursor: pointer;
+}
+.upload-float-content {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  border: 0.5px solid rgba(255, 255, 255, 0.8);
+}
+.upload-float-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 72px;
+}
+.upload-float-title { font-size: 14px; font-weight: 600; color: #1c1c1e; }
+.upload-float-detail { font-size: 12px; color: #86868b; margin-top: 2px; }
+
+.slide-up-enter-active, .slide-up-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.slide-up-enter-from, .slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.empty-hint { color: #909399; font-size: 13px; margin-bottom: 4px; }
+
 .upload-area { 
   border: 2px dashed rgba(209, 209, 214, 0.6); 
   border-radius: 20px; 
@@ -2859,32 +3212,69 @@ const handleResize = () => {
 .tips-list { display: flex; flex-wrap: wrap; gap: 10px; }
 .tip-tag { background: #fff; padding: 6px 12px; border-radius: 15px; font-size: 12px; color: #e6a23c; border: 1px solid #ffeeba; }
 
-/* 快捷上传教程样式 */
-.quick-tutorial { padding: 10px 0; }
-.quick-header { display: flex; align-items: center; gap: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 25px; border-radius: 12px; color: #fff; margin-bottom: 25px; }
-.quick-icon { font-size: 50px; }
-.quick-intro h3 { font-size: 20px; margin-bottom: 5px; }
-.quick-intro p { font-size: 14px; opacity: 0.9; }
-.quick-steps { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
-.quick-step { display: flex; align-items: flex-start; gap: 15px; padding: 18px; background: #f8f9fa; border-radius: 10px; transition: all 0.3s; }
-.quick-step:hover { background: #ecf5ff; transform: translateX(5px); }
-.quick-step-num { width: 36px; height: 36px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px; flex-shrink: 0; }
-.quick-step-content { flex: 1; }
-.quick-step-title { font-size: 15px; font-weight: 600; color: #303133; margin-bottom: 5px; }
-.quick-step-desc { font-size: 13px; color: #909399; }
-.quick-tip { display: flex; align-items: center; gap: 10px; padding: 15px; background: #ecf5ff; border-radius: 8px; color: #409eff; font-size: 13px; }
+/* 上传教程紧凑布局 */
+.help-dialog :deep(.el-dialog__body) { padding: 10px 20px 6px; }
+.help-dialog :deep(.el-dialog__header) { padding: 14px 20px 6px; margin-bottom: 0; }
+.help-dialog :deep(.el-dialog__footer) { padding: 8px 20px 14px; }
+.help-compact { display: flex; flex-direction: column; gap: 8px; }
+.help-rule-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px; color: #fff; font-size: 13px;
+}
+.help-rule-key { font-weight: 600; }
+.help-rule-domain { font-size: 12px; opacity: 0.9; }
+.help-rule-domain code { background: rgba(255,255,255,0.2); padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+.help-steps-inline {
+  display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 0;
+}
+.help-step-pill {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: #303133; font-weight: 500;
+}
+.help-step-pill span {
+  width: 20px; height: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.help-step-arrow { color: #c0c4cc; font-size: 12px; }
+.help-main-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.help-tree-card { border-radius: 8px; padding: 10px 12px; border: 1px solid #e4e7ed; display: flex; flex-direction: column; gap: 6px; }
+.help-tree-good { background: #f0f9eb; border-color: #c2e7b0; }
+.help-tree-bad { background: #fef0f0; border-color: #fbc4c4; }
+.help-tree-badge { font-size: 12px; font-weight: 600; }
+.help-tree-good .help-tree-badge { color: #67c23a; }
+.help-tree-bad .help-tree-badge { color: #f56c6c; }
+.help-tree { font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 11px; line-height: 1.5; background: rgba(255,255,255,0.7); border-radius: 6px; padding: 6px 8px; }
+.help-tree-line { color: #303133; }
+.help-tree-sm .help-tree-line { color: #303133; }
+.help-tree-root { font-weight: 600; }
+.help-tree-branch { color: #909399; }
+.help-tree-highlight { color: #409eff; font-weight: 600; }
+.help-tree-warn { color: #f56c6c; font-size: 10px; }
+.help-tree-foot { font-size: 11px; color: #606266; line-height: 1.4; }
+.help-tree-foot code { background: rgba(0,0,0,0.06); padding: 0 4px; border-radius: 3px; font-size: 10px; }
+.help-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.help-path-mini {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 6px;
+  font-size: 11px; border: 1px solid; overflow: hidden;
+}
+.help-path-mini-label { font-weight: 600; flex-shrink: 0; font-size: 11px; }
+.help-path-mini code { font-family: 'SF Mono', 'Menlo', monospace; font-size: 10px; background: rgba(255,255,255,0.6); padding: 1px 4px; border-radius: 3px; }
+.help-path-mini.help-path-good { background: #f0f9eb; border-color: #c2e7b0; color: #67c23a; }
+.help-path-mini.help-path-good code { color: #303133; }
+.help-path-mini.help-path-bad { background: #fef0f0; border-color: #fbc4c4; color: #f56c6c; }
+.help-path-mini.help-path-bad code { color: #f56c6c; }
+.help-footnote { font-size: 11px; color: #909399; text-align: center; line-height: 1.4; }
+.help-footnote code { background: #f4f4f5; padding: 0 4px; border-radius: 3px; font-size: 10px; color: #606266; }
 
-/* 帮助中心左右布局 */
-.help-layout { display: flex; gap: 30px; }
-.help-left { flex-shrink: 0; width: 180px; text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: #fff; }
-.help-icon-el { font-size: 50px; margin-bottom: 10px; }
-.help-left h3 { font-size: 18px; margin-bottom: 8px; }
-.help-left p { font-size: 12px; opacity: 0.9; line-height: 1.5; }
-.help-right { flex: 1; display: flex; flex-direction: column; gap: 12px; }
-.help-step { display: flex; align-items: center; gap: 12px; padding: 12px 15px; background: #f8f9fa; border-radius: 8px; }
-.help-step-num { width: 28px; height: 28px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0; }
-.help-step-text { font-size: 14px; color: #303133; }
-.help-tip { display: flex; align-items: center; gap: 8px; padding: 12px 15px; background: #ecf5ff; border-radius: 8px; color: #409eff; font-size: 13px; margin-top: 5px; }
+.upload-help-link {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 10px;
+  font-size: 12px; color: #909399; cursor: pointer; transition: color 0.2s;
+}
+.upload-help-link:hover { color: #409eff; }
+.upload-help-link code { background: #f4f4f5; padding: 0 4px; border-radius: 3px; font-size: 11px; color: #606266; }
+.upload-help-link:hover code { background: #ecf5ff; color: #409eff; }
 
 /* 手机端响应式 */
 @media (max-width: 768px) {
@@ -2892,10 +3282,15 @@ const handleResize = () => {
   
   .header { flex-direction: column; gap: 15px; padding: 15px; }
   .header-left { width: 100%; justify-content: center; }
+  .domain-badge { max-width: 100%; padding: 8px 10px; }
+  .domain-badge-value { font-size: 14px; }
   .header-actions { width: 100%; flex-wrap: wrap; justify-content: center; }
   .header-actions .el-button { flex: 1; min-width: 80px; padding: 8px 10px; font-size: 12px; }
   .header-actions .el-button .el-icon { margin-right: 3px !important; }
-  .domain-info { font-size: 16px; }
+
+  .drag-hint-bar { flex-wrap: wrap; font-size: 12px; padding: 8px 12px; margin-bottom: 12px; }
+  .page-drag-content { padding: 24px 32px; margin: 0 16px; }
+  .page-drag-title { font-size: 17px; }
   
   /* 续费提醒移动端 */
   .renew-alert-card {
@@ -2925,13 +3320,8 @@ const handleResize = () => {
   .stat-card { 
     padding: 15px 10px;
   }
-  .stat-card:nth-child(4),
-  .stat-card:nth-child(5) {
-    grid-column: span 1;
-  }
-  /* 如果只想让第5个卡片居中，可以用这个 */
-  .stat-card:nth-child(5) {
-    grid-column: 2 / 3;
+  .stat-card:nth-child(4) {
+    grid-column: 1 / -1;
   }
   .stat-value { font-size: 20px; color: #1D1D1F; }
   .stat-label { font-size: 11px; color: #86868B; }
@@ -2975,17 +3365,15 @@ const handleResize = () => {
   
   .tutorial-cards { grid-template-columns: 1fr; }
   
-  .quick-header { flex-direction: column; text-align: center; padding: 20px; }
-  .quick-icon { font-size: 40px; }
-  .quick-intro h3 { font-size: 18px; }
-  .quick-step { padding: 15px; }
-  .quick-step-num { width: 30px; height: 30px; font-size: 14px; }
-  
-  .help-layout { flex-direction: column; gap: 20px; }
-  .help-left { width: 100%; }
+  .help-main-grid { grid-template-columns: 1fr; }
+  .help-bottom-row { grid-template-columns: 1fr; }
+  .help-rule-bar { flex-direction: column; align-items: flex-start; gap: 4px; }
   
   .upload-area { padding: 30px 15px; }
   .upload-icon { font-size: 36px; }
+  .upload-dialog-footer { flex-direction: column; align-items: stretch; }
+  .upload-dialog-footer-btns { justify-content: flex-end; }
+  .upload-float-panel { left: 12px; right: 12px; bottom: 12px; }
   
   /* 上传统计响应式 */
   .stats-row-upload { flex-direction: column; gap: 10px; }
@@ -3006,8 +3394,8 @@ const handleResize = () => {
     grid-template-columns: repeat(2, 1fr);
     gap: 8px;
   }
-  .stat-card:nth-child(5) {
-    grid-column: 1 / -1; /* 第5个卡片占满整行 */
+  .stat-card:nth-child(4) {
+    grid-column: 1 / -1;
   }
   
   .tips-list { flex-direction: column; }
