@@ -30,7 +30,6 @@
             <span class="domain-badge-value">{{ siteUrl }}</span>
             <el-icon class="domain-copy-icon"><DocumentCopy /></el-icon>
           </div>
-          <el-tag type="success" size="small">已连接</el-tag>
         </div>
         <div class="header-actions">
           <el-button @click="showContactDialog = true" type="success"><el-icon style="margin-right:5px"><Service /></el-icon> 联系客服</el-button>
@@ -46,13 +45,9 @@
         <span>可直接将文件或文件夹<strong>拖到页面任意位置</strong>上传，添加后请确认再点击「开始上传」</span>
       </div>
 
-      <!-- 全页拖拽遮罩 -->
+      <!-- 全页拖拽遮罩（宝塔风格：轻量边框提示） -->
       <div v-if="isPageDragOver" class="page-drag-overlay">
-        <div class="page-drag-content">
-          <div class="page-drag-icon">📤</div>
-          <div class="page-drag-title">松开鼠标开始上传</div>
-          <div class="page-drag-sub">松开后请确认文件列表，再点击「开始上传」</div>
-        </div>
+        <div class="page-drag-tip">松开鼠标添加文件</div>
       </div>
 
       <!-- 续费提醒 -->
@@ -101,13 +96,13 @@
         </div>
         <div class="stat-card stat-card-time" :class="{ 'expired': remainingDays !== null && remainingDays <= 0, 'warning': remainingDays !== null && remainingDays > 0 && remainingDays <= 7 }">
           <div class="stat-icon">
-            <el-icon v-if="remainingDays !== null && remainingDays <= 0" style="font-size:24px;color:#FF3B30"><WarningFilled /></el-icon>
-            <el-icon v-else-if="remainingDays !== null && remainingDays <= 7" style="font-size:24px;color:#FF9500"><Clock /></el-icon>
-            <el-icon v-else style="font-size:24px;color:#34C759"><CircleCheck /></el-icon>
+            <el-icon v-if="remainingDays !== null && remainingDays <= 0" style="font-size:18px;color:#FF3B30"><WarningFilled /></el-icon>
+            <el-icon v-else-if="remainingDays !== null && remainingDays <= 7" style="font-size:18px;color:#FF9500"><Clock /></el-icon>
+            <el-icon v-else style="font-size:18px;color:#34C759"><CircleCheck /></el-icon>
           </div>
           <div class="stat-value stat-value-time">
             <template v-if="remainingDays === null">
-              <span style="font-size:20px">∞</span>
+              <span style="font-size:18px">∞</span>
             </template>
             <template v-else-if="remainingDays <= 0">
               <span style="color:#FF3B30">已过期</span>
@@ -204,7 +199,7 @@
               <div v-else class="file-size-col">-</div>
               <div class="file-date-col">{{ formatDate(file.date) }}</div>
               <div class="file-actions" @click.stop>
-                <el-button v-if="file.type === 'file'" type="primary" size="small" @click="openFileUrl(file)" style="margin-right:8px">访问</el-button>
+                <el-button v-if="file.type === 'file'" type="primary" size="small" @click="openFileUrl(file)" style="margin-right:4px">访问</el-button>
                 <el-dropdown trigger="click">
                   <el-button size="small">操作<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                   <template #dropdown>
@@ -318,7 +313,9 @@
       <!-- 上传对话框 -->
       <el-dialog
         v-model="showUploadDialog"
-        width="640px"
+        class="upload-dialog"
+        width="560px"
+        align-center
         :fullscreen="isMobile"
         append-to-body
         :close-on-click-modal="!uploading"
@@ -326,110 +323,99 @@
       >
         <template #header>
           <div class="upload-dialog-header">
-            <span class="upload-dialog-title">上传文件/文件夹</span>
-            <el-tag v-if="directUploadOk" type="success" size="small" effect="plain">⚡ 直传加速</el-tag>
-            <el-tag v-else type="info" size="small" effect="plain">中转上传</el-tag>
+            <span class="upload-dialog-title">上传文件</span>
+            <el-tag v-if="directUploadOk" type="success" size="small" effect="plain">直传</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">中转</el-tag>
           </div>
         </template>
-        <!-- 上传区域 - 上传时自动折叠 -->
-        <div v-if="!uploading" class="upload-area" :class="{ dragover: isDragover }" @dragover.prevent="isDragover = true" @dragleave="isDragover = false" @drop.prevent="handleDrop">
-          <div class="upload-icon">📤</div>
-          <div class="upload-text">拖拽文件或文件夹到页面任意位置</div>
-          <div class="upload-or">或</div>
-          <el-dropdown trigger="click" @command="handleUploadCommand">
-            <el-button type="primary" size="large">
-              点击选择上传 <el-icon style="margin-left:5px"><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="file"><el-icon><Document /></el-icon> 选择文件</el-dropdown-item>
-                <el-dropdown-item command="folder"><el-icon><Folder /></el-icon> 选择文件夹</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <div class="upload-hint">💾 剩余 {{ formatSize(Math.max(0, maxUploadSize - usedSize)) }} · Ctrl+V 粘贴 · 添加后自动上传</div>
-          <div class="upload-help-link" @click="showUploadDialog = false; showTutorialDialog = true">
-            <el-icon><QuestionFilled /></el-icon>
-            <span><code>index.html</code> 需在根目录，上传前请检查路径 · 查看上传教程</span>
-          </div>
+        <div class="upload-dialog-body">
           <input ref="fileInputRef" type="file" multiple hidden @change="handleFileSelect">
           <input ref="folderInputRef" type="file" webkitdirectory hidden @change="handleFolderSelect">
-        </div>
+          <!-- 大上传区：仅队列为空时显示 -->
+          <div v-if="!uploading && uploadQueue.length === 0" class="upload-area" :class="{ dragover: isDragover }" @dragenter.prevent="handleUploadAreaDragEnter" @dragover.prevent="handleUploadAreaDragOver" @dragleave="handleUploadAreaDragLeave" @drop.prevent="handleDrop">
+            <el-icon class="upload-area-icon"><Upload /></el-icon>
+            <div class="upload-text">拖拽文件或文件夹到此处</div>
+            <el-dropdown trigger="click" @command="handleUploadCommand">
+              <el-button type="primary" size="default">选择文件/文件夹</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="file"><el-icon><Document /></el-icon> 选择文件</el-dropdown-item>
+                  <el-dropdown-item command="folder"><el-icon><Folder /></el-icon> 选择文件夹</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <div class="upload-hint">剩余 {{ formatSize(Math.max(0, maxUploadSize - usedSize)) }} · Ctrl+V 粘贴</div>
+          </div>
+          <!-- 已有文件：紧凑添加条 -->
+          <div v-if="!uploading && uploadQueue.length > 0" class="upload-add-strip" :class="{ dragover: isDragover }" @dragenter.prevent="handleUploadAreaDragEnter" @dragover.prevent="handleUploadAreaDragOver" @dragleave="handleUploadAreaDragLeave" @drop.prevent="handleDrop">
+            <el-icon><Upload /></el-icon>
+            <span>继续添加：</span>
+            <el-dropdown trigger="click" @command="handleUploadCommand">
+              <el-button type="primary" link size="small">选择文件</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="file"><el-icon><Document /></el-icon> 选择文件</el-dropdown-item>
+                  <el-dropdown-item command="folder"><el-icon><Folder /></el-icon> 选择文件夹</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <span class="upload-add-strip-or">或拖拽到此处</span>
+          </div>
 
-        <!-- 总进度 -->
-        <div v-if="uploadQueue.length > 0" class="upload-overall-progress">
-          <div class="upload-overall-header">
-            <span>{{ uploading ? '正在上传' : '上传队列' }} · {{ uploadQueueStats.done }}/{{ uploadQueueStats.total }} 完成</span>
-            <span v-if="uploading">{{ overallUploadProgress }}%</span>
-          </div>
-          <el-progress :percentage="overallUploadProgress" :stroke-width="10" :status="uploadQueueStats.error > 0 && !uploading ? 'exception' : (overallUploadProgress === 100 && !uploading ? 'success' : '')" />
-        </div>
-        
-        <!-- 上传统计信息 -->
-        <div v-if="uploading && uploadStats.startTime" class="upload-stats">
-          <div class="stats-row-upload">
-            <div class="stat-item-upload">
-              <span class="stat-label-upload">⏱️ 已用时间</span>
-              <span class="stat-value-upload">{{ formatDuration(uploadStats.duration) }}</span>
-            </div>
-            <div class="stat-item-upload">
-              <span class="stat-label-upload">📊 已上传</span>
-              <span class="stat-value-upload">{{ formatSize(uploadStats.uploadedBytes) }}</span>
-            </div>
-            <div class="stat-item-upload">
-              <span class="stat-label-upload">🚀 上传速度</span>
-              <span class="stat-value-upload">{{ formatSize(uploadStats.speed) }}/s</span>
-            </div>
-          </div>
-        </div>
-        
-        <div v-if="uploadQueue.length > 0" style="margin-top:16px">
-          <div class="upload-queue-header">
-            <span>{{ uploadQueue.length }} 个文件 · {{ formatSize(uploadQueueStats.totalBytes) }}</span>
-            <div class="upload-queue-actions">
-              <el-button v-if="uploadQueueStats.done > 0 && !uploading" size="small" text @click="clearCompletedUploads">清除已完成</el-button>
-              <el-button v-if="!uploading" type="danger" size="small" text @click="uploadQueue = []">清空列表</el-button>
-            </div>
-          </div>
-          <div class="upload-queue-list">
-            <div v-for="(item, index) in uploadQueue" :key="index" style="display:flex;align-items:center;padding:10px;background:#fafafa;border-radius:6px;margin-bottom:8px">
-              <span style="font-size:20px;margin-right:10px">{{ getFileIcon(item.name) }}</span>
-              <div style="flex:1;overflow:hidden;min-width:0">
-                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ item.name }}</div>
-                <div v-if="item.relativePath" style="font-size:11px;color:#909399;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.relativePath }}</div>
-                <div v-if="item.status === 'error' && item.errorMessage" style="font-size:11px;color:#f56c6c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.errorMessage }}</div>
+          <template v-if="uploadQueue.length > 0">
+            <div class="upload-toolbar">
+              <span>{{ uploadQueue.length }} 个文件 · {{ formatSize(uploadQueueStats.totalBytes) }}</span>
+              <div class="upload-queue-actions">
+                <el-button v-if="uploadQueueStats.done > 0 && !uploading" size="small" link @click="clearCompletedUploads">清除已完成</el-button>
+                <el-button v-if="!uploading" type="danger" size="small" link @click="uploadQueue = []">清空</el-button>
               </div>
-              <span style="color:#909399;font-size:12px;margin:0 10px;white-space:nowrap">{{ formatSize(item.file.size) }}</span>
-              <div v-if="item.status === 'uploading'" style="flex:1;max-width:220px;margin:0 10px">
-                <el-progress :percentage="item.progress || 0" :stroke-width="6" :show-text="false" :status="item.step === 2 ? 'success' : ''" />
-                <div style="font-size:11px;color:#909399;margin-top:2px;display:flex;justify-content:space-between;white-space:nowrap">
-                  <span>
-                    <span style="color:#409eff">[步骤{{ item.step || 1 }}/{{ item.totalSteps || 2 }}]</span>
-                    {{ item.stepLabel }}
-                  </span>
-                  <span v-if="item.step === 1 && item.eta">{{ item.speed }} · 剩余 {{ item.eta }}</span>
+            </div>
+            <div class="upload-overall-progress">
+              <div class="upload-overall-header">
+                <span>{{ uploading ? '上传中' : '待上传' }} {{ uploadQueueStats.done }}/{{ uploadQueueStats.total }}</span>
+                <span v-if="uploading">{{ overallUploadProgress }}%</span>
+              </div>
+              <el-progress :percentage="overallUploadProgress" :stroke-width="6" :show-text="false" :status="uploadQueueStats.error > 0 && !uploading ? 'exception' : (overallUploadProgress === 100 && !uploading ? 'success' : '')" />
+            </div>
+            <div v-if="uploading && uploadStats.startTime" class="upload-stats-bar">
+              <span>⏱ {{ formatDuration(uploadStats.duration) }}</span>
+              <span>📊 {{ formatSize(uploadStats.uploadedBytes) }}</span>
+              <span>🚀 {{ formatSize(uploadStats.speed) }}/s</span>
+            </div>
+            <div class="upload-queue-list">
+              <div v-for="(item, index) in uploadQueue" :key="index" class="upload-queue-item">
+                <span class="upload-item-icon">{{ getFileIcon(item.name) }}</span>
+                <div class="upload-item-info">
+                  <div class="upload-item-name">{{ item.name }}</div>
+                  <div v-if="item.relativePath" class="upload-item-path">{{ item.relativePath }}</div>
+                  <div v-if="item.status === 'error' && item.errorMessage" class="upload-item-error">{{ item.errorMessage }}</div>
+                  <div v-if="item.status === 'uploading'" class="upload-item-progress">
+                    <el-progress :percentage="item.progress || 0" :stroke-width="4" :show-text="false" />
+                    <span class="upload-item-step">{{ item.stepLabel }}<template v-if="item.step === 1 && item.eta"> · {{ item.speed }} · 剩余 {{ item.eta }}</template></span>
+                  </div>
                 </div>
+                <span class="upload-item-size">{{ formatSize(item.file.size) }}</span>
+                <el-tag class="upload-item-tag" :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
+                  {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (item.progress + '%') : '等待' }}
+                </el-tag>
+                <el-button v-if="item.status === 'pending'" type="danger" size="small" link @click="uploadQueue.splice(index, 1)"><el-icon><Close /></el-icon></el-button>
+                <el-button v-if="item.status === 'uploading' && item.uploader" type="danger" size="small" link @click="cancelUpload(item)" title="取消"><el-icon><Close /></el-icon></el-button>
+                <el-button v-if="item.status === 'error'" type="primary" size="small" link @click="retryUpload(item)" title="重试"><el-icon><Refresh /></el-icon></el-button>
               </div>
-              <el-tag :type="item.status === 'done' ? 'success' : item.status === 'error' ? 'danger' : item.status === 'uploading' ? 'warning' : 'info'" size="small">
-                {{ item.status === 'done' ? '完成' : item.status === 'error' ? '失败' : item.status === 'uploading' ? (item.progress + '%') : '等待' }}
-              </el-tag>
-              <el-button v-if="item.status === 'pending'" type="danger" size="small" text @click="uploadQueue.splice(index, 1)" style="margin-left:5px"><el-icon><Close /></el-icon></el-button>
-              <el-button v-if="item.status === 'uploading' && item.uploader" type="danger" size="small" text @click="cancelUpload(item)" style="margin-left:5px" title="取消上传"><el-icon><Close /></el-icon></el-button>
-              <el-button v-if="item.status === 'error'" type="primary" size="small" text @click="retryUpload(item)" style="margin-left:5px" title="重试"><el-icon><Refresh /></el-icon></el-button>
             </div>
-          </div>
+          </template>
         </div>
         <template #footer>
           <div class="upload-dialog-footer">
             <el-checkbox v-model="autoStartUpload" :disabled="uploading" size="small">添加后自动上传</el-checkbox>
             <div class="upload-dialog-footer-btns">
-              <el-button v-if="uploadQueueStats.error > 0 && !uploading" type="warning" @click="retryAllFailed">
+              <el-button v-if="uploadQueueStats.error > 0 && !uploading" type="warning" size="small" @click="retryAllFailed">
                 重试失败 ({{ uploadQueueStats.error }})
               </el-button>
-              <el-button @click="uploading ? (showUploadDialog = false) : handleUploadDialogClose(() => { showUploadDialog = false })">
+              <el-button size="small" @click="uploading ? (showUploadDialog = false) : handleUploadDialogClose(() => { showUploadDialog = false })">
                 {{ uploading ? '最小化' : '关闭' }}
               </el-button>
-              <el-button type="primary" @click="startUpload" :loading="uploading" :disabled="uploadQueueStats.pending === 0">
+              <el-button type="primary" size="small" @click="startUpload" :loading="uploading" :disabled="uploadQueueStats.pending === 0">
                 {{ uploading ? '上传中...' : `开始上传 (${uploadQueueStats.pending})` }}
               </el-button>
             </div>
@@ -542,7 +528,7 @@
       </el-dialog>
 
       <!-- 使用教程对话框 -->
-      <el-dialog v-model="showTutorialDialog" title="📖 上传教程" width="860px" align-center :fullscreen="isMobile" append-to-body class="help-dialog">
+      <el-dialog v-model="showTutorialDialog" title="上传教程" width="780px" align-center :fullscreen="isMobile" append-to-body class="help-dialog">
         <div class="help-compact">
           <div class="help-rule-bar">
             <span class="help-rule-key">index.html 必须在网站根目录</span>
@@ -618,28 +604,53 @@
     </div>
 
     <!-- 联系客服对话框（放在外层，授权页面也能访问） -->
-    <el-dialog v-model="showContactDialog" title="💬 联系客服" width="500px" :fullscreen="isMobile" append-to-body>
+    <el-dialog
+      v-model="showContactDialog"
+      width="480px"
+      :fullscreen="isMobile"
+      append-to-body
+      class="contact-dialog"
+      :show-close="true"
+    >
+      <template #header>
+        <div class="contact-dialog-header">
+          <div class="contact-dialog-icon">
+            <el-icon><Service /></el-icon>
+          </div>
+          <div>
+            <div class="contact-dialog-title">联系客服</div>
+            <div class="contact-dialog-subtitle">续费、咨询、技术支持</div>
+          </div>
+        </div>
+      </template>
       <div class="contact-content">
-        <div class="contact-layout">
-          <div class="contact-left">
-            <div class="qrcode-box">
+        <div class="contact-card">
+          <div class="contact-qrcode-section">
+            <div class="qrcode-frame">
               <img src="/wechat-qrcode.png" alt="微信二维码" class="qrcode-img" />
-              <p class="qrcode-tip">微信扫码添加</p>
             </div>
+            <p class="qrcode-tip">微信扫码添加客服</p>
           </div>
-          <div class="contact-right">
-            <div class="contact-icon">💁‍♀️</div>
-            <h3 class="contact-title">添加客服微信</h3>
-            <p class="contact-desc">如有任何问题，欢迎添加客服微信咨询</p>
-            <div class="wechat-info">
-              <div class="wechat-label">微信号</div>
-              <div class="wechat-id">feiyu3305</div>
+          <div class="contact-divider">
+            <span>或</span>
+          </div>
+          <div class="contact-wechat-section">
+            <div class="wechat-id-row">
+              <div class="wechat-id-info">
+                <span class="wechat-label">微信号</span>
+                <span class="wechat-id">feiyu3305</span>
+              </div>
+              <el-button type="primary" round @click="copyWechat" class="wechat-copy-btn">
+                <el-icon><DocumentCopy /></el-icon>
+                复制
+              </el-button>
             </div>
-            <el-button type="success" @click="copyWechat" style="width:100%">
-              <el-icon style="margin-right:5px"><DocumentCopy /></el-icon>复制微信号
-            </el-button>
-            <p class="service-time">服务时间：周一至周日 9:00-22:00</p>
+            <p class="contact-desc">添加后请备注您的域名，方便快速处理</p>
           </div>
+        </div>
+        <div class="contact-footer">
+          <el-icon class="contact-footer-icon"><Clock /></el-icon>
+          <span>服务时间：周一至周日 9:00 – 22:00</span>
         </div>
       </div>
     </el-dialog>
@@ -1122,6 +1133,7 @@ const autoStartUpload = ref(localStorage.getItem('upload_auto_start') !== 'false
 const isDragover = ref(false)
 const isFileDragOver = ref(false)
 const isPageDragOver = ref(false)
+let uploadAreaDragDepth = 0
 const newFolderName = ref('')
 const creating = ref(false)
 
@@ -1523,8 +1535,39 @@ const handleDrop = async (e) => {
   e.preventDefault()
   e.stopPropagation()
   isDragover.value = false
+  uploadAreaDragDepth = 0
   const filesList = await collectFilesFromDrop(e)
   await enqueueDroppedFiles(filesList, { autoStart: false })
+}
+
+const handleUploadAreaDragEnter = (e) => {
+  if (!hasFileDrag(e)) return
+  e.preventDefault()
+  uploadAreaDragDepth++
+  isDragover.value = true
+}
+
+const handleUploadAreaDragOver = (e) => {
+  if (!hasFileDrag(e)) return
+  e.preventDefault()
+}
+
+const handleUploadAreaDragLeave = (e) => {
+  if (!hasFileDrag(e)) return
+  uploadAreaDragDepth--
+  if (uploadAreaDragDepth <= 0) {
+    uploadAreaDragDepth = 0
+    isDragover.value = false
+  }
+}
+
+const resetPageDragState = () => {
+  isPageDragOver.value = false
+}
+
+const isLeavingViewport = (e) => {
+  const { clientX, clientY } = e
+  return clientX <= 0 || clientY <= 0 || clientX >= window.innerWidth || clientY >= window.innerHeight
 }
 
 // 文件列表区域拖拽处理
@@ -1543,7 +1586,7 @@ const handleFileListDrop = async (e) => {
   e.preventDefault()
   e.stopPropagation()
   isFileDragOver.value = false
-  isPageDragOver.value = false
+  resetPageDragState()
   showUploadDialog.value = true
   const filesList = await collectFilesFromDrop(e)
   await enqueueDroppedFiles(filesList, { showMessage: true, autoStart: false })
@@ -1557,15 +1600,19 @@ const handlePageDragOver = (e) => {
 
 const handlePageDragLeave = (e) => {
   if (!hasFileDrag(e)) return
-  if (e.relatedTarget === null) isPageDragOver.value = false
+  if (e.relatedTarget === null || isLeavingViewport(e)) resetPageDragState()
+}
+
+const handlePageDragEnd = () => {
+  resetPageDragState()
 }
 
 const handlePageDrop = async (e) => {
   if (!authorized.value || showUploadDialog.value || !hasFileDrag(e)) return
-  if (e.target.closest?.('.file-list') || e.target.closest?.('.upload-area')) return
+  if (e.target.closest?.('.file-list') || e.target.closest?.('.upload-area') || e.target.closest?.('.upload-add-strip')) return
   e.preventDefault()
   e.stopPropagation()
-  isPageDragOver.value = false
+  resetPageDragState()
   showUploadDialog.value = true
   const filesList = await collectFilesFromDrop(e)
   await enqueueDroppedFiles(filesList, { showMessage: true, autoStart: false })
@@ -1576,12 +1623,14 @@ const bindPageDragEvents = () => {
   window.addEventListener('dragover', handlePageDragOver)
   window.addEventListener('dragleave', handlePageDragLeave)
   window.addEventListener('drop', handlePageDrop)
+  window.addEventListener('dragend', handlePageDragEnd)
 }
 
 const unbindPageDragEvents = () => {
   window.removeEventListener('dragover', handlePageDragOver)
   window.removeEventListener('dragleave', handlePageDragLeave)
   window.removeEventListener('drop', handlePageDrop)
+  window.removeEventListener('dragend', handlePageDragEnd)
 }
 
 const updatePageDragEvents = () => {
@@ -1589,7 +1638,7 @@ const updatePageDragEvents = () => {
     bindPageDragEvents()
   } else {
     unbindPageDragEvents()
-    isPageDragOver.value = false
+    resetPageDragState()
   }
 }
 
@@ -2394,43 +2443,42 @@ const handleResize = () => {
 
 /* 全页拖拽上传 */
 .drag-hint-bar {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
-  padding: 10px 16px; background: linear-gradient(135deg, #ecf5ff 0%, #f0f9ff 100%);
-  border: 1px solid rgba(64, 158, 255, 0.2); border-radius: 10px;
-  font-size: 13px; color: #606266;
+  display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
+  padding: 6px 12px; background: #ecf5ff;
+  border: 1px solid #d9ecff; border-radius: 4px;
+  font-size: 12px; color: #606266;
 }
 .drag-hint-icon { color: #409eff; font-size: 16px; flex-shrink: 0; }
 .drag-hint-bar strong { color: #409eff; font-weight: 600; }
 .page-drag-overlay {
   position: fixed; inset: 0; z-index: 2000;
-  background: rgba(64, 158, 255, 0.12); backdrop-filter: blur(2px);
-  display: flex; align-items: center; justify-content: center;
   pointer-events: none;
+  border: 3px dashed #409eff;
+  background: rgba(64, 158, 255, 0.05);
+  box-shadow: inset 0 0 60px rgba(64, 158, 255, 0.08);
 }
-.page-drag-content {
-  text-align: center; padding: 36px 48px;
-  background: rgba(255, 255, 255, 0.95); border-radius: 16px;
-  border: 2px dashed #409eff; box-shadow: 0 8px 32px rgba(64, 158, 255, 0.2);
+.page-drag-tip {
+  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+  padding: 8px 24px; background: #409eff; color: #fff;
+  border-radius: 4px; font-size: 14px; font-weight: 500;
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.35);
+  white-space: nowrap;
 }
-.page-drag-icon { font-size: 48px; margin-bottom: 12px; }
-.page-drag-title { font-size: 20px; font-weight: 600; color: #409eff; margin-bottom: 6px; }
-.page-drag-sub { font-size: 13px; color: #909399; }
 
 .stats-row { 
   display: grid; 
   grid-template-columns: repeat(4, 1fr); 
-  gap: 15px; 
-  margin-bottom: 20px; 
+  gap: 10px; 
+  margin-bottom: 14px; 
 }
 .stat-card { 
-  padding: 18px 16px; 
-  border-radius: 16px; 
+  padding: 10px 12px; 
+  border-radius: 12px; 
   box-shadow: 
     0 0 0 0.5px rgba(0, 0, 0, 0.04) inset,
-    0 2px 8px rgba(0, 0, 0, 0.03),
-    0 1px 2px rgba(0, 0, 0, 0.02); 
+    0 1px 4px rgba(0, 0, 0, 0.03); 
   text-align: center;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
   border: 0.5px solid rgba(0, 0, 0, 0.06);
@@ -2440,7 +2488,7 @@ const handleResize = () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 100px;
+  min-height: auto;
 }
 .stat-card::before {
   content: '';
@@ -2455,17 +2503,16 @@ const handleResize = () => {
   pointer-events: none;
 }
 .stat-card:hover {
-  transform: translateY(-4px) scale(1.02);
+  transform: translateY(-1px);
   box-shadow: 
     0 0 0 0.5px rgba(0, 122, 255, 0.1) inset,
-    0 12px 32px rgba(0, 0, 0, 0.08),
-    0 4px 12px rgba(0, 122, 255, 0.06);
+    0 4px 12px rgba(0, 0, 0, 0.06);
 }
 .stat-card:hover::before {
   opacity: 0.6;
 }
 .stat-card:active {
-  transform: translateY(-2px) scale(1.01);
+  transform: translateY(0);
   transition: all 0.1s;
 }
 .stat-card:nth-child(1) { 
@@ -2483,15 +2530,15 @@ const handleResize = () => {
   border-color: rgba(255, 149, 0, 0.1);
 }
 .stat-card-storage {
-  gap: 6px;
-  padding: 14px 16px;
+  gap: 4px;
+  padding: 10px 12px;
 }
 .stat-card-storage .stat-label {
   margin-top: 0;
   margin-bottom: 0;
 }
 .stat-storage-text {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #1c1c1e;
   letter-spacing: -0.2px;
@@ -2504,7 +2551,7 @@ const handleResize = () => {
   z-index: 1;
 }
 .stat-value { 
-  font-size: 28px; 
+  font-size: 22px; 
   font-weight: 700; 
   color: #1c1c1e;
   position: relative;
@@ -2525,8 +2572,8 @@ const handleResize = () => {
 }
 .stat-label { 
   color: #6e6e73; 
-  font-size: 12px; 
-  margin-top: 6px;
+  font-size: 11px; 
+  margin-top: 3px;
   margin-bottom: 0;
   font-weight: 600;
   position: relative;
@@ -2538,13 +2585,13 @@ const handleResize = () => {
 
 /* 剩余时间卡片特殊样式 */
 .stat-card-time {
-  gap: 4px;
+  gap: 2px;
 }
 .stat-card-time .stat-value {
   margin-top: 0 !important;
 }
 .stat-card-time .stat-label {
-  margin-top: 4px !important;
+  margin-top: 2px !important;
 }
 .stat-card-time.expired {
   background: linear-gradient(135deg, rgba(255, 59, 48, 0.12) 0%, rgba(255, 59, 48, 0.06) 100%) !important;
@@ -2555,15 +2602,10 @@ const handleResize = () => {
   border-color: rgba(255, 149, 0, 0.25) !important;
 }
 .stat-icon {
-  margin-bottom: 2px;
-  animation: iconPulse 2s ease-in-out infinite;
+  margin-bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-@keyframes iconPulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.8; }
 }
 .stat-value-time {
   display: flex;
@@ -2574,7 +2616,7 @@ const handleResize = () => {
   -webkit-text-fill-color: inherit !important;
 }
 .days-number {
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 800;
   line-height: 1;
   background: linear-gradient(135deg, #1c1c1e 0%, #3c3c43 100%);
@@ -2596,7 +2638,7 @@ const handleResize = () => {
   background-clip: text;
 }
 .days-unit {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   color: #6e6e73;
   opacity: 0.8;
@@ -2686,9 +2728,9 @@ const handleResize = () => {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.5) 100%); 
   backdrop-filter: blur(80px) saturate(180%);
   -webkit-backdrop-filter: blur(80px) saturate(180%);
-  padding: 24px; 
-  border-radius: 20px; 
-  margin-bottom: 20px; 
+  padding: 16px; 
+  border-radius: 16px; 
+  margin-bottom: 16px; 
   box-shadow: 
     0 0 0 0.5px rgba(255, 255, 255, 1) inset,
     0 8px 32px rgba(0, 0, 0, 0.05),
@@ -2705,9 +2747,9 @@ const handleResize = () => {
 .toolbar { 
   display: flex; 
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px; 
-  padding: 12px 16px; 
+  gap: 8px;
+  margin-bottom: 12px; 
+  padding: 8px 12px; 
   background: linear-gradient(135deg, rgba(248, 248, 250, 0.8) 0%, rgba(242, 242, 247, 0.6) 100%);
   backdrop-filter: blur(60px) saturate(180%);
   -webkit-backdrop-filter: blur(60px) saturate(180%);
@@ -2869,62 +2911,57 @@ const handleResize = () => {
 .file-item { 
   display: flex; 
   align-items: center; 
-  padding: 8px 12px; 
-  border-radius: 10px; 
-  margin-bottom: 3px; 
+  padding: 3px 8px; 
+  border-radius: 4px; 
+  margin-bottom: 0; 
   cursor: pointer; 
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); 
-  background: #FFFFFF;
-  border: 0.5px solid rgba(209, 209, 214, 0.15);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.01);
+  transition: background 0.15s ease; 
+  background: transparent;
+  border: none;
+  border-bottom: 0.5px solid rgba(209, 209, 214, 0.25);
+  box-shadow: none;
   position: relative;
 }
 .file-item::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: linear-gradient(135deg, #007AFF 0%, #0095FF 100%);
-  border-radius: 10px 0 0 10px;
-  opacity: 0;
-  transition: opacity 0.2s;
+  display: none;
 }
 .file-item:hover { 
-  background: linear-gradient(135deg, #F9F9FB 0%, #F2F2F7 100%); 
-  border-color: rgba(0, 122, 255, 0.2);
-  transform: translateX(4px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: rgba(0, 122, 255, 0.04); 
+  transform: none;
+  box-shadow: none;
 }
 .file-item:hover::before {
-  opacity: 1;
+  display: none;
 }
 .file-item.selected { 
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%); 
-  border: 0.5px solid rgba(0, 122, 255, 0.3); 
-  box-shadow: 0 2px 12px rgba(0, 122, 255, 0.12);
+  background: rgba(0, 122, 255, 0.08); 
+  border: none;
+  border-bottom: 0.5px solid rgba(0, 122, 255, 0.15);
+  box-shadow: none;
 }
 .file-item.selected::before {
-  opacity: 1;
+  display: none;
 }
-.file-checkbox { width: 28px; display: flex; align-items: center; justify-content: center; }
+.file-checkbox { width: 24px; display: flex; align-items: center; justify-content: center; }
+.file-checkbox :deep(.el-checkbox) { height: 16px; }
+.file-checkbox :deep(.el-checkbox__inner) { width: 14px; height: 14px; }
 .file-icon { 
-  width: 28px; 
-  font-size: 16px; 
+  width: 24px; 
+  font-size: 14px; 
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .file-item:hover .file-icon {
-  transform: scale(1.15);
+  transform: none;
 }
 .file-info { flex: 1; min-width: 0; }
 .file-name { 
-  font-weight: 600; 
+  font-weight: 500; 
   color: #1c1c1e; 
-  font-size: 12px; 
+  font-size: 11px; 
+  line-height: 1.3;
   overflow: hidden; 
   text-overflow: ellipsis; 
   white-space: nowrap; 
@@ -2934,37 +2971,38 @@ const handleResize = () => {
 .file-item:hover .file-name {
   color: #007AFF;
 }
-.file-meta { font-size: 10px; color: #8e8e93; margin-top: 2px; }
+.file-meta { font-size: 9px; color: #8e8e93; margin-top: 1px; line-height: 1.2; }
 .file-type-label { 
   color: #34c759; 
   font-weight: 600;
-  padding: 2px 6px;
+  padding: 1px 4px;
   background: rgba(52, 199, 89, 0.1);
-  border-radius: 4px;
-  font-size: 9px;
+  border-radius: 3px;
+  font-size: 8px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 .file-size-col { 
-  width: 90px; 
+  width: 72px; 
   text-align: right; 
   color: #007aff; 
-  font-weight: 600; 
-  font-size: 11px; 
+  font-weight: 500; 
+  font-size: 10px; 
   flex-shrink: 0; 
-  padding-right: 12px;
+  padding-right: 8px;
   font-variant-numeric: tabular-nums;
 }
 .file-date-col { 
-  width: 140px; 
+  width: 120px; 
   text-align: right; 
   color: #8e8e93; 
-  font-size: 10px; 
+  font-size: 9px; 
   flex-shrink: 0; 
-  padding-right: 12px;
+  padding-right: 8px;
   font-variant-numeric: tabular-nums;
 }
 .file-actions { transition: opacity 0.2s; flex-shrink: 0; }
+.file-actions :deep(.el-button) { padding: 4px 8px; font-size: 11px; height: 24px; }
 
 /* 网格视图 */
 .file-grid { display: grid; grid-template-columns: repeat(auto-fill, 100px); gap: 15px; padding: 10px 0; justify-content: center; }
@@ -3006,38 +3044,61 @@ const handleResize = () => {
 .upload-dialog-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
-.upload-dialog-title { font-size: 16px; font-weight: 600; color: #1c1c1e; }
+.upload-dialog-title { font-size: 15px; font-weight: 600; color: #303133; }
+.upload-dialog :deep(.el-dialog__header) { padding: 12px 16px 8px; margin-right: 0; }
+.upload-dialog :deep(.el-dialog__body) { padding: 0 16px 8px; }
+.upload-dialog :deep(.el-dialog__footer) { padding: 8px 16px 12px; border-top: 1px solid #ebeef5; }
+.upload-dialog-body { display: flex; flex-direction: column; gap: 8px; }
 
 .upload-overall-progress {
-  margin-top: 16px;
-  padding: 14px;
-  background: rgba(0, 122, 255, 0.06);
-  border-radius: 12px;
-  border: 0.5px solid rgba(0, 122, 255, 0.12);
+  padding: 6px 0 0;
 }
 .upload-overall-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: #606266;
-  font-weight: 500;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #909399;
 }
-
-.upload-queue-header {
+.upload-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  font-size: 12px;
   color: #606266;
-  font-size: 13px;
 }
-.upload-queue-actions { display: flex; gap: 4px; }
+.upload-queue-actions { display: flex; gap: 2px; }
 .upload-queue-list {
-  max-height: 280px;
+  max-height: 240px;
   overflow-y: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+.upload-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.upload-queue-item:last-child { border-bottom: none; }
+.upload-queue-item:hover { background: #fafafa; }
+.upload-item-icon { font-size: 16px; flex-shrink: 0; }
+.upload-item-info { flex: 1; min-width: 0; overflow: hidden; }
+.upload-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #303133; }
+.upload-item-path { font-size: 11px; color: #909399; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-item-error { font-size: 11px; color: #f56c6c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-item-progress { margin-top: 3px; }
+.upload-item-step { font-size: 10px; color: #909399; }
+.upload-item-size { color: #909399; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+.upload-item-tag { flex-shrink: 0; }
+.upload-stats-bar {
+  display: flex; gap: 16px; padding: 4px 8px;
+  background: #f5f7fa; border-radius: 4px;
+  font-size: 11px; color: #606266;
 }
 
 .upload-dialog-footer {
@@ -3046,11 +3107,11 @@ const handleResize = () => {
   align-items: center;
   width: 100%;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 .upload-dialog-footer-btns {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -3093,47 +3154,28 @@ const handleResize = () => {
 .empty-hint { color: #909399; font-size: 13px; margin-bottom: 4px; }
 
 .upload-area { 
-  border: 2px dashed rgba(209, 209, 214, 0.6); 
-  border-radius: 20px; 
-  padding: 40px 30px; 
+  border: 1px dashed #dcdfe6; 
+  border-radius: 4px; 
+  padding: 24px 16px; 
   text-align: center; 
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-  background: rgba(255, 255, 255, 0.3);
-  backdrop-filter: blur(60px);
-  -webkit-backdrop-filter: blur(60px);
+  transition: border-color 0.2s, background 0.2s;
+  background: #fafafa;
 }
-.upload-area:hover { 
-  border-color: rgba(0, 122, 255, 0.4); 
-  background: rgba(0, 122, 255, 0.04); 
-}
-.upload-area.dragover { 
-  border-color: rgba(0, 122, 255, 0.6); 
-  background: rgba(0, 122, 255, 0.06); 
-  transform: scale(1.01); 
-  box-shadow: 0 8 24px rgba(0, 122, 255, 0.12);
-}
-.upload-icon { font-size: 48px; margin-bottom: 8px; }
-.upload-text { color: #1D1D1F; font-size: 15px; margin-bottom: 8px; font-weight: 500; letter-spacing: -0.2px; }
-.upload-or { color: #86868B; font-size: 13px; margin-bottom: 15px; }
-.upload-hint { color: #86868B; font-size: 13px; margin-top: 15px; }
+.upload-area:hover { border-color: #409eff; background: #f5f9ff; }
+.upload-area.dragover { border-color: #409eff; background: #ecf5ff; }
+.upload-area-icon { font-size: 32px; color: #409eff; margin-bottom: 8px; }
+.upload-text { color: #606266; font-size: 13px; margin-bottom: 10px; }
+.upload-hint { color: #909399; font-size: 11px; margin-top: 8px; }
 
-/* 上传统计样式 */
-.upload-stats { 
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.65) 0%, rgba(0, 149, 255, 0.65) 100%); 
-  backdrop-filter: blur(80px);
-  -webkit-backdrop-filter: blur(80px);
-  border-radius: 20px; 
-  padding: 20px; 
-  margin-bottom: 20px;
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.3) inset,
-    0 8px 24px rgba(0, 122, 255, 0.25);
-  border: 0.5px solid rgba(255, 255, 255, 0.4);
+.upload-add-strip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px;
+  border: 1px dashed #dcdfe6; border-radius: 4px;
+  font-size: 12px; color: #909399; transition: all 0.2s;
 }
-.stats-row-upload { display: flex; gap: 15px; justify-content: space-around; }
-.stat-item-upload { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.stat-label-upload { color: rgba(255,255,255,0.9); font-size: 13px; }
-.stat-value-upload { color: #fff; font-size: 20px; font-weight: bold; }
+.upload-add-strip-or { color: #c0c4cc; margin-left: auto; font-size: 11px; }
+.upload-add-strip .el-icon { color: #409eff; font-size: 14px; }
+.upload-add-strip.dragover { border-color: #409eff; background: #ecf5ff; color: #409eff; }
 
 .empty-tip { text-align: center; color: #909399; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .empty-icon { font-size: 48px; color: #dcdfe6; margin-bottom: 10px; }
@@ -3175,20 +3217,61 @@ const handleResize = () => {
 .highlight-section { background: linear-gradient(135deg, #ecf5ff 0%, #f0f9eb 100%); padding: 20px; border-radius: 8px; border-left: 4px solid #409eff; }
 .highlight-section h4 { color: #409eff; font-size: 16px; }
 .tip-box { background: #fff; padding: 12px 15px; border-radius: 6px; margin-top: 10px; font-size: 13px; color: #e6a23c; }
-.contact-content { padding: 10px 0; }
-.contact-layout { display: flex; gap: 30px; align-items: center; }
-.contact-left { flex-shrink: 0; }
-.qrcode-box { text-align: center; }
-.qrcode-img { width: 180px; height: 180px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-.qrcode-tip { color: #909399; font-size: 12px; margin-top: 10px; }
-.contact-right { flex: 1; text-align: center; }
-.contact-icon { font-size: 48px; margin-bottom: 10px; }
-.contact-title { color: #303133; margin-bottom: 8px; font-size: 18px; }
-.contact-desc { color: #909399; font-size: 13px; margin-bottom: 20px; }
-.wechat-info { background: linear-gradient(135deg, #07c160 0%, #06ad56 100%); padding: 15px 20px; border-radius: 10px; margin-bottom: 15px; }
-.wechat-label { color: rgba(255,255,255,0.8); font-size: 12px; margin-bottom: 5px; }
-.wechat-id { color: #fff; font-size: 22px; font-weight: bold; letter-spacing: 1px; }
-.service-time { color: #909399; font-size: 12px; margin-top: 15px; }
+.contact-dialog :deep(.el-dialog__header) { padding: 20px 24px 0; margin-right: 0; }
+.contact-dialog :deep(.el-dialog__body) { padding: 16px 24px 24px; }
+.contact-dialog-header { display: flex; align-items: center; gap: 14px; }
+.contact-dialog-icon {
+  width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
+  border: 0.5px solid rgba(0, 122, 255, 0.15);
+  display: flex; align-items: center; justify-content: center;
+  color: #007aff; font-size: 22px;
+}
+.contact-dialog-title { font-size: 17px; font-weight: 600; color: #1c1c1e; letter-spacing: -0.3px; }
+.contact-dialog-subtitle { font-size: 12px; color: #86868b; margin-top: 2px; }
+.contact-content { display: flex; flex-direction: column; gap: 16px; }
+.contact-card {
+  background: rgba(255, 255, 255, 0.6);
+  border: 0.5px solid rgba(0, 0, 0, 0.06);
+  border-radius: 16px;
+  padding: 24px 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+.contact-qrcode-section { text-align: center; }
+.qrcode-frame {
+  display: inline-block; padding: 10px;
+  background: #fff; border-radius: 16px;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+}
+.qrcode-img { width: 160px; height: 160px; border-radius: 8px; display: block; }
+.qrcode-tip { color: #86868b; font-size: 13px; margin-top: 12px; font-weight: 500; }
+.contact-divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 20px 0 16px; color: #c7c7cc; font-size: 12px;
+}
+.contact-divider::before, .contact-divider::after {
+  content: ''; flex: 1; height: 0.5px; background: rgba(0, 0, 0, 0.08);
+}
+.contact-wechat-section { display: flex; flex-direction: column; gap: 10px; }
+.wechat-id-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(7, 193, 96, 0.08) 0%, rgba(7, 193, 96, 0.04) 100%);
+  border: 0.5px solid rgba(7, 193, 96, 0.2);
+  border-radius: 12px;
+}
+.wechat-id-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wechat-label { font-size: 11px; color: #86868b; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+.wechat-id { font-size: 20px; font-weight: 600; color: #1c1c1e; letter-spacing: 0.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.wechat-copy-btn { flex-shrink: 0; }
+.contact-desc { color: #86868b; font-size: 12px; line-height: 1.5; margin: 0; padding: 0 4px; }
+.contact-footer {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 16px; border-radius: 10px;
+  background: rgba(0, 0, 0, 0.03); color: #86868b; font-size: 12px;
+}
+.contact-footer-icon { font-size: 14px; color: #aeaeb2; }
 
 /* 教程样式 */
 .tutorial-content { color: #606266; }
@@ -3213,14 +3296,14 @@ const handleResize = () => {
 .tip-tag { background: #fff; padding: 6px 12px; border-radius: 15px; font-size: 12px; color: #e6a23c; border: 1px solid #ffeeba; }
 
 /* 上传教程紧凑布局 */
-.help-dialog :deep(.el-dialog__body) { padding: 10px 20px 6px; }
-.help-dialog :deep(.el-dialog__header) { padding: 14px 20px 6px; margin-bottom: 0; }
-.help-dialog :deep(.el-dialog__footer) { padding: 8px 20px 14px; }
-.help-compact { display: flex; flex-direction: column; gap: 8px; }
+.help-dialog :deep(.el-dialog__body) { padding: 8px 16px 4px; }
+.help-dialog :deep(.el-dialog__header) { padding: 12px 16px 6px; margin-bottom: 0; }
+.help-dialog :deep(.el-dialog__footer) { padding: 6px 16px 12px; border-top: 1px solid #ebeef5; }
+.help-compact { display: flex; flex-direction: column; gap: 6px; }
 .help-rule-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 8px; color: #fff; font-size: 13px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 12px; background: #409eff;
+  border-radius: 4px; color: #fff; font-size: 12px;
 }
 .help-rule-key { font-weight: 600; }
 .help-rule-domain { font-size: 12px; opacity: 0.9; }
@@ -3233,13 +3316,13 @@ const handleResize = () => {
   display: flex; align-items: center; gap: 6px; font-size: 12px; color: #303133; font-weight: 500;
 }
 .help-step-pill span {
-  width: 20px; height: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  width: 18px; height: 18px; background: #409eff;
   color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; flex-shrink: 0;
+  font-size: 10px; font-weight: 700; flex-shrink: 0;
 }
-.help-step-arrow { color: #c0c4cc; font-size: 12px; }
-.help-main-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.help-tree-card { border-radius: 8px; padding: 10px 12px; border: 1px solid #e4e7ed; display: flex; flex-direction: column; gap: 6px; }
+.help-step-arrow { color: #c0c4cc; font-size: 11px; }
+.help-main-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.help-tree-card { border-radius: 4px; padding: 8px 10px; border: 1px solid #e4e7ed; display: flex; flex-direction: column; gap: 4px; }
 .help-tree-good { background: #f0f9eb; border-color: #c2e7b0; }
 .help-tree-bad { background: #fef0f0; border-color: #fbc4c4; }
 .help-tree-badge { font-size: 12px; font-weight: 600; }
@@ -3289,8 +3372,7 @@ const handleResize = () => {
   .header-actions .el-button .el-icon { margin-right: 3px !important; }
 
   .drag-hint-bar { flex-wrap: wrap; font-size: 12px; padding: 8px 12px; margin-bottom: 12px; }
-  .page-drag-content { padding: 24px 32px; margin: 0 16px; }
-  .page-drag-title { font-size: 17px; }
+  .page-drag-tip { font-size: 13px; padding: 6px 16px; top: 12px; max-width: 90vw; white-space: normal; text-align: center; }
   
   /* 续费提醒移动端 */
   .renew-alert-card {
@@ -3318,15 +3400,15 @@ const handleResize = () => {
     gap: 10px;
   }
   .stat-card { 
-    padding: 15px 10px;
+    padding: 8px 8px;
   }
   .stat-card:nth-child(4) {
     grid-column: 1 / -1;
   }
-  .stat-value { font-size: 20px; color: #1D1D1F; }
-  .stat-label { font-size: 11px; color: #86868B; }
+  .stat-value { font-size: 18px; color: #1D1D1F; }
+  .stat-label { font-size: 10px; color: #86868B; }
   
-  .card { padding: 15px; }
+  .card { padding: 12px; }
   .toolbar { 
     flex-direction: column; 
     gap: 12px; 
@@ -3348,10 +3430,10 @@ const handleResize = () => {
     font-size: 14px;
   }
   
-  .file-item { padding: 10px 12px; }
-  .file-icon { width: 36px; font-size: 22px; }
-  .file-name { font-size: 13px; }
-  .file-meta { font-size: 10px; }
+  .file-item { padding: 4px 8px; }
+  .file-icon { width: 22px; font-size: 13px; }
+  .file-name { font-size: 11px; }
+  .file-meta { font-size: 9px; }
   .file-actions { opacity: 1; display: flex; flex-wrap: wrap; gap: 5px; }
   .file-actions .el-button { padding: 5px 8px; font-size: 12px; }
   
@@ -3360,8 +3442,12 @@ const handleResize = () => {
   .auth-title { font-size: 20px; }
   
   /* 对话框响应式 */
-  .contact-layout { flex-direction: column; gap: 20px; }
-  .qrcode-img { width: 150px; height: 150px; }
+  .contact-dialog :deep(.el-dialog__header) { padding: 16px 16px 0; }
+  .contact-dialog :deep(.el-dialog__body) { padding: 12px 16px 20px; }
+  .contact-card { padding: 20px 16px; }
+  .qrcode-img { width: 140px; height: 140px; }
+  .wechat-id-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .wechat-copy-btn { width: 100%; }
   
   .tutorial-cards { grid-template-columns: 1fr; }
   
@@ -3369,16 +3455,12 @@ const handleResize = () => {
   .help-bottom-row { grid-template-columns: 1fr; }
   .help-rule-bar { flex-direction: column; align-items: flex-start; gap: 4px; }
   
-  .upload-area { padding: 30px 15px; }
-  .upload-icon { font-size: 36px; }
+  .upload-area { padding: 20px 12px; }
+  .upload-queue-list { max-height: 200px; }
+  
   .upload-dialog-footer { flex-direction: column; align-items: stretch; }
   .upload-dialog-footer-btns { justify-content: flex-end; }
   .upload-float-panel { left: 12px; right: 12px; bottom: 12px; }
-  
-  /* 上传统计响应式 */
-  .stats-row-upload { flex-direction: column; gap: 10px; }
-  .stat-item-upload { flex-direction: row; justify-content: space-between; width: 100%; }
-  .stat-value-upload { font-size: 18px; }
   
   .empty-tip { padding: 30px 0; }
   .empty-icon { font-size: 40px; }
