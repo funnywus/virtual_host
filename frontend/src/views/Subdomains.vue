@@ -1,16 +1,38 @@
 <template>
   <div class="card">
-    <div class="card-title">
-      <span>
-        子域名列表
-        <el-tag v-if="currentDomain" type="info" style="margin-left:10px">{{ currentDomain.domain }}</el-tag>
-      </span>
-      <div class="toolbar">
-        <el-input 
-          v-model="searchKeyword" 
-          placeholder="搜索域名、记录值、服务器..." 
-          clearable 
-          style="width:250px" 
+    <div class="page-header">
+      <div class="header-top">
+        <span class="page-title">
+          子域名列表
+          <el-tag v-if="currentDomain" type="info" size="small" class="domain-filter-tag">{{ currentDomain.domain }}</el-tag>
+        </span>
+        <div class="header-actions">
+          <el-dropdown v-if="selectedRows.length > 0" trigger="click">
+            <el-button type="warning" size="small">
+              批量操作 ({{ selectedRows.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="batchSetStatus('used')">批量设为已使用</el-dropdown-item>
+                <el-dropdown-item @click="batchSetStatus('unused')">批量设为未使用</el-dropdown-item>
+                <el-dropdown-item @click="batchSetStatus('disabled')">批量停用</el-dropdown-item>
+                <el-dropdown-item divided @click="openBatchRenewDialog">批量调整时长</el-dropdown-item>
+                <el-dropdown-item divided @click="batchDelete" style="color:#f56c6c">批量删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
+          <el-button type="primary" size="small" @click="openDialog()">添加子域名</el-button>
+          <el-button type="success" size="small" @click="openBatchDialog">批量生成</el-button>
+          <el-button size="small" @click="batchDeployUploadScript" :loading="deployingScript">补发直传脚本</el-button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索域名、记录值、服务器..."
+          clearable
+          class="filter-search"
           size="small"
           @change="onFilterChange"
           @clear="onFilterChange"
@@ -20,54 +42,41 @@
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
-        <el-select v-model="filterDomainId" placeholder="筛选域名" clearable style="width:180px" size="small" @change="onFilterChange">
+        <el-select v-model="filterDomainId" placeholder="主域名" clearable class="filter-select" size="small" @change="onFilterChange">
           <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain" :value="d.id" />
         </el-select>
-        <el-select v-model="filterServerId" placeholder="筛选服务器" clearable style="width:180px" size="small" @change="onFilterChange">
+        <el-select v-model="filterServerId" placeholder="服务器" clearable class="filter-select filter-select-wide" size="small" @change="onFilterChange">
           <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id" />
         </el-select>
-        <el-select v-model="filterStatus" placeholder="筛选状态" clearable style="width:130px" size="small" @change="onFilterChange">
+        <el-select v-model="filterStatus" placeholder="使用状态" clearable class="filter-select filter-select-narrow" size="small" @change="onFilterChange">
           <el-option label="未使用" value="unused" />
           <el-option label="已使用" value="used" />
           <el-option label="已停用" value="disabled" />
         </el-select>
-        <el-checkbox v-model="filterExpiringSoon" size="small" @change="onFilterChange">快过期</el-checkbox>
-        <el-checkbox v-model="filterExpired" size="small" @change="onFilterChange">已过期</el-checkbox>
-        <el-dropdown v-if="selectedRows.length > 0" trigger="click">
-          <el-button type="warning" size="small">
-            批量操作 ({{ selectedRows.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="batchSetStatus('used')">批量设为已使用</el-dropdown-item>
-              <el-dropdown-item @click="batchSetStatus('unused')">批量设为未使用</el-dropdown-item>
-              <el-dropdown-item @click="batchSetStatus('disabled')">批量停用</el-dropdown-item>
-              <el-dropdown-item divided @click="openBatchRenewDialog">批量调整时长</el-dropdown-item>
-              <el-dropdown-item divided @click="batchDelete" style="color:#f56c6c">批量删除</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
-        <el-button type="primary" size="small" @click="openDialog()">添加子域名</el-button>
-        <el-button type="success" size="small" @click="openBatchDialog">批量生成</el-button>
-        <el-button size="small" @click="batchDeployUploadScript" :loading="deployingScript">补发直传脚本</el-button>
+        <div class="filter-checks">
+          <el-checkbox v-model="filterExpiringSoon" size="small" border @change="onFilterChange">快过期</el-checkbox>
+          <el-checkbox v-model="filterExpired" size="small" border @change="onFilterChange">已过期</el-checkbox>
+        </div>
       </div>
     </div>
-    <el-table :data="dataStore.subdomains" stripe class="subdomain-table" @selection-change="onSelectionChange">
+    <el-table :data="dataStore.subdomains" stripe size="small" class="subdomain-table" @selection-change="onSelectionChange">
       <el-table-column type="selection" width="45" />
-      <el-table-column label="域名信息" min-width="360">
+      <el-table-column label="域名信息" min-width="280">
         <template #default="{ row }">
           <div class="domain-cell">
-            <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
-            <span v-else class="full-domain" style="cursor:default">{{ row.subdomain }}.{{ row.main_domain }}</span>
-            <div class="domain-meta">
+            <div class="domain-primary">
+              <a v-if="row.ftp_auth_code" :href="getUploadUrl(row)" target="_blank" class="full-domain">{{ row.subdomain }}.{{ row.main_domain }}</a>
+              <span v-else class="full-domain is-static">{{ row.subdomain }}.{{ row.main_domain }}</span>
+            </div>
+            <div class="domain-secondary">
               <el-tag size="small" type="info">{{ row.record_type }}</el-tag>
-              <el-tooltip :content="row.record_value || '-'" placement="top">
+              <el-tooltip :content="row.record_value || '-'" placement="top" :show-after="400">
                 <span class="meta-text">{{ row.record_value || '-' }}</span>
               </el-tooltip>
-            </div>
-            <div class="domain-server">
-              {{ row.server_name || '未绑定服务器' }}
+              <span class="meta-divider">·</span>
+              <span class="server-text" :class="{ 'is-unbound': !row.server_name }">
+                {{ row.server_name || '未绑定服务器' }}
+              </span>
             </div>
           </div>
         </template>
@@ -148,8 +157,18 @@
       <el-form :model="form" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="form.domain_id" placeholder="选择主域名" style="width:100%" :disabled="!!form.id">
-            <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
+            <el-option v-for="d in activeDomains" :key="d.id" :value="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')">
+              <div class="domain-option">
+                <span>{{ d.domain }}{{ d.is_default === 1 ? ' (默认)' : '' }}</span>
+                <span v-if="parseTags(d.tags).length" class="domain-option-tags">
+                  <el-tag v-for="tag in parseTags(d.tags)" :key="tag" :style="getTagStyle(tag)" size="small">{{ tag }}</el-tag>
+                </span>
+              </div>
+            </el-option>
           </el-select>
+          <div v-if="formDomainFilterTags.length" class="server-tag-hint">
+            匹配标签：{{ formDomainFilterTags.join('、') }}
+          </div>
         </el-form-item>
         <el-form-item label="子域名">
           <div style="display:flex;align-items:center;width:100%">
@@ -170,7 +189,14 @@
         </el-form-item>
         <el-form-item label="服务器" v-if="form.record_type === 'A'">
           <el-select v-model="form.server_id" placeholder="选择服务器" clearable style="width:100%" @change="onServerChange">
-            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
+            <el-option-group v-for="group in formServerGroups" :key="group.label" :label="group.label">
+              <el-option
+                v-for="s in group.servers"
+                :key="s.id"
+                :label="formatServerLabel(s)"
+                :value="s.id"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="记录值">
@@ -208,12 +234,29 @@
       <el-form :model="batchForm" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="batchForm.domain_id" placeholder="选择主域名" style="width:100%">
-            <el-option v-for="d in activeDomains" :key="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')" :value="d.id" />
+            <el-option v-for="d in activeDomains" :key="d.id" :value="d.id" :label="d.domain + (d.is_default === 1 ? ' (默认)' : '')">
+              <div class="domain-option">
+                <span>{{ d.domain }}{{ d.is_default === 1 ? ' (默认)' : '' }}</span>
+                <span v-if="parseTags(d.tags).length" class="domain-option-tags">
+                  <el-tag v-for="tag in parseTags(d.tags)" :key="tag" :style="getTagStyle(tag)" size="small">{{ tag }}</el-tag>
+                </span>
+              </div>
+            </el-option>
           </el-select>
+          <div v-if="batchDomainFilterTags.length" class="server-tag-hint">
+            匹配标签：{{ batchDomainFilterTags.join('、') }}
+          </div>
         </el-form-item>
         <el-form-item label="服务器">
           <el-select v-model="batchForm.server_id" placeholder="选择服务器" style="width:100%">
-            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
+            <el-option-group v-for="group in batchServerGroups" :key="group.label" :label="group.label">
+              <el-option
+                v-for="s in group.servers"
+                :key="s.id"
+                :label="formatServerLabel(s)"
+                :value="s.id"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="生成规则">
@@ -288,33 +331,59 @@
     <NginxDialog v-model="nginxDialogVisible" :subdomain="currentSubdomain" @refresh="loadData" />
 
     <!-- 修改状态对话框 -->
-    <el-dialog v-model="statusDialogVisible" title="修改使用状态" width="400px" append-to-body>
-      <el-form :model="statusForm" label-width="100px">
-        <el-form-item label="域名">
-          <span class="full-domain">{{ statusForm.fullDomain }}</span>
-        </el-form-item>
-        <el-form-item label="当前状态">
-          <el-tag :type="getUseStatusType(statusForm.use_status)">{{ getUseStatusText(statusForm.use_status) }}</el-tag>
-        </el-form-item>
-        <el-form-item label="到期时间">
-          <span v-if="statusForm.expire_at" :style="{ color: isExpired(statusForm.expire_at) ? '#f56c6c' : '#67c23a' }">
-            {{ statusForm.expire_at }}
-            <el-tag v-if="isExpired(statusForm.expire_at)" type="danger" size="small" style="margin-left:8px">已过期</el-tag>
-          </span>
-          <span v-else style="color:#999">未设置</span>
-        </el-form-item>
-        <el-divider>修改状态</el-divider>
-        <el-form-item label="使用状态">
-          <el-radio-group v-model="statusForm.new_status">
-            <el-radio-button value="unused">未使用</el-radio-button>
-            <el-radio-button value="used">已使用</el-radio-button>
-            <el-radio-button value="disabled">停用</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-      </el-form>
+    <el-dialog v-model="statusDialogVisible" title="修改使用状态" width="480px" append-to-body class="status-dialog">
+      <div class="status-dialog-body">
+        <div class="status-info-card">
+          <div class="status-domain">{{ statusForm.fullDomain }}</div>
+          <div class="status-info-grid">
+            <div class="status-info-item">
+              <span class="status-info-label">当前状态</span>
+              <el-tag :type="getUseStatusType(statusForm.use_status)" size="small">
+                {{ getUseStatusText(statusForm.use_status) }}
+              </el-tag>
+            </div>
+            <div class="status-info-item">
+              <span class="status-info-label">到期时间</span>
+              <template v-if="statusForm.expire_at">
+                <span :class="getExpireClass(statusForm.expire_at)">
+                  {{ formatDateShort(statusForm.expire_at) }}
+                </span>
+                <span class="status-expire-hint">
+                  {{ isExpired(statusForm.expire_at) ? '已过期' : `剩余 ${getRemainingDays(statusForm.expire_at)} 天` }}
+                </span>
+              </template>
+              <span v-else class="status-expire-empty">未设置</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-picker">
+          <div class="status-picker-title">选择新状态</div>
+          <div class="status-options">
+            <button
+              v-for="option in statusOptions"
+              :key="option.value"
+              type="button"
+              class="status-option"
+              :class="[`is-${option.type}`, { active: statusForm.new_status === option.value }]"
+              @click="statusForm.new_status = option.value"
+            >
+              <span class="status-option-label">{{ option.label }}</span>
+              <span class="status-option-desc">{{ option.desc }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
       <template #footer>
         <el-button @click="statusDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleStatusChange" :loading="statusChanging">保存状态</el-button>
+        <el-button
+          type="primary"
+          @click="handleStatusChange"
+          :loading="statusChanging"
+          :disabled="statusForm.new_status === statusForm.use_status"
+        >
+          保存状态
+        </el-button>
       </template>
     </el-dialog>
 
@@ -704,6 +773,13 @@ import { ArrowDown, Refresh, Search } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
 import api from '@/api'
 import NginxDialog from '@/components/NginxDialog.vue'
+import {
+  parseTagList as parseTags,
+  getDomainFilterableTags,
+  groupServersByDomainTags,
+  pickDefaultServerForDomain,
+  getTagStyle as buildTagStyle
+} from '@/utils/server-tag-filter'
 
 const route = useRoute()
 const dataStore = useDataStore()
@@ -768,6 +844,12 @@ const statusForm = reactive({
   expire_at: '',
   new_status: 'unused'
 })
+
+const statusOptions = [
+  { value: 'unused', label: '未使用', desc: '尚未分配或空闲', type: 'info' },
+  { value: 'used', label: '已使用', desc: '正在对外提供服务', type: 'success' },
+  { value: 'disabled', label: '已停用', desc: '停用后无法访问', type: 'danger' }
+]
 
 const renewForm = reactive({
   id: null,
@@ -1303,17 +1385,64 @@ const currentDomain = computed(() => {
 const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
 const activeDomains = computed(() => dataStore.domains.filter(d => d.status !== 'disabled'))
 
-function getDefaultAvailableServer() {
-  return availableServers.value.find(s => s.is_default === 1) || availableServers.value[0] || null
+const selectedFormDomain = computed(() => dataStore.domains.find(d => d.id === form.domain_id))
+const selectedBatchDomain = computed(() => dataStore.domains.find(d => d.id === batchForm.domain_id))
+const formDomainFilterTags = computed(() => getDomainFilterableTags(selectedFormDomain.value, dataStore.serverTags))
+const batchDomainFilterTags = computed(() => getDomainFilterableTags(selectedBatchDomain.value, dataStore.serverTags))
+const formServerGroups = computed(() => groupServersByDomainTags(dataStore.servers, selectedFormDomain.value, dataStore.serverTags))
+const batchServerGroups = computed(() => groupServersByDomainTags(dataStore.servers, selectedBatchDomain.value, dataStore.serverTags))
+
+function getTagStyle(tagName) {
+  return buildTagStyle(tagName, dataStore.serverTags)
+}
+
+function formatServerLabel(server) {
+  const tags = parseTags(server.tags)
+  const tagText = tags.length ? ` · ${tags.join('/')}` : ''
+  const defaultText = server.is_default === 1 ? ' (默认)' : ''
+  return `${server.name} (${server.ip})${tagText}${defaultText}`
+}
+
+function applyDefaultServerToForm() {
+  const defaultServer = pickDefaultServerForDomain(dataStore.servers, selectedFormDomain.value, dataStore.serverTags)
+  if (defaultServer) {
+    form.server_id = defaultServer.id
+    form.record_value = defaultServer.ip
+    return
+  }
+  form.server_id = null
+  form.record_value = ''
+}
+
+function applyDefaultServerToBatchForm() {
+  const defaultServer = pickDefaultServerForDomain(dataStore.servers, selectedBatchDomain.value, dataStore.serverTags)
+  batchForm.server_id = defaultServer?.id || ''
+}
+
+function getDefaultAvailableServer(domain = null) {
+  return pickDefaultServerForDomain(dataStore.servers, domain, dataStore.serverTags)
 }
 
 onMounted(async () => {
-  await dataStore.loadDomains()
-  await dataStore.loadServers()
+  await Promise.all([
+    dataStore.loadDomains(),
+    dataStore.loadServers(),
+    dataStore.loadServerTags()
+  ])
   if (route.query.domain_id) {
     filterDomainId.value = parseInt(route.query.domain_id)
   }
   loadData()
+})
+
+watch(() => form.domain_id, (domainId, oldDomainId) => {
+  if (form.id || !domainId || domainId === oldDomainId) return
+  applyDefaultServerToForm()
+})
+
+watch(() => batchForm.domain_id, (domainId, oldDomainId) => {
+  if (!domainId || domainId === oldDomainId) return
+  applyDefaultServerToBatchForm()
 })
 
 watch(searchKeyword, () => {
@@ -1362,12 +1491,13 @@ async function openDialog(row = null) {
       record_value: row.record_value, ttl: row.ttl || 600, remark: row.remark || ''
     })
   } else {
-    // 获取默认值
     const defaultDomain = activeDomains.value.find(d => d.is_default === 1)
-    const defaultServer = getDefaultAvailableServer()
+    const domainId = filterDomainId.value || defaultDomain?.id || ''
+    const domain = dataStore.domains.find(d => d.id === domainId)
+    const defaultServer = getDefaultAvailableServer(domain)
     
     Object.assign(form, {
-      id: null, domain_id: filterDomainId.value || defaultDomain?.id || '', subdomain: '',
+      id: null, domain_id: domainId, subdomain: '',
       server_id: defaultServer?.id || null, record_type: 'A', record_value: defaultServer?.ip || '', ttl: 600, remark: '',
       auto_ftp: true, auto_nginx: true, nginx_type: 'https',
       prefix: 'ly', suffix: '', subdomain_length: 8,
@@ -1379,11 +1509,12 @@ async function openDialog(row = null) {
 }
 
 function openBatchDialog() {
-  // 获取默认值
   const defaultDomain = activeDomains.value.find(d => d.is_default === 1)
-  const defaultServer = getDefaultAvailableServer()
+  const domainId = filterDomainId.value || defaultDomain?.id || ''
+  const domain = dataStore.domains.find(d => d.id === domainId)
+  const defaultServer = getDefaultAvailableServer(domain)
   
-  batchForm.domain_id = filterDomainId.value || defaultDomain?.id || ''
+  batchForm.domain_id = domainId
   batchForm.server_id = defaultServer?.id || ''
   batchForm.count = 10
   batchForm.auto_ftp = true
@@ -1568,11 +1699,112 @@ async function handleRateLimitSave() {
   color: #303133;
 }
 
+.page-header {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.domain-filter-tag {
+  font-weight: 400;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: #f8f9fb;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+}
+
+.filter-search {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.filter-select {
+  width: 150px;
+  flex-shrink: 0;
+}
+
+.filter-select-wide {
+  width: 190px;
+}
+
+.filter-select-narrow {
+  width: 120px;
+}
+
+.filter-checks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.filter-checks :deep(.el-checkbox) {
+  margin-right: 0;
+  height: 24px;
+  padding: 0 10px;
+  background: #fff;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.domain-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.domain-option-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.server-tag-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 .renew-quick-actions {
@@ -1594,16 +1826,28 @@ async function handleRateLimitSave() {
   text-decoration: none;
   cursor: pointer;
   transition: color 0.3s;
-  line-height: 1.3;
+  line-height: 1.2;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
+  display: block;
+  max-width: 100%;
+}
+
+.full-domain.is-static {
+  cursor: default;
+  color: #303133;
 }
 
 .full-domain:hover {
   color: #66b1ff;
   text-decoration: underline;
+}
+
+.full-domain.is-static:hover {
+  color: #303133;
+  text-decoration: none;
 }
 
 .remark-text {
@@ -1623,18 +1867,22 @@ async function handleRateLimitSave() {
 
 .domain-cell {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
   min-width: 0;
-  white-space: nowrap;
 }
 
-.domain-meta {
+.domain-primary {
+  min-width: 0;
+}
+
+.domain-secondary {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  flex: 0 1 170px;
+  flex-wrap: wrap;
+  line-height: 1.2;
 }
 
 .meta-text {
@@ -1643,16 +1891,29 @@ async function handleRateLimitSave() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 160px;
+  flex: 0 1 auto;
 }
 
-.domain-server {
+.meta-divider {
+  color: #dcdfe6;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.server-text {
   color: #909399;
   font-size: 12px;
-  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 1 110px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.server-text.is-unbound {
+  color: #c0c4cc;
+  font-style: italic;
 }
 
 .status-cell {
@@ -1709,20 +1970,139 @@ async function handleRateLimitSave() {
   margin-top: 0;
 }
 
+.status-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.status-info-card {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #f8faff 0%, #f4f7fb 100%);
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+}
+
+.status-domain {
+  font-size: 15px;
+  font-weight: 600;
+  color: #409eff;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
+.status-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.status-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.status-info-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.status-expire-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.status-expire-empty {
+  font-size: 13px;
+  color: #c0c4cc;
+}
+
+.status-picker-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  margin-bottom: 10px;
+}
+
+.status-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.status-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 10px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.status-option:hover {
+  border-color: #c6e2ff;
+  background: #f5faff;
+}
+
+.status-option.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 0 0 1px rgba(64, 158, 255, 0.15);
+}
+
+.status-option.is-success.active {
+  border-color: #67c23a;
+  background: #f0f9eb;
+  box-shadow: 0 0 0 1px rgba(103, 194, 58, 0.15);
+}
+
+.status-option.is-danger.active {
+  border-color: #f56c6c;
+  background: #fef0f0;
+  box-shadow: 0 0 0 1px rgba(245, 108, 108, 0.15);
+}
+
+.status-option-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.status-option-desc {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.4;
+}
+
 .ftp-value {
   font-family: monospace;
   margin-right: 8px;
   word-break: break-all;
 }
 
-:deep(.el-table) {
+:deep(.subdomain-table) {
   border-radius: 10px;
   overflow: hidden;
 }
 
-:deep(.el-table th) {
+:deep(.subdomain-table th) {
   background: #f8f9fa !important;
   font-weight: 600;
+}
+
+:deep(.subdomain-table .el-table__cell) {
+  padding: 4px 0;
+}
+
+:deep(.subdomain-table .cell) {
+  line-height: 1.2;
 }
 
 :deep(.el-dialog) {
@@ -1747,6 +2127,72 @@ async function handleRateLimitSave() {
   .card {
     padding: 15px;
     border-radius: 12px;
+  }
+
+  .page-header {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+
+  .header-top {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+
+  .header-actions {
+    justify-content: stretch;
+  }
+
+  .header-actions .el-button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .header-actions .el-dropdown {
+    width: 100%;
+  }
+
+  .header-actions .el-dropdown .el-button {
+    width: 100%;
+  }
+
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .filter-search,
+  .filter-select,
+  .filter-select-wide,
+  .filter-select-narrow {
+    width: 100% !important;
+  }
+
+  .filter-checks {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .filter-checks :deep(.el-checkbox) {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .status-info-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .status-options {
+    grid-template-columns: 1fr;
   }
 
   .card-title {
@@ -1803,7 +2249,11 @@ async function handleRateLimitSave() {
   }
 
   .domain-cell {
-    gap: 5px;
+    gap: 1px;
+  }
+
+  .meta-text {
+    max-width: 120px;
   }
 
   .status-cell {

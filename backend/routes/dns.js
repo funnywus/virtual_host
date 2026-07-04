@@ -1535,8 +1535,8 @@ router.get('/aliyun-configs', async (req, res) => {
   try {
     const userId = req.user.role === 'admin' ? null : req.user.id;
     const sql = userId
-      ? 'SELECT id, name, platform, access_key, remark, created_at FROM aliyun_config WHERE user_id = ?'
-      : 'SELECT ac.id, ac.name, ac.platform, ac.access_key, ac.remark, ac.created_at, u.username FROM aliyun_config ac LEFT JOIN users u ON ac.user_id = u.id';
+      ? 'SELECT id, name, platform, access_key, secret_key, remark, tags, is_default, created_at FROM aliyun_config WHERE user_id = ? ORDER BY is_default DESC, id DESC'
+      : 'SELECT ac.id, ac.name, ac.platform, ac.access_key, ac.secret_key, ac.remark, ac.tags, ac.is_default, ac.created_at, u.username FROM aliyun_config ac LEFT JOIN users u ON ac.user_id = u.id ORDER BY ac.is_default DESC, ac.id DESC';
     const configs = await db.all(sql, userId ? [userId] : []);
     res.json(configs);
   } catch (err) {

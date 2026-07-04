@@ -35,7 +35,30 @@ function generateDirectUploadToken(expires) {
   return crypto.createHmac('sha256', secret).update(String(expires)).digest('hex');
 }
 
-// 通过授权码验证 (授权码 = 域名的MD5前8位)
+// 根据授权码查找 FTP 账号（auth 校验时可包含已停用账号以便返回明确提示）
+async function findFtpByAuthCode(auth_code, { includeDisabled = false } = {}) {
+  const statusClause = includeDisabled
+    ? ''
+    : ` AND (s.use_status IS NULL OR s.use_status != 'disabled')`;
+
+  const ftpAccounts = await db.all(`
+    SELECT f.*, s.id as subdomain_id, s.subdomain, s.expire_at, s.use_status, s.activated_at, s.duration_days,
+           d.domain as main_domain,
+           CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
+           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
+           sv.nginx_path
+    FROM ftp_accounts f
+    LEFT JOIN subdomains s ON f.subdomain_id = s.id
+    LEFT JOIN domains d ON s.domain_id = d.id
+    LEFT JOIN servers sv ON s.server_id = sv.id
+    WHERE f.status = 'active'${statusClause}
+  `);
+
+  const inputCode = auth_code.toLowerCase();
+  return ftpAccounts.find(f => f.full_domain && getDomainAuthCode(f.full_domain) === inputCode);
+}
+
+// 通过授权码验证 (授权码 = 域名的MD5)
 router.post('/auth', async (req, res) => {
   try {
     const { auth_code } = req.body;
@@ -43,31 +66,19 @@ router.post('/auth', async (req, res) => {
     if (!auth_code) {
       return res.status(400).json({ error: '请输入授权码' });
     }
-    
-    // 查找所有FTP账号
-    const ftpAccounts = await db.all(`
-      SELECT f.*, s.id as subdomain_id, s.subdomain, s.expire_at, s.use_status, s.activated_at, s.duration_days,
-             d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
-             sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
-      FROM ftp_accounts f
-      LEFT JOIN subdomains s ON f.subdomain_id = s.id
-      LEFT JOIN domains d ON s.domain_id = d.id
-      LEFT JOIN servers sv ON s.server_id = sv.id
-      WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
-    `);
-    
-    // 查找匹配的FTP账号 (授权码 = 域名MD5)
-    const inputCode = auth_code.toLowerCase();
-    const ftp = ftpAccounts.find(f => getDomainAuthCode(f.full_domain) === inputCode);
+
+    const ftp = await findFtpByAuthCode(auth_code, { includeDisabled: true });
     
     if (!ftp) {
-      return res.status(401).json({ error: '授权码无效或已禁用' });
+      return res.status(401).json({ error: '授权码无效', code: 'invalid_auth' });
     }
 
-    // 检查是否已停用
     if (ftp.use_status === 'disabled') {
-      return res.status(401).json({ error: '该域名已停用，请联系客服续费' });
+      return res.status(403).json({
+        error: '该域名已停用，请联系管理员续费或处理',
+        code: 'disabled',
+        domain: ftp.full_domain
+      });
     }
 
     // 首次登录激活：设置激活时间和到期时间（从第二天开始算）
@@ -229,23 +240,7 @@ router.post('/direct-config', async (req, res) => {
   }
 });
 
-// 通用函数：根据授权码查找FTP账号
-async function findFtpByAuthCode(auth_code) {
-  const ftpAccounts = await db.all(`
-    SELECT f.*, s.subdomain, d.domain as main_domain,
-           CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
-           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
-           sv.nginx_path
-    FROM ftp_accounts f
-    LEFT JOIN subdomains s ON f.subdomain_id = s.id
-    LEFT JOIN domains d ON s.domain_id = d.id
-    LEFT JOIN servers sv ON s.server_id = sv.id
-    WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
-  `);
-  
-  const inputCode = auth_code.toLowerCase();
-  return ftpAccounts.find(f => getDomainAuthCode(f.full_domain) === inputCode);
-}
+// 通用函数：根据授权码查找FTP账号（正常业务接口不包含已停用账号）
 
 // 获取空间使用情况（使用连接池优化）
 router.post('/usage', async (req, res) => {

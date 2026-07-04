@@ -16,7 +16,7 @@
             <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" prefix-icon="Lock" show-password @keyup.enter="handleAuth" />
           </el-form-item>
           <div class="login-options">
-            <el-checkbox v-model="rememberUserInfo" @change="handleRememberChange">记住用户信息</el-checkbox>
+            <el-checkbox v-model="rememberPassword" @change="handleRememberChange">记住密码</el-checkbox>
           </div>
           <el-form-item>
             <el-button type="primary" size="large" :loading="loading" @click="handleAuth" class="login-btn">
@@ -44,38 +44,37 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
+import {
+  loadRememberedCredentials,
+  saveRememberedCredentials,
+  clearRememberedCredentials
+} from '@/utils/remember-credentials'
 
 const router = useRouter()
 const userStore = useUserStore()
-const REMEMBER_USER_INFO_KEY = 'remembered_user_info'
 
 const loading = ref(false)
+const restoringCredentials = ref(true)
 const form = reactive({ username: '', password: '' })
-const rememberUserInfo = ref(false)
+const rememberPassword = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
   try {
-    const rememberedInfo = JSON.parse(localStorage.getItem(REMEMBER_USER_INFO_KEY) || 'null')
-    if (rememberedInfo?.username) {
-      form.username = rememberedInfo.username
-      rememberUserInfo.value = true
+    const remembered = await loadRememberedCredentials()
+    if (remembered?.username) {
+      form.username = remembered.username
+      form.password = remembered.password || ''
+      rememberPassword.value = true
     }
-  } catch (error) {
-    localStorage.removeItem(REMEMBER_USER_INFO_KEY)
+  } finally {
+    restoringCredentials.value = false
   }
 })
 
-function saveRememberedUserInfo() {
-  localStorage.setItem(REMEMBER_USER_INFO_KEY, JSON.stringify({ username: form.username.trim() }))
-}
-
-function clearRememberedUserInfo() {
-  localStorage.removeItem(REMEMBER_USER_INFO_KEY)
-}
-
 function handleRememberChange(checked) {
   if (!checked) {
-    clearRememberedUserInfo()
+    clearRememberedCredentials()
+    form.password = ''
   }
 }
 
@@ -87,10 +86,10 @@ async function handleAuth() {
   loading.value = true
   try {
     await userStore.login(form.username, form.password)
-    if (rememberUserInfo.value) {
-      saveRememberedUserInfo()
+    if (rememberPassword.value) {
+      await saveRememberedCredentials(form.username, form.password)
     } else {
-      clearRememberedUserInfo()
+      clearRememberedCredentials()
     }
     ElMessage.success('登录成功')
     router.push('/admin-jm')

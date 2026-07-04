@@ -23,6 +23,13 @@
           <span v-else style="color:#999">默认</span>
         </template>
       </el-table-column>
+      <el-table-column label="参与匹配" width="100">
+        <template #default="{ row }">
+          <el-tag :type="row.is_filterable === 0 ? 'info' : 'success'" size="small">
+            {{ row.is_filterable === 0 ? '不参与' : '参与' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="创建时间" width="180" />
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
@@ -42,6 +49,10 @@
           <el-color-picker v-model="form.color" />
           <span style="margin-left:10px;color:#999">可选</span>
         </el-form-item>
+        <el-form-item label="参与匹配">
+          <el-switch v-model="form.is_filterable" :active-value="1" :inactive-value="0" />
+          <span style="margin-left:10px;color:#999;font-size:12px">关闭后仅作标记，不参与域名与服务器的标签匹配</span>
+        </el-form-item>
       </el-form>
     </AppDialog>
   </div>
@@ -58,7 +69,7 @@ const dataStore = useDataStore()
 const dialogVisible = ref(false)
 const saving = ref(false)
 const loading = ref(false)
-const form = reactive({ id: null, name: '', color: '' })
+const form = reactive({ id: null, name: '', color: '', is_filterable: 1 })
 
 onMounted(() => loadData())
 
@@ -73,9 +84,9 @@ async function loadData() {
 
 function openDialog(row = null) {
   if (row) {
-    Object.assign(form, { id: row.id, name: row.name, color: row.color || '' })
+    Object.assign(form, { id: row.id, name: row.name, color: row.color || '', is_filterable: row.is_filterable === 0 ? 0 : 1 })
   } else {
-    Object.assign(form, { id: null, name: '', color: '' })
+    Object.assign(form, { id: null, name: '', color: '', is_filterable: 1 })
   }
   dialogVisible.value = true
 }

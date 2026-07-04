@@ -38,12 +38,35 @@ async function init() {
     if (tables.length === 0) {
       console.log('数据库表不存在，请先导入 SQL 文件');
       console.log('使用命令: mysql -u root -p virtual_host < scripts/output.sql');
+    } else {
+      await runMigrations(connection);
     }
     
     connection.release();
   } catch (err) {
     console.error('MySQL 数据库初始化失败:', err.message);
     throw err;
+  }
+}
+
+async function runMigrations(connection) {
+  const migrations = [
+    {
+      table: 'server_tags',
+      column: 'is_filterable',
+      sql: 'ALTER TABLE server_tags ADD COLUMN is_filterable TINYINT DEFAULT 1'
+    }
+  ];
+
+  for (const migration of migrations) {
+    const [columns] = await connection.query(
+      `SHOW COLUMNS FROM ${migration.table} LIKE ?`,
+      [migration.column]
+    );
+    if (columns.length === 0) {
+      await connection.query(migration.sql);
+      console.log(`✓ 已添加 ${migration.table}.${migration.column} 列`);
+    }
   }
 }
 

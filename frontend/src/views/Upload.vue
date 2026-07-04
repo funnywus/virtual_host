@@ -3,16 +3,31 @@
     <!-- 授权码验证页面 -->
     <div v-if="!authorized" class="auth-container">
       <div class="auth-box">
-        <div class="auth-logo">📁</div>
-        <h2 class="auth-title">文件上传系统</h2>
-        <p class="auth-subtitle">请输入授权码访问您的文件空间</p>
-        <el-input v-model="authCode" placeholder="请输入授权码" size="large" @keyup.enter="verifyAuth" style="margin-bottom:20px">
-          <template #prefix><el-icon><Key /></el-icon></template>
-        </el-input>
-        <el-button type="primary" size="large" @click="verifyAuth" :loading="verifying" style="width:100%;height:48px;font-size:16px">
-          验证并进入
-        </el-button>
-        <p style="margin-top:20px;color:#909399;font-size:12px">如没有授权码，请联系管理员获取</p>
+        <template v-if="authBlocked === 'disabled'">
+          <div class="auth-blocked-icon">
+            <el-icon><WarningFilled /></el-icon>
+          </div>
+          <h2 class="auth-title">服务已停用</h2>
+          <p class="auth-blocked-desc">您的域名访问权限已被停用，请联系管理员续费或处理后再试</p>
+          <p v-if="blockedDomain" class="auth-blocked-domain">{{ blockedDomain }}</p>
+          <el-button type="success" size="large" @click="showContactDialog = true" style="width:100%;height:48px;font-size:16px;margin-top:8px">
+            <el-icon style="margin-right:6px"><Service /></el-icon>
+            联系管理员
+          </el-button>
+          <el-button size="large" link @click="resetAuthBlocked" style="margin-top:12px">更换授权码</el-button>
+        </template>
+        <template v-else>
+          <div class="auth-logo">📁</div>
+          <h2 class="auth-title">文件上传系统</h2>
+          <p class="auth-subtitle">请输入授权码访问您的文件空间</p>
+          <el-input v-model="authCode" placeholder="请输入授权码" size="large" @keyup.enter="verifyAuth" style="margin-bottom:20px">
+            <template #prefix><el-icon><Key /></el-icon></template>
+          </el-input>
+          <el-button type="primary" size="large" @click="verifyAuth" :loading="verifying" style="width:100%;height:48px;font-size:16px">
+            验证并进入
+          </el-button>
+          <p style="margin-top:20px;color:#909399;font-size:12px">如没有授权码，请联系管理员获取</p>
+        </template>
         <div class="auth-version">v2.0</div>
       </div>
       <div class="auth-contact" @click="showContactDialog = true">
@@ -669,6 +684,8 @@ import { API_BASE } from '@/config'
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
 const verifying = ref(false)
+const authBlocked = ref(null)
+const blockedDomain = ref('')
 const domain = ref('')
 const homeDir = ref('')
 const maxUploadSize = ref(209715200)
@@ -1205,28 +1222,53 @@ const api = async (url, data = {}) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ auth_code: authCode.value, ...data })
   })
-  const json = await res.json()
-  if (!res.ok) throw new Error(json.error)
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error(json.error || '请求失败')
+    err.code = json.code
+    err.status = res.status
+    err.data = json
+    throw err
+  }
   return json
+}
+
+const resetAuthBlocked = () => {
+  authBlocked.value = null
+  blockedDomain.value = ''
+  authCode.value = ''
+  localStorage.removeItem('upload_auth_code')
 }
 
 const verifyAuth = async () => {
   if (!authCode.value) { ElMessage.warning('请输入授权码'); return }
+  authBlocked.value = null
+  blockedDomain.value = ''
   verifying.value = true
-  const res = await api('/auth')
-  console.log('verifyAuth response:', res)
-  domain.value = res.domain
-  homeDir.value = res.home_dir
-  maxUploadSize.value = res.max_upload_size || 209715200
-  expireAt.value = res.expire_at || null
-  remainingDays.value = res.remaining_days
-  
-  authorized.value = true
-  localStorage.setItem('upload_auth_code', authCode.value)
-  await loadFiles()
-  // 加载 PHP 直传配置（失败则自动回退到 Node 中转上传）
-  await loadDirectUploadConfig()
-  verifying.value = false
+  try {
+    const res = await api('/auth')
+    domain.value = res.domain
+    homeDir.value = res.home_dir
+    maxUploadSize.value = res.max_upload_size || 209715200
+    expireAt.value = res.expire_at || null
+    remainingDays.value = res.remaining_days
+
+    authorized.value = true
+    localStorage.setItem('upload_auth_code', authCode.value)
+    await loadFiles()
+    await loadDirectUploadConfig()
+  } catch (e) {
+    if (e.code === 'disabled' || e.status === 403) {
+      authBlocked.value = 'disabled'
+      blockedDomain.value = e.data?.domain || ''
+      authorized.value = false
+      localStorage.removeItem('upload_auth_code')
+    } else {
+      ElMessage.error(e.message || '验证失败')
+    }
+  } finally {
+    verifying.value = false
+  }
 }
 
 // 获取并探测 PHP 直传配置（缺失脚本时后台自动下发）
@@ -2323,6 +2365,33 @@ const handleResize = () => {
     0 4px 12px rgba(0, 0, 0, 0.03); 
   text-align: center;
   border: 0.5px solid rgba(255, 255, 255, 1);
+}
+
+.auth-blocked-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #fef0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: #f56c6c;
+}
+
+.auth-blocked-desc {
+  margin: 12px 0 8px;
+  color: #606266;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.auth-blocked-domain {
+  margin: 0 0 20px;
+  color: #909399;
+  font-size: 13px;
+  word-break: break-all;
 }
 .auth-contact { 
   position: fixed; 

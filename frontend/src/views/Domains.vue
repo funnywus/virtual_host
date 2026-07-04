@@ -411,6 +411,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, ArrowDown, Search, Plus, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
 import { formatSslDays, getSslDaysType } from '@/utils'
+import { getDomainFilterableTags, serverHasAnyTag } from '@/utils/server-tag-filter'
 import api from '@/api'
 import SslDialog from '@/components/SslDialog.vue'
 
@@ -1136,25 +1137,20 @@ const batchPublishTargetDomains = computed(() => selectedDomains.value.length > 
 
 function openBatchPublishDialog() {
   batchPublishLog.value = ''
-  // 收集待发布域名的所有标签
   const targets = batchPublishTargetDomains.value
   const domainTags = new Set()
-  for (const d of targets) {
-    if (d.tags) {
-      d.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => domainTags.add(t))
-    }
+
+  for (const domain of targets) {
+    getDomainFilterableTags(domain, dataStore.serverTags).forEach((tag) => domainTags.add(tag))
   }
-  
-  // 根据域名标签匹配服务器
+
   if (domainTags.size > 0) {
-    const matchedServers = availableServers.value.filter(s => {
-      const serverTags = s.tags ? s.tags.split(',').map(t => t.trim()) : []
-      return serverTags.some(t => domainTags.has(t))
-    })
-    batchPublishForm.server_ids = matchedServers.map(s => s.id)
+    const matchedServers = availableServers.value.filter((server) =>
+      serverHasAnyTag(server, [...domainTags])
+    )
+    batchPublishForm.server_ids = matchedServers.map((server) => server.id)
   } else {
-    // 域名没有标签时，默认选中默认服务器
-    const defaultServer = availableServers.value.find(s => s.is_default === 1)
+    const defaultServer = availableServers.value.find((server) => server.is_default === 1)
     batchPublishForm.server_ids = defaultServer ? [defaultServer.id] : []
   }
   batchPublishDialogVisible.value = true

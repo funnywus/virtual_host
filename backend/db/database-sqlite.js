@@ -141,6 +141,7 @@ const init = () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         color TEXT DEFAULT '',
+        is_filterable INTEGER DEFAULT 1,
         user_id INTEGER NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
@@ -194,6 +195,7 @@ const init = () => {
     db.run(`ALTER TABLE domains ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
     db.run(`ALTER TABLE aliyun_config ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
     db.run(`ALTER TABLE server_tags ADD COLUMN is_default INTEGER DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE server_tags ADD COLUMN is_filterable INTEGER DEFAULT 1`, () => {});
 
     // 批量SSL证书任务表
     db.run(`

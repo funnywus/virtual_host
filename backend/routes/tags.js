@@ -18,14 +18,14 @@ router.get('/', async (req, res) => {
 // 添加标签
 router.post('/', async (req, res) => {
   try {
-    const { name, color } = req.body;
+    const { name, color, is_filterable = 1 } = req.body;
     if (!name) return res.status(400).json({ error: '标签名称不能为空' });
     
     const result = await db.run(
-      'INSERT INTO server_tags (name, color, user_id) VALUES (?, ?, ?)',
-      [name.trim(), color || '', req.user.id]
+      'INSERT INTO server_tags (name, color, is_filterable, user_id) VALUES (?, ?, ?, ?)',
+      [name.trim(), color || '', is_filterable ? 1 : 0, req.user.id]
     );
-    res.json({ id: result.lastID, name, color });
+    res.json({ id: result.lastID, name, color, is_filterable: is_filterable ? 1 : 0 });
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
       res.status(400).json({ error: '标签已存在' });
@@ -38,8 +38,11 @@ router.post('/', async (req, res) => {
 // 更新标签
 router.put('/:id', async (req, res) => {
   try {
-    const { name, color } = req.body;
-    await db.run('UPDATE server_tags SET name = ?, color = ? WHERE id = ?', [name, color || '', req.params.id]);
+    const { name, color, is_filterable = 1 } = req.body;
+    await db.run(
+      'UPDATE server_tags SET name = ?, color = ?, is_filterable = ? WHERE id = ?',
+      [name, color || '', is_filterable ? 1 : 0, req.params.id]
+    );
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
