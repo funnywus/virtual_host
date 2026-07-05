@@ -7,7 +7,7 @@ const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
 const WorkerPool = require('../utils/worker-pool');
 const sshPool = require('../utils/ssh-connection-pool');
-const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath } = require('../services/upload-system-files');
+const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath, normalizeRelPath } = require('../services/upload-system-files');
 const pathPosix = require('path').posix;
 
 const router = express.Router();
@@ -273,10 +273,117 @@ router.post('/usage', async (req, res) => {
   }
 });
 
-// 获取文件列表（使用连接池优化）
+// 格式化文件大小
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+}
+
+const MAX_SEARCH_RESULTS = 2000;
+
+function buildRelPath(dirPath, name) {
+  const base = normalizeRelPath(dirPath);
+  return base ? `${base}/${name}` : name;
+}
+
+function escapeFindPattern(keyword) {
+  return keyword.replace(/\\/g, '\\\\').replace(/[*?[]/g, '\\$&').replace(/'/g, "'\\''");
+}
+
+function sortFileEntries(files) {
+  files.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return files;
+}
+
+function parseLsOutput(output, dirPath) {
+  return output.split('\n').filter(line => line.trim()).map(line => {
+    const parts = line.split(/\s+/);
+    if (parts.length < 9) return null;
+
+    const permissions = parts[0];
+    const size = parseInt(parts[4]) || 0;
+    const month = parts[5];
+    const day = parts[6];
+    const timeOrYear = parts[7];
+
+    let dateStr;
+    if (timeOrYear.includes(':')) {
+      const currentYear = new Date().getFullYear();
+      dateStr = `${currentYear} ${month} ${day} ${timeOrYear}`;
+    } else {
+      dateStr = `${timeOrYear} ${month} ${day} 00:00`;
+    }
+
+    const name = parts.slice(8).join(' ');
+    if (name === '.' || name === '..') return null;
+    if (shouldHideInList(name, dirPath || '')) return null;
+
+    return {
+      name,
+      rel_path: buildRelPath(dirPath || '', name),
+      type: permissions.startsWith('d') ? 'directory' : 'file',
+      size,
+      date: new Date(dateStr).toISOString(),
+      permissions
+    };
+  }).filter(Boolean);
+}
+
+async function searchInSubdirs(config, targetPath, dirPath, keyword) {
+  const pattern = escapeFindPattern(keyword);
+  const relBase = normalizeRelPath(dirPath);
+  const cmd = `find "${targetPath}" \\( -type f -o -type d \\) -iname '*${pattern}*' -printf '%y\\t%s\\t%T@\\t%P\\n' 2>/dev/null`;
+  const result = await sshPool.exec(config, cmd);
+  if (!result.success || !result.output) return { files: [], truncated: false };
+
+  const files = [];
+  for (const line of result.output.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 4) continue;
+
+    const typeChar = parts[0];
+    const size = parseInt(parts[1], 10) || 0;
+    const mtime = parseFloat(parts[2]);
+    const relFromCurrent = parts.slice(3).join('\t').replace(/\\/g, '/');
+    const fullRel = relBase ? `${relBase}/${relFromCurrent}` : relFromCurrent;
+    const normalizedRel = normalizeRelPath(fullRel);
+
+    if (isProtectedPath(normalizedRel)) continue;
+
+    const name = pathPosix.basename(relFromCurrent);
+    const parentRel = pathPosix.dirname(normalizedRel);
+    if (shouldHideInList(name, parentRel === '.' ? '' : parentRel)) continue;
+
+    files.push({
+      name,
+      rel_path: normalizedRel,
+      type: typeChar === 'd' ? 'directory' : 'file',
+      size,
+      date: new Date(mtime * 1000).toISOString(),
+      permissions: typeChar === 'd' ? 'drwxr-xr-x' : '-rw-r--r--'
+    });
+  }
+
+  sortFileEntries(files);
+  const truncated = files.length > MAX_SEARCH_RESULTS;
+  if (truncated) files.length = MAX_SEARCH_RESULTS;
+  return { files, truncated };
+}
+
+// 获取文件列表（使用连接池优化，支持分页）
 router.post('/list', async (req, res) => {
   try {
-    const { auth_code, path: dirPath } = req.body;
+    const { auth_code, path: dirPath, page: pageRaw, pageSize: pageSizeRaw, keyword: keywordRaw, search_subdirs: searchSubdirsRaw } = req.body;
+    const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(pageSizeRaw, 10) || 10));
+    const keyword = typeof keywordRaw === 'string' ? keywordRaw.trim().toLowerCase() : '';
+    const search_subdirs = !!searchSubdirsRaw && !!keyword;
     
     const ftp = await findFtpByAuthCode(auth_code);
     
@@ -303,49 +410,55 @@ router.post('/list', async (req, res) => {
     };
     
     const result = await sshPool.exec(config, `ls -la "${targetPath}" 2>/dev/null | tail -n +2`);
-    
-    if (!result.success) {
-      return res.json({ files: [], current_path: dirPath || '/' });
+    const dirFiles = result.success ? parseLsOutput(result.output, dirPath || '') : [];
+    const file_count = dirFiles.filter(f => f.type === 'file').length;
+    const folder_count = dirFiles.filter(f => f.type === 'directory').length;
+
+    if (!result.success && !(keyword && search_subdirs)) {
+      return res.json({
+        files: [],
+        current_path: dirPath || '/',
+        total: 0,
+        page,
+        pageSize,
+        file_count: 0,
+        folder_count: 0,
+        keyword,
+        search_subdirs
+      });
     }
-    
-    const files = result.output.split('\n').filter(line => line.trim()).map(line => {
-      const parts = line.split(/\s+/);
-      if (parts.length < 9) return null;
-      
-      const permissions = parts[0];
-      const size = parseInt(parts[4]) || 0;
-      // ls -la 输出格式: 月 日 时间/年份
-      // 例如: Jan 15 10:30 或 Jan 15  2024
-      const month = parts[5];
-      const day = parts[6];
-      const timeOrYear = parts[7];
-      
-      // 构建标准日期字符串
-      let dateStr;
-      if (timeOrYear.includes(':')) {
-        // 包含时间，说明是今年的文件
-        const currentYear = new Date().getFullYear();
-        dateStr = `${currentYear} ${month} ${day} ${timeOrYear}`;
-      } else {
-        // 是年份，说明是去年或更早的文件
-        dateStr = `${timeOrYear} ${month} ${day} 00:00`;
-      }
-      
-      const name = parts.slice(8).join(' ');
-      
-      if (name === '.' || name === '..') return null;
-      if (shouldHideInList(name, dirPath || '')) return null;
-      
-      return {
-        name,
-        type: permissions.startsWith('d') ? 'directory' : 'file',
-        size,
-        date: new Date(dateStr).toISOString(),
-        permissions
-      };
-    }).filter(f => f);
-    
-    res.json({ files, current_path: dirPath || '/' });
+
+    let files = [];
+    let search_truncated = false;
+
+    if (keyword && search_subdirs) {
+      const searchResult = await searchInSubdirs(config, targetPath, dirPath || '', keyword);
+      files = searchResult.files;
+      search_truncated = searchResult.truncated;
+    } else {
+      files = keyword
+        ? dirFiles.filter(f => f.name.toLowerCase().includes(keyword))
+        : dirFiles;
+      sortFileEntries(files);
+    }
+
+    const filtered = files;
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const pagedFiles = filtered.slice(start, start + pageSize);
+
+    res.json({
+      files: pagedFiles,
+      current_path: dirPath || '/',
+      total,
+      page,
+      pageSize,
+      file_count,
+      folder_count,
+      keyword,
+      search_subdirs,
+      search_truncated
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -423,14 +536,6 @@ router.post('/upload', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// 格式化文件大小
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
-  return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
-}
 
 // 上传文件（FormData 方式，支持大文件和进度）
 router.post('/upload-file', upload.single('file'), async (req, res) => {
@@ -591,35 +696,52 @@ router.post('/create-file', async (req, res) => {
   }
 });
 
-// 删除文件/目录
+// 删除文件/目录（支持 path 单条或 paths 批量）
 router.post('/delete', async (req, res) => {
   try {
-    const { auth_code, path: filePath } = req.body;
-    
+    const { auth_code, path: filePath, paths } = req.body;
+
+    const pathList = Array.isArray(paths) && paths.length
+      ? paths
+      : (filePath ? [filePath] : []);
+
+    if (!pathList.length) {
+      return res.status(400).json({ error: '未指定要删除的路径' });
+    }
+
     const ftp = await findFtpByAuthCode(auth_code);
-    
+
     if (!ftp || !ftp.ip) {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
-    
+
     const sshService = new SshFtpService({
       ip: ftp.ip,
       port: ftp.ssh_port,
       username: ftp.ssh_user,
       password: ftp.ssh_pass
     });
-    
-    const targetPath = path.join(ftp.home_dir, filePath);
-    if (!targetPath.startsWith(ftp.home_dir) || targetPath === ftp.home_dir) {
-      return res.status(403).json({ error: '无权删除该文件' });
+
+    const targetPaths = [];
+    for (const relPath of pathList) {
+      const targetPath = path.join(ftp.home_dir, relPath);
+      if (!targetPath.startsWith(ftp.home_dir) || targetPath === ftp.home_dir) {
+        return res.status(403).json({ error: '无权删除该文件' });
+      }
+      if (isProtectedPath(relPath)) {
+        return res.status(403).json({ error: '系统文件不可删除' });
+      }
+      targetPaths.push(targetPath);
     }
-    if (isProtectedPath(filePath)) {
-      return res.status(403).json({ error: '系统文件不可删除' });
-    }
-    
-    const result = await sshService.exec(`rm -rf "${targetPath}"`);
-    
-    res.json({ success: result.success, message: result.success ? '删除成功' : '删除失败' });
+
+    const quoted = targetPaths.map(p => `"${p.replace(/"/g, '\\"')}"`).join(' ');
+    const result = await sshService.exec(`rm -rf ${quoted}`);
+
+    res.json({
+      success: result.success,
+      deleted: pathList.length,
+      message: result.success ? '删除成功' : '删除失败'
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -963,6 +1085,250 @@ router.post('/cut', async (req, res) => {
     } else {
       res.status(500).json({ error: '移动失败: ' + (result.output || '未知错误') });
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function remotePathExists(sshService, absPath) {
+  const result = await sshService.exec(`test -e "${absPath}" && echo 1 || echo 0`);
+  return result.output?.trim() === '1';
+}
+
+// 检测提取到上级时的重名冲突
+router.post('/lift-contents/check', async (req, res) => {
+  try {
+    const { auth_code, path: folderPathRaw } = req.body;
+    const folderPath = normalizeRelPath(folderPathRaw);
+
+    if (!folderPath) {
+      return res.status(400).json({ error: '请指定文件夹' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    if (isProtectedPath(folderPath)) {
+      return res.status(403).json({ error: '系统目录不可操作' });
+    }
+
+    const sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+
+    const targetFolder = path.join(ftp.home_dir, folderPath);
+    const parentDir = path.dirname(targetFolder);
+
+    if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
+      return res.status(403).json({ error: '无权操作该目录' });
+    }
+
+    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
+    if (dirCheck.output?.trim() !== '1') {
+      return res.status(400).json({ error: '目标不是文件夹或不存在' });
+    }
+
+    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
+    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
+      .filter(name => !shouldHideInList(name, folderPath));
+
+    const conflicts = [];
+    for (const name of names) {
+      const destPath = path.join(parentDir, name);
+      if (await remotePathExists(sshService, destPath)) {
+        const typeResult = await sshService.exec(`test -d "${destPath}" && echo directory || echo file`);
+        conflicts.push({ name, type: typeResult.output?.trim() === 'directory' ? 'directory' : 'file' });
+      }
+    }
+
+    const parentRel = pathPosix.dirname(folderPath);
+    res.json({
+      total: names.length,
+      conflicts,
+      parent_path: parentRel === '.' ? '' : parentRel
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 将文件夹内所有内容提取到上级目录（仅移动直接子项，不递归展开）
+router.post('/lift-contents', async (req, res) => {
+  try {
+    const { auth_code, path: folderPathRaw, on_conflict = 'skip' } = req.body;
+    const folderPath = normalizeRelPath(folderPathRaw);
+
+    if (!folderPath) {
+      return res.status(400).json({ error: '请指定文件夹' });
+    }
+
+    if (!['skip', 'overwrite'].includes(on_conflict)) {
+      return res.status(400).json({ error: 'on_conflict 参数无效' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    if (isProtectedPath(folderPath)) {
+      return res.status(403).json({ error: '系统目录不可操作' });
+    }
+
+    const sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+
+    const targetFolder = path.join(ftp.home_dir, folderPath);
+    const parentDir = path.dirname(targetFolder);
+
+    if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
+      return res.status(403).json({ error: '无权操作该目录' });
+    }
+
+    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
+    if (dirCheck.output?.trim() !== '1') {
+      return res.status(400).json({ error: '目标不是文件夹或不存在' });
+    }
+
+    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
+    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
+      .filter(name => !shouldHideInList(name, folderPath));
+
+    if (names.length === 0) {
+      return res.json({ success: true, moved: 0, skipped: 0, overwritten: 0, failed: 0, message: '文件夹已是空的' });
+    }
+
+    let moved = 0;
+    let skipped = 0;
+    let overwritten = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const name of names) {
+      try {
+        const source = path.join(targetFolder, name);
+        const dest = path.join(parentDir, name);
+        const exists = await remotePathExists(sshService, dest);
+
+        if (exists) {
+          if (on_conflict === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          const rmResult = await sshService.exec(`rm -rf "${dest}"`);
+          if (!rmResult.success && rmResult.code !== 0) {
+            failed += 1;
+            errors.push(name);
+            continue;
+          }
+          overwritten += 1;
+        }
+
+        const mvResult = await sshService.exec(`mv "${source}" "${dest}"`);
+        if (mvResult.success || mvResult.code === 0) {
+          moved += 1;
+          await sshService.exec(`chmod -R 755 "${dest}" 2>/dev/null`);
+          await sshService.exec(`find "${dest}" -type f -exec chmod 644 {} \\; 2>/dev/null`);
+          await sshService.exec(`chown -R www:www "${dest}" 2>/dev/null || chown -R www "${dest}" 2>/dev/null`);
+        } else {
+          failed += 1;
+          errors.push(name);
+        }
+      } catch (err) {
+        failed += 1;
+        errors.push(name);
+      }
+    }
+
+    const parentRel = pathPosix.dirname(folderPath);
+    const parts = [`已将 ${moved} 项提取到上级目录`];
+    if (overwritten > 0) parts.push(`${overwritten} 项已覆盖`);
+    if (skipped > 0) parts.push(`${skipped} 项因重名已跳过`);
+    if (failed > 0) parts.push(`${failed} 项失败`);
+
+    res.json({
+      success: failed === 0,
+      moved,
+      skipped,
+      overwritten,
+      failed,
+      errors,
+      parent_path: parentRel === '.' ? '' : parentRel,
+      message: failed === 0 ? parts.join('，') : `部分失败：${parts.join('，')}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 清空文件夹（保留文件夹本身）
+router.post('/empty-folder', async (req, res) => {
+  try {
+    const { auth_code, path: folderPathRaw } = req.body;
+    const folderPath = normalizeRelPath(folderPathRaw);
+
+    if (!folderPath) {
+      return res.status(400).json({ error: '请指定文件夹' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    if (isProtectedPath(folderPath)) {
+      return res.status(403).json({ error: '系统目录不可操作' });
+    }
+
+    const sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+
+    const targetFolder = path.join(ftp.home_dir, folderPath);
+    if (!targetFolder.startsWith(ftp.home_dir)) {
+      return res.status(403).json({ error: '无权操作该目录' });
+    }
+
+    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
+    if (dirCheck.output?.trim() !== '1') {
+      return res.status(400).json({ error: '目标不是文件夹或不存在' });
+    }
+
+    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
+    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
+      .filter(name => !shouldHideInList(name, folderPath));
+
+    let removed = 0;
+    let failed = 0;
+
+    for (const name of names) {
+      const target = path.join(targetFolder, name);
+      const rmResult = await sshService.exec(`rm -rf "${target}"`);
+      if (rmResult.success || rmResult.code === 0) {
+        removed += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    res.json({
+      success: failed === 0,
+      removed,
+      failed,
+      message: failed === 0 ? `已清空 ${removed} 项` : `部分失败：已清空 ${removed} 项，失败 ${failed} 项`
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,34 +1,43 @@
 <template>
-  <div class="upload-page">
-    <!-- 授权码验证页面 -->
+  <div class="upload-page theme-v3">
+    <!-- 授权页 -->
     <div v-if="!authorized" class="auth-container">
-      <div class="auth-box">
-        <template v-if="authBlocked === 'disabled'">
-          <div class="auth-blocked-icon">
-            <el-icon><WarningFilled /></el-icon>
+      <div class="auth-card">
+        <aside class="auth-brand-pane">
+          <div>
+            <div class="auth-brand-mark">文件<br />空间</div>
+            <p class="auth-brand-tagline">您的专属云端文件空间，安全、简洁、随时可用。</p>
           </div>
-          <h2 class="auth-title">服务已停用</h2>
-          <p class="auth-blocked-desc">您的域名访问权限已被停用，请联系管理员续费或处理后再试</p>
-          <p v-if="blockedDomain" class="auth-blocked-domain">{{ blockedDomain }}</p>
-          <el-button type="success" size="large" @click="showContactDialog = true" style="width:100%;height:48px;font-size:16px;margin-top:8px">
-            <el-icon style="margin-right:6px"><Service /></el-icon>
-            联系管理员
-          </el-button>
-          <el-button size="large" link @click="resetAuthBlocked" style="margin-top:12px">更换授权码</el-button>
-        </template>
-        <template v-else>
-          <div class="auth-logo">📁</div>
-          <h2 class="auth-title">文件上传系统</h2>
-          <p class="auth-subtitle">请输入授权码访问您的文件空间</p>
-          <el-input v-model="authCode" placeholder="请输入授权码" size="large" @keyup.enter="verifyAuth" style="margin-bottom:20px">
-            <template #prefix><el-icon><Key /></el-icon></template>
-          </el-input>
-          <el-button type="primary" size="large" @click="verifyAuth" :loading="verifying" style="width:100%;height:48px;font-size:16px">
-            验证并进入
-          </el-button>
-          <p style="margin-top:20px;color:#909399;font-size:12px">如没有授权码，请联系管理员获取</p>
-        </template>
-        <div class="auth-version">v2.0</div>
+          <ul class="auth-brand-features">
+            <li>拖拽上传</li>
+            <li>在线编辑</li>
+            <li>批量管理</li>
+          </ul>
+          <div class="auth-brand-edition">文件空间 · 3.0</div>
+        </aside>
+        <div class="auth-form-pane">
+          <template v-if="authBlocked === 'disabled'">
+            <div class="auth-blocked-icon"><el-icon><WarningFilled /></el-icon></div>
+            <h2 class="auth-title">服务已停用</h2>
+            <p class="auth-blocked-desc">访问权限已关闭，请联系管理员续费或处理后再试。</p>
+            <p v-if="blockedDomain" class="auth-blocked-domain">{{ blockedDomain }}</p>
+            <el-button type="primary" size="large" class="auth-primary-btn" @click="showContactDialog = true">
+              <el-icon style="margin-right:6px"><Service /></el-icon>联系管理员
+            </el-button>
+            <el-button size="large" link @click="resetAuthBlocked" style="margin-top:12px">更换授权码</el-button>
+          </template>
+          <template v-else>
+            <h2 class="auth-title">欢迎回来</h2>
+            <p class="auth-subtitle">输入授权码进入您的文件空间</p>
+            <el-input v-model="authCode" placeholder="请输入授权码" size="large" class="auth-input" @keyup.enter="verifyAuth">
+              <template #prefix><el-icon><Key /></el-icon></template>
+            </el-input>
+            <el-button type="primary" size="large" class="auth-primary-btn" @click="verifyAuth" :loading="verifying">
+              进入空间
+            </el-button>
+            <p class="auth-hint">没有授权码？请联系管理员获取</p>
+          </template>
+        </div>
       </div>
       <div class="auth-contact" @click="showContactDialog = true">
         <el-icon><Service /></el-icon>
@@ -36,170 +45,196 @@
       </div>
     </div>
 
-    <!-- 文件管理页面 -->
-    <div v-else class="main-container">
-      <div class="header">
-        <div class="header-left">
-          <div class="domain-badge" @click="copyDomain" title="点击复制网站地址">
-            <span class="domain-badge-label">网站域名</span>
-            <span class="domain-badge-value">{{ siteUrl }}</span>
-            <el-icon class="domain-copy-icon"><DocumentCopy /></el-icon>
+    <!-- 文件管理工作区 -->
+    <div v-else class="workspace">
+      <header class="top-bar">
+        <div class="top-bar-brand">
+          <div class="brand-logo"><el-icon><FolderOpened /></el-icon></div>
+          <div class="brand-text">
+            <div class="brand-name">文件空间</div>
+            <div class="brand-domain" @click="copyDomain" title="点击复制">
+              {{ siteUrl }}
+              <el-icon style="font-size:13px"><DocumentCopy /></el-icon>
+            </div>
           </div>
         </div>
-        <div class="header-actions">
-          <el-button @click="showContactDialog = true" type="success"><el-icon style="margin-right:5px"><Service /></el-icon> 联系客服</el-button>
-          <el-button @click="showTutorialDialog = true"><el-icon style="margin-right:5px"><QuestionFilled /></el-icon> 上传教程</el-button>
-          <el-button @click="openWebsite"><el-icon style="margin-right:5px"><Link /></el-icon> 访问网站</el-button>
-          <el-button @click="logout">退出</el-button>
+        <div class="top-bar-actions">
+          <el-button @click="logout"><span class="btn-text">退出</span></el-button>
         </div>
-      </div>
+      </header>
 
-      <!-- 全页拖拽上传提示 -->
-      <div class="drag-hint-bar">
-        <el-icon class="drag-hint-icon"><Upload /></el-icon>
-        <span>可直接将文件或文件夹<strong>拖到页面任意位置</strong>上传，添加后请确认再点击「开始上传」</span>
-      </div>
-
-      <!-- 全页拖拽遮罩（宝塔风格：轻量边框提示） -->
       <div v-if="isPageDragOver" class="page-drag-overlay">
         <div class="page-drag-tip">松开鼠标添加文件</div>
       </div>
 
       <!-- 续费提醒 -->
-      <div v-if="showRenewAlert" class="renew-alert-container">
-        <div class="renew-alert-card" :class="{ 'expired': isExpired, 'warning': !isExpired }">
-          <div class="renew-alert-icon">
-            <el-icon v-if="isExpired" style="font-size:32px;color:#FF3B30"><WarningFilled /></el-icon>
-            <el-icon v-else style="font-size:32px;color:#FF9500"><Clock /></el-icon>
+      <div v-if="showRenewAlert" class="renew-banner" :class="{ 'is-expired': isExpired }">
+        <el-icon class="renew-banner-icon"><WarningFilled v-if="isExpired" /><Clock v-else /></el-icon>
+        <div class="renew-banner-body">
+          <div class="renew-banner-title">{{ isExpired ? '服务已过期' : '服务即将到期' }}</div>
+          <div class="renew-banner-text">
+            <template v-if="isExpired">请尽快联系客服续费，避免影响使用。</template>
+            <template v-else>还剩 <em>{{ remainingDays }}</em> 天 · 到期 {{ formatExpireDate(expireAt) }}</template>
           </div>
-          <div class="renew-alert-content">
-            <div class="renew-alert-title">
-              <span v-if="isExpired">⚠️ 服务已过期</span>
-              <span v-else>⏰ 服务即将到期</span>
+        </div>
+        <el-button type="primary" @click="showContactDialog = true">立即续费</el-button>
+      </div>
+
+      <div class="workspace-grid">
+        <!-- 左侧指标栏 -->
+        <aside class="side-panel">
+          <div class="side-summary">
+            <div class="side-summary-block">
+              <div class="side-summary-head">
+                <span>存储</span>
+                <span class="side-summary-mono">{{ formatSize(usedSize) }} / {{ formatSize(maxUploadSize) }}</span>
+              </div>
+              <el-progress :percentage="storagePercent" :status="storageStatus" :stroke-width="4" :show-text="false" class="side-summary-progress" />
+              <div class="side-summary-foot">{{ storagePercent }}% 已用</div>
             </div>
-            <div class="renew-alert-message">
-              <span v-if="isExpired">您的服务已过期，为避免影响使用，请尽快联系客服续费</span>
-              <span v-else>您的服务还剩 <strong style="color:#FF9500;font-size:18px">{{ remainingDays }}</strong> 天到期，请及时续费</span>
+            <div class="side-summary-divider" />
+            <div class="side-summary-inline">
+              <span><strong>{{ fileCount }}</strong> 文件</span>
+              <span><strong>{{ folderCount }}</strong> 文件夹</span>
             </div>
-            <div class="renew-alert-info" v-if="expireAt">
-              <span style="color:#86868B;font-size:13px">到期时间：{{ formatExpireDate(expireAt) }}</span>
+            <div class="side-summary-divider" />
+            <div class="side-summary-head">
+              <span>有效期</span>
+              <span class="side-expiry" :class="{
+                'is-teal': remainingDays === null || remainingDays > 7,
+                'is-warn': remainingDays !== null && remainingDays > 0 && remainingDays <= 7,
+                'is-danger': remainingDays !== null && remainingDays <= 0
+              }">{{ expiryLabel }}</span>
             </div>
+            <div v-if="expiryHint" class="side-summary-foot">{{ expiryHint }}</div>
           </div>
-          <div class="renew-alert-action">
-            <el-button type="success" size="large" @click="showContactDialog = true" round>
-              <el-icon style="margin-right:5px"><Service /></el-icon>
-              立即续费
+          <div class="side-actions">
+            <el-button type="primary" @click="showUploadDialog = true">
+              <el-icon><Upload /></el-icon><span class="btn-text">上传</span>
             </el-button>
+            <el-button @click="showContactDialog = true"><el-icon><Service /></el-icon><span class="btn-text">客服</span></el-button>
+            <el-button @click="showTutorialDialog = true"><el-icon><QuestionFilled /></el-icon><span class="btn-text">教程</span></el-button>
+            <el-button @click="openWebsite"><el-icon><Link /></el-icon><span class="btn-text">访问站</span></el-button>
           </div>
-        </div>
-      </div>
+        </aside>
 
-      <!-- 统计卡片 -->
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value">{{ files.filter(f => f.type === 'file').length }}</div>
-          <div class="stat-label">文件数量</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">{{ files.filter(f => f.type === 'directory').length }}</div>
-          <div class="stat-label">文件夹数量</div>
-        </div>
-        <div class="stat-card stat-card-storage">
-          <div class="stat-label">存储空间</div>
-          <div class="stat-storage-text">{{ formatSize(usedSize) }} / {{ formatSize(maxUploadSize) }}（{{ storagePercent }}%）</div>
-          <el-progress :percentage="storagePercent" :status="storageStatus" :stroke-width="6" :show-text="false" class="stat-storage-progress" />
-        </div>
-        <div class="stat-card stat-card-time" :class="{ 'expired': remainingDays !== null && remainingDays <= 0, 'warning': remainingDays !== null && remainingDays > 0 && remainingDays <= 7 }">
-          <div class="stat-icon">
-            <el-icon v-if="remainingDays !== null && remainingDays <= 0" style="font-size:18px;color:#FF3B30"><WarningFilled /></el-icon>
-            <el-icon v-else-if="remainingDays !== null && remainingDays <= 7" style="font-size:18px;color:#FF9500"><Clock /></el-icon>
-            <el-icon v-else style="font-size:18px;color:#34C759"><CircleCheck /></el-icon>
-          </div>
-          <div class="stat-value stat-value-time">
-            <template v-if="remainingDays === null">
-              <span style="font-size:18px">∞</span>
-            </template>
-            <template v-else-if="remainingDays <= 0">
-              <span style="color:#FF3B30">已过期</span>
-            </template>
-            <template v-else>
-              <span class="days-number">{{ remainingDays }}</span>
-              <span class="days-unit">天</span>
-            </template>
-          </div>
-          <div class="stat-label">
-            <template v-if="remainingDays === null">永久有效</template>
-            <template v-else-if="remainingDays <= 0">服务已到期</template>
-            <template v-else-if="remainingDays <= 7">即将到期</template>
-            <template v-else>剩余时间</template>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="toolbar">
-          <div class="toolbar-row">
-            <div class="breadcrumb">
-              <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:middle"><HomeFilled /></el-icon> 根目录</span>
-              <span v-for="(part, index) in pathParts" :key="index" class="breadcrumb-part">
-                <span class="breadcrumb-sep">/</span>
-                <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
-              </span>
+        <!-- 右侧文件区 -->
+        <main class="file-panel">
+          <div class="file-panel-header">
+            <div class="file-panel-row">
+              <div class="file-panel-nav">
+                <div class="breadcrumb-wrap">
+                  <nav class="breadcrumb">
+                  <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:-2px"><HomeFilled /></el-icon> 根目录</span>
+                  <span v-for="(part, index) in pathParts" :key="index">
+                    <span class="breadcrumb-sep">/</span>
+                    <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
+                  </span>
+                </nav>
+                  <button
+                    type="button"
+                    class="nav-back-btn"
+                    :class="{ 'is-disabled': !currentPath }"
+                    :disabled="!currentPath"
+                    title="返回上级目录"
+                    @click="goBack"
+                  >
+                    <el-icon><ArrowLeft /></el-icon>
+                  </button>
+                </div>
+              </div>
+              <div class="file-actions-bar">
+                <el-radio-group v-model="viewMode" size="small">
+                  <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
+                  <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
+                </el-radio-group>
+                <el-button @click="showMkdirDialog = true" size="small"><el-icon><FolderAdd /></el-icon></el-button>
+                <el-button @click="openNewFileDialog" size="small"><el-icon><Document /></el-icon></el-button>
+                <el-tooltip content="刷新" placement="top">
+                  <el-button @click="loadFiles(false)" :loading="loading" circle size="small"><el-icon><Refresh /></el-icon></el-button>
+                </el-tooltip>
+              </div>
             </div>
-            <div class="toolbar-actions">
+            <div
+              class="file-panel-toolbar"
+              :class="{ 'is-batch-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
+            >
+              <div class="file-search-bar" :class="{ 'is-active': searchKeyword.trim() }">
+                <el-input
+                  v-model="searchKeyword"
+                  :placeholder="searchSubdirs ? '搜索当前目录及子文件夹…' : '搜索当前目录…'"
+                  clearable
+                  size="small"
+                  class="file-search-input"
+                >
+                  <template #prefix>
+                    <el-icon><Search /></el-icon>
+                  </template>
+                </el-input>
+                <label class="file-search-option">
+                  <el-switch v-model="searchSubdirs" size="small" />
+                  <span>包含子文件夹</span>
+                </label>
+              </div>
+              <p v-if="searchTruncated" class="file-search-notice">匹配结果过多，仅显示前 2000 条</p>
+              <div
+                class="batch-operations"
+                :class="{ 'is-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
+              >
               <template v-if="files.length > 0">
-                <el-button size="small" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
-                <el-button size="small" @click="clearSelection" v-else>取消全选</el-button>
+                <el-button size="small" class="batch-select-btn" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
+                <el-button size="small" class="batch-select-btn" @click="clearSelection" v-else>取消全选</el-button>
               </template>
-              <el-radio-group v-model="viewMode" size="small">
-                <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
-                <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
-              </el-radio-group>
-              <el-button type="primary" @click="showUploadDialog = true"><el-icon style="margin-right:5px"><Upload /></el-icon> 上传文件</el-button>
-              <el-button @click="showMkdirDialog = true"><el-icon style="margin-right:5px"><FolderAdd /></el-icon> 新建文件夹</el-button>
-              <el-button @click="openNewFileDialog"><el-icon style="margin-right:5px"><Document /></el-icon> 新建文件</el-button>
-              <el-tooltip content="刷新文件列表" placement="top">
-                <el-button @click="loadFiles(false)" :loading="loading" circle><el-icon><Refresh /></el-icon></el-button>
-              </el-tooltip>
+              <template v-if="selectedFiles.length > 0 || clipboard.files.length > 0">
+                <span class="batch-label">
+                  <template v-if="selectedFiles.length > 0">已选 {{ selectedFiles.length }} 项</template>
+                  <template v-else>剪贴板 {{ clipboard.files.length }} 项</template>
+                </span>
+                <div class="batch-actions">
+                  <template v-if="selectedFiles.length > 0">
+                    <el-button type="primary" size="small" @click="copyFiles">复制</el-button>
+                    <el-button type="warning" size="small" @click="cutFiles">剪切</el-button>
+                    <el-button type="success" size="small" @click="compressFiles">压缩</el-button>
+                    <el-button size="small" :disabled="selectedDirectories.length === 0" @click="liftSelectedFolders">
+                      <el-icon style="margin-right:4px"><Top /></el-icon>提取到上级
+                    </el-button>
+                    <el-button type="danger" size="small" @click="deleteSelected">删除</el-button>
+                    <el-button size="small" @click="clearSelection">取消</el-button>
+                  </template>
+                  <el-divider
+                    v-if="selectedFiles.length > 0 && clipboard.files.length > 0"
+                    direction="vertical"
+                    class="batch-divider"
+                  />
+                  <template v-if="clipboard.files.length > 0">
+                    <el-button type="success" size="small" @click="pasteFiles">
+                      粘贴 ({{ clipboard.files.length }})
+                    </el-button>
+                    <el-button size="small" text @click="clearClipboard">清空剪贴板</el-button>
+                  </template>
+                </div>
+              </template>
+            </div>
             </div>
           </div>
-          
-          <!-- 批量操作独占一行 -->
-          <div v-if="selectedFiles.length > 0 || clipboard.files.length > 0" class="batch-operations">
-            <template v-if="selectedFiles.length > 0">
-              <span style="color:#606266;font-size:13px;font-weight:500">已选 {{ selectedFiles.length }} 项</span>
-              <el-button type="primary" size="small" @click="copyFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>复制</el-button>
-              <el-button type="warning" size="small" @click="cutFiles"><el-icon style="margin-right:5px"><Scissor /></el-icon>剪切</el-button>
-              <el-button type="success" size="small" @click="compressFiles"><el-icon style="margin-right:5px"><Files /></el-icon>压缩</el-button>
-              <el-button type="danger" size="small" @click="deleteSelected"><el-icon style="margin-right:5px"><Delete /></el-icon>删除</el-button>
-              <el-button size="small" @click="clearSelection">取消选择</el-button>
-            </template>
-            <template v-if="clipboard.files.length > 0">
-              <el-divider v-if="selectedFiles.length > 0" direction="vertical" style="margin:0 10px" />
-              <el-button type="success" size="small" @click="pasteFiles"><el-icon style="margin-right:5px"><DocumentCopy /></el-icon>粘贴 ({{ clipboard.files.length }})</el-button>
-              <el-button size="small" text @click="clearClipboard">清空剪贴板</el-button>
-            </template>
-          </div>
-        </div>
 
-        <div 
-          class="file-list" 
-          :class="{ 'drag-over': isFileDragOver, 'empty-list': files.length === 0 }"
-          v-loading="loading"
-          @dragover.prevent="handleFileDragOver"
-          @dragleave="handleFileDragLeave"
-          @drop.prevent="handleFileListDrop"
-        >
+          <div
+            class="file-list"
+            :class="{
+              'drag-over': isFileDragOver,
+              'empty-list': files.length === 0
+            }"
+            v-loading="loading"
+            @dragover.prevent="handleFileDragOver"
+            @dragleave="handleFileDragLeave"
+            @drop.prevent="handleFileListDrop"
+          >
           <!-- 列表视图 -->
           <template v-if="viewMode === 'list'">
-            <div v-if="currentPath" class="file-item" @click="goBack">
-              <div class="file-checkbox"></div>
-              <div class="file-icon">📁</div>
-              <div class="file-info"><div class="file-name">..</div><div class="file-meta">返回上级目录</div></div>
-            </div>
-            <div v-for="file in files" :key="file.name" class="file-item" 
-                 :class="{ selected: isSelected(file) }"
-                 @click="handleFileClick($event, file)">
+            <div v-for="file in files" :key="fileKey(file)" class="file-item"
+                 :class="{ selected: isSelected(file), 'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible }"
+                 @click="handleFileClick($event, file)"
+                 @contextmenu.capture.prevent="showContextMenu($event, file)">
               <div class="file-checkbox" @click.stop>
                 <el-checkbox :model-value="isSelected(file)" @change="toggleSelect(file)" />
               </div>
@@ -207,16 +242,28 @@
               <div class="file-info">
                 <div class="file-name">{{ file.name }}</div>
                 <div class="file-meta">
-                  <span v-if="file.type === 'directory'" class="file-type-label">文件夹</span>
+                  <span v-if="showSearchLocation" class="file-path-hint">{{ fileParentHint(file) }}</span>
+                  <span v-else-if="file.type === 'directory'" class="file-type-label">文件夹</span>
                 </div>
               </div>
               <div v-if="file.type === 'file'" class="file-size-col">{{ formatSize(file.size) }}</div>
               <div v-else class="file-size-col">-</div>
               <div class="file-date-col">{{ formatDate(file.date) }}</div>
               <div class="file-actions" @click.stop>
-                <el-button v-if="file.type === 'file'" type="primary" size="small" @click="openFileUrl(file)" style="margin-right:4px">访问</el-button>
-                <el-dropdown trigger="click">
-                  <el-button size="small">操作<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                <button
+                  v-if="file.type === 'file'"
+                  type="button"
+                  class="file-action-visit"
+                  @click="openFileUrl(file)"
+                >
+                  <el-icon><Link /></el-icon>
+                  <span>访问</span>
+                </button>
+                <el-dropdown trigger="click" popper-class="loft-file-dropdown">
+                  <button type="button" class="file-action-trigger">
+                    <span>操作</span>
+                    <el-icon><ArrowDown /></el-icon>
+                  </button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item v-if="file.type === 'file'" @click="openFileUrl(file)">
@@ -231,6 +278,17 @@
                       <el-dropdown-item divided v-if="file.type === 'file' && isCompressedFile(file.name)" @click="extractFile(file)">
                         <el-icon><FolderOpened /></el-icon>解压到当前目录
                       </el-dropdown-item>
+                      <template v-if="file.type === 'directory'">
+                        <el-dropdown-item @click="enterFolder(file)">
+                          <el-icon><FolderOpened /></el-icon>打开文件夹
+                        </el-dropdown-item>
+                        <el-dropdown-item @click="liftFolderContents(file)">
+                          <el-icon><Top /></el-icon>提取到上级目录
+                        </el-dropdown-item>
+                        <el-dropdown-item @click="emptyFolder(file)">
+                          <el-icon><Delete /></el-icon>清空文件夹
+                        </el-dropdown-item>
+                      </template>
                       <el-dropdown-item @click="compressSingleFile(file)">
                         <el-icon><Files /></el-icon>压缩
                       </el-dropdown-item>
@@ -243,7 +301,10 @@
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
-                      <el-dropdown-item divided @click="deleteFile(file)" style="color:#f56c6c">
+                      <el-dropdown-item @click="copyFilePath(file)">
+                        <el-icon><Link /></el-icon>复制路径
+                      </el-dropdown-item>
+                      <el-dropdown-item divided class="loft-dd-danger" @click="deleteFile(file)">
                         <el-icon><Delete /></el-icon>删除
                       </el-dropdown-item>
                     </el-dropdown-menu>
@@ -256,22 +317,21 @@
           <!-- 网格视图 -->
           <template v-else>
             <div class="file-grid">
-              <div v-if="currentPath" class="grid-item" @click="goBack">
-                <div class="grid-icon">📁</div>
-                <div class="grid-name">..</div>
-              </div>
-              <div v-for="file in files" :key="file.name" class="grid-item" 
-                   :class="{ selected: isSelected(file) }"
+              <div v-for="file in files" :key="fileKey(file)" class="grid-item"
+                   :class="{ selected: isSelected(file), 'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible }"
                    @click="handleGridClick($event, file)"
-                   @contextmenu.prevent="showContextMenu($event, file)">
+                   @contextmenu.capture.prevent="showContextMenu($event, file)">
                 <div class="grid-checkbox" @click.stop>
                   <el-checkbox :model-value="isSelected(file)" @change="toggleSelect(file)" />
                 </div>
                 <div class="grid-icon">{{ file.type === 'directory' ? '📁' : getFileIcon(file.name) }}</div>
-                <div class="grid-name" :title="file.name">{{ file.name }}</div>
+                <div class="grid-name" :title="fileRelPath(file)">{{ file.name }}</div>
+                <div v-if="showSearchLocation" class="grid-path">{{ fileParentHint(file) }}</div>
                 <div v-if="file.type === 'file'" class="grid-size">{{ formatSize(file.size) }}</div>
-                <el-dropdown trigger="click" class="grid-more" @click.stop>
-                  <el-button size="small" circle @click.stop><el-icon><MoreFilled /></el-icon></el-button>
+                <el-dropdown trigger="click" class="grid-more" popper-class="loft-file-dropdown" @click.stop>
+                  <button type="button" class="file-action-trigger is-icon" @click.stop>
+                    <el-icon><MoreFilled /></el-icon>
+                  </button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item v-if="file.type === 'file'" @click="openFileUrl(file)">
@@ -286,6 +346,17 @@
                       <el-dropdown-item divided v-if="file.type === 'file' && isCompressedFile(file.name)" @click="extractFile(file)">
                         <el-icon><FolderOpened /></el-icon>解压到当前目录
                       </el-dropdown-item>
+                      <template v-if="file.type === 'directory'">
+                        <el-dropdown-item @click="enterFolder(file)">
+                          <el-icon><FolderOpened /></el-icon>打开文件夹
+                        </el-dropdown-item>
+                        <el-dropdown-item @click="liftFolderContents(file)">
+                          <el-icon><Top /></el-icon>提取到上级目录
+                        </el-dropdown-item>
+                        <el-dropdown-item @click="emptyFolder(file)">
+                          <el-icon><Delete /></el-icon>清空文件夹
+                        </el-dropdown-item>
+                      </template>
                       <el-dropdown-item @click="compressSingleFile(file)">
                         <el-icon><Files /></el-icon>压缩
                       </el-dropdown-item>
@@ -298,7 +369,10 @@
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
-                      <el-dropdown-item divided @click="deleteFile(file)" style="color:#f56c6c">
+                      <el-dropdown-item @click="copyFilePath(file)">
+                        <el-icon><Link /></el-icon>复制路径
+                      </el-dropdown-item>
+                      <el-dropdown-item divided class="loft-dd-danger" @click="deleteFile(file)">
                         <el-icon><Delete /></el-icon>删除
                       </el-dropdown-item>
                     </el-dropdown-menu>
@@ -309,26 +383,48 @@
           </template>
 
           <div v-if="!loading && files.length === 0" class="empty-tip">
-            <div class="empty-icon">📂</div>
-            <p style="font-size:16px;margin-bottom:10px">当前目录为空</p>
-            <p class="empty-hint">拖拽文件到页面任意位置 · 点击上传 · 或 Ctrl+V 粘贴</p>
-            <div class="quick-actions">
-              <el-button type="primary" @click="showUploadDialog = true">上传文件</el-button>
-              <el-button @click="showMkdirDialog = true">新建文件夹</el-button>
-            </div>
+            <template v-if="searchKeyword.trim()">
+              <div class="empty-icon">🔍</div>
+              <p style="font-size:16px;margin-bottom:10px">未找到匹配的文件</p>
+              <p class="empty-hint">关键词「{{ searchKeyword.trim() }}」{{ searchSubdirs ? '在子文件夹中' : '在当前目录' }}无结果</p>
+              <div class="quick-actions">
+                <el-button @click="clearSearch">清除搜索</el-button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="empty-icon">📂</div>
+              <p style="font-size:16px;margin-bottom:10px">当前目录为空</p>
+              <p class="empty-hint">拖拽文件到页面任意位置 · 点击上传 · 或 Ctrl+V 粘贴</p>
+              <div class="quick-actions">
+                <el-button type="primary" @click="showUploadDialog = true">上传文件</el-button>
+                <el-button @click="showMkdirDialog = true">新建文件夹</el-button>
+              </div>
+            </template>
           </div>
-        </div>
+          </div>
+
+          <div v-if="totalFiles > 0" class="file-pagination">
+            <el-pagination
+              :current-page="currentPage"
+              :page-size="pageSize"
+              :page-sizes="[10, 20, 50]"
+              :total="totalFiles"
+              layout="total, sizes, prev, pager, next"
+              @size-change="onPageSizeChange"
+              @current-change="onPageChange"
+            />
+          </div>
+        </main>
       </div>
 
-      <div class="footer">
-        <span>文件上传系统</span>
-        <span class="version">v2.0</span>
-      </div>
+      <footer class="workspace-footer">
+        文件空间 <span class="version">3.0</span>
+      </footer>
 
       <!-- 上传对话框 -->
       <el-dialog
         v-model="showUploadDialog"
-        class="upload-dialog"
+        class="upload-dialog upload-theme-dialog"
         width="560px"
         align-center
         :fullscreen="isMobile"
@@ -350,7 +446,7 @@
           <div v-if="!uploading && uploadQueue.length === 0" class="upload-area" :class="{ dragover: isDragover }" @dragenter.prevent="handleUploadAreaDragEnter" @dragover.prevent="handleUploadAreaDragOver" @dragleave="handleUploadAreaDragLeave" @drop.prevent="handleDrop">
             <el-icon class="upload-area-icon"><Upload /></el-icon>
             <div class="upload-text">拖拽文件或文件夹到此处</div>
-            <el-dropdown trigger="click" @command="handleUploadCommand">
+            <el-dropdown trigger="click" popper-class="loft-file-dropdown" @command="handleUploadCommand">
               <el-button type="primary" size="default">选择文件/文件夹</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
@@ -365,7 +461,7 @@
           <div v-if="!uploading && uploadQueue.length > 0" class="upload-add-strip" :class="{ dragover: isDragover }" @dragenter.prevent="handleUploadAreaDragEnter" @dragover.prevent="handleUploadAreaDragOver" @dragleave="handleUploadAreaDragLeave" @drop.prevent="handleDrop">
             <el-icon><Upload /></el-icon>
             <span>继续添加：</span>
-            <el-dropdown trigger="click" @command="handleUploadCommand">
+            <el-dropdown trigger="click" popper-class="loft-file-dropdown" @command="handleUploadCommand">
               <el-button type="primary" link size="small">选择文件</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
@@ -453,7 +549,7 @@
       </Transition>
 
       <!-- 新建文件夹对话框 -->
-      <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px" :fullscreen="isMobile" append-to-body>
+      <el-dialog v-model="showMkdirDialog" title="新建文件夹" width="400px" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <el-input v-model="newFolderName" placeholder="请输入文件夹名称" size="large" @keyup.enter="createFolder">
           <template #prefix><el-icon><Folder /></el-icon></template>
         </el-input>
@@ -464,7 +560,7 @@
       </el-dialog>
 
       <!-- 新建文件对话框 -->
-      <el-dialog v-model="showNewFileDialog" title="新建文件" width="600px" :fullscreen="isMobile" append-to-body>
+      <el-dialog v-model="showNewFileDialog" title="新建文件" width="600px" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <el-form label-width="90px">
           <el-form-item label="文件类型">
             <el-select v-model="newFileType" placeholder="选择文件类型" size="large" style="width:100%" @change="handleFileTypeChange">
@@ -483,14 +579,14 @@
             <el-input v-model="newFileName" placeholder="例如: index" size="large">
               <template #prefix><el-icon><Document /></el-icon></template>
               <template #suffix v-if="newFileType !== 'other'">
-                <span style="color:#909399">.{{ newFileType }}</span>
+                <span class="dialog-input-suffix">.{{ newFileType }}</span>
               </template>
             </el-input>
           </el-form-item>
           <el-form-item label="使用模板">
             <el-switch v-model="useTemplate" :disabled="!hasTemplate" />
-            <span style="margin-left:10px;color:#909399;font-size:12px" v-if="hasTemplate">使用 {{ newFileType.toUpperCase() }} 基础模板</span>
-            <span style="margin-left:10px;color:#c0c4cc;font-size:12px" v-else>该类型暂无模板</span>
+            <span v-if="hasTemplate" class="dialog-form-hint">使用 {{ newFileType.toUpperCase() }} 基础模板</span>
+            <span v-else class="dialog-form-hint is-muted">该类型暂无模板</span>
           </el-form-item>
           <el-form-item label="文件内容">
             <el-input v-model="newFileContent" type="textarea" :rows="10" placeholder="可选，留空创建空文件" />
@@ -503,7 +599,7 @@
       </el-dialog>
 
       <!-- 重命名对话框 -->
-      <el-dialog v-model="showRenameDialog" title="重命名" width="400px" :fullscreen="isMobile" append-to-body>
+      <el-dialog v-model="showRenameDialog" title="重命名" width="400px" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <el-input v-model="newFileName" placeholder="请输入新名称" size="large" @keyup.enter="renameFile">
           <template #prefix><el-icon><EditPen /></el-icon></template>
         </el-input>
@@ -514,7 +610,7 @@
       </el-dialog>
 
       <!-- 文件编辑对话框 -->
-      <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile" append-to-body>
+      <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <div v-loading="loadingFile" class="editor-container">
           <VueMonacoEditor
             v-model:value="fileContent"
@@ -536,14 +632,14 @@
       </el-dialog>
 
       <!-- 图片预览对话框 -->
-      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile" append-to-body>
+      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <div style="text-align:center;max-height:80vh;overflow:auto">
           <img v-if="previewType === 'image'" :src="previewUrl" style="max-width:100%;max-height:75vh" />
         </div>
       </el-dialog>
 
       <!-- 使用教程对话框 -->
-      <el-dialog v-model="showTutorialDialog" title="上传教程" width="780px" align-center :fullscreen="isMobile" append-to-body class="help-dialog">
+      <el-dialog v-model="showTutorialDialog" title="上传教程" width="780px" align-center :fullscreen="isMobile" append-to-body class="help-dialog upload-theme-dialog">
         <div class="help-compact">
           <div class="help-rule-bar">
             <span class="help-rule-key">index.html 必须在网站根目录</span>
@@ -624,7 +720,7 @@
       width="480px"
       :fullscreen="isMobile"
       append-to-body
-      class="contact-dialog"
+      class="contact-dialog upload-theme-dialog"
       :show-close="true"
     >
       <template #header>
@@ -669,17 +765,161 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 到期提醒弹框（3 天内每次进入） -->
+    <el-dialog
+      v-model="showExpiryAlertDialog"
+      width="440px"
+      align-center
+      append-to-body
+      class="expiry-alert-dialog upload-theme-dialog"
+      :close-on-click-modal="false"
+      @closed="onExpiryAlertClosed"
+    >
+      <template #header>
+        <div class="expiry-alert-header">
+          <div class="expiry-alert-icon" :class="{ 'is-expired': isExpired }">
+            <el-icon><WarningFilled v-if="isExpired" /><Clock v-else /></el-icon>
+          </div>
+          <div>
+            <div class="expiry-alert-title">{{ isExpired ? '服务已过期' : '服务即将到期' }}</div>
+            <div class="expiry-alert-subtitle">请及时续费，避免影响使用</div>
+          </div>
+        </div>
+      </template>
+      <div class="expiry-alert-body">
+        <p v-if="isExpired" class="expiry-alert-text">
+          您的文件空间已过期，请尽快联系客服续费。
+        </p>
+        <p v-else class="expiry-alert-text">
+          还剩 <strong>{{ remainingDays }}</strong> 天到期（{{ formatExpireDate(expireAt) }}），请提前续费。
+        </p>
+        <label class="expiry-alert-dismiss">
+          <el-checkbox v-model="expiryAlertDontShow">不再弹框提示</el-checkbox>
+        </label>
+      </div>
+      <template #footer>
+        <el-button @click="closeExpiryAlertDialog">我知道了</el-button>
+        <el-button type="primary" @click="openRenewFromExpiryAlert">联系客服续费</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 右键菜单 -->
+    <Teleport to="body">
+      <Transition name="loft-ctx">
+        <nav
+          v-if="contextMenu.visible && contextMenu.file"
+          class="loft-context-menu"
+          :style="contextMenuStyle"
+          role="menu"
+          @mousedown.stop
+          @contextmenu.prevent
+        >
+          <div class="loft-ctx-header">
+            <span class="loft-ctx-header-name" :title="contextMenu.file.name">{{ contextMenu.file.name }}</span>
+          </div>
+
+          <div class="loft-ctx-body">
+            <template v-if="contextMenu.file.type === 'directory'">
+              <button type="button" class="loft-ctx-item" @click="runCtx(enterFolder, contextMenu.file)">
+                <el-icon><FolderOpened /></el-icon>
+                <span>打开文件夹</span>
+              </button>
+              <button type="button" class="loft-ctx-item" @click="runCtx(liftFolderContents, contextMenu.file)">
+                <el-icon><Top /></el-icon>
+                <span>提取到上级目录</span>
+              </button>
+              <button type="button" class="loft-ctx-item" @click="runCtx(emptyFolder, contextMenu.file)">
+                <el-icon><Delete /></el-icon>
+                <span>清空文件夹</span>
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" class="loft-ctx-item" @click="runCtx(openFileUrl, contextMenu.file)">
+                <el-icon><Link /></el-icon>
+                <span>访问地址</span>
+              </button>
+              <button
+                v-if="isEditableFile(contextMenu.file.name)"
+                type="button"
+                class="loft-ctx-item"
+                @click="runCtx(openFile, contextMenu.file)"
+              >
+                <el-icon><Edit /></el-icon>
+                <span>编辑</span>
+              </button>
+              <button
+                v-if="isPreviewableFile(contextMenu.file.name)"
+                type="button"
+                class="loft-ctx-item"
+                @click="runCtx(previewFile, contextMenu.file)"
+              >
+                <el-icon><View /></el-icon>
+                <span>预览</span>
+              </button>
+              <button
+                v-if="isCompressedFile(contextMenu.file.name)"
+                type="button"
+                class="loft-ctx-item"
+                @click="runCtx(extractFile, contextMenu.file)"
+              >
+                <el-icon><FolderOpened /></el-icon>
+                <span>解压到当前目录</span>
+              </button>
+            </template>
+
+            <div class="loft-ctx-divider" />
+
+            <button type="button" class="loft-ctx-item" @click="runCtx(compressSingleFile, contextMenu.file)">
+              <el-icon><Files /></el-icon>
+              <span>压缩</span>
+            </button>
+            <button type="button" class="loft-ctx-item" @click="runCtx(copySingleFile, contextMenu.file)">
+              <el-icon><DocumentCopy /></el-icon>
+              <span>复制</span>
+            </button>
+            <button type="button" class="loft-ctx-item" @click="runCtx(cutSingleFile, contextMenu.file)">
+              <el-icon><Scissor /></el-icon>
+              <span>剪切</span>
+            </button>
+
+            <div class="loft-ctx-divider" />
+
+            <button type="button" class="loft-ctx-item" @click="runCtx(openRenameDialog, contextMenu.file)">
+              <el-icon><EditPen /></el-icon>
+              <span>重命名</span>
+            </button>
+            <button type="button" class="loft-ctx-item" @click="runCtx(copyFilePath, contextMenu.file)">
+              <el-icon><Link /></el-icon>
+              <span>复制路径</span>
+            </button>
+
+            <div class="loft-ctx-divider" />
+
+            <button type="button" class="loft-ctx-item is-danger" @click="runCtx(deleteFile, contextMenu.file)">
+              <el-icon><Delete /></el-icon>
+              <span>删除</span>
+            </button>
+          </div>
+        </nav>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck } from '@element-plus/icons-vue'
+import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, ArrowLeft, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck, Top, Search } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader } from '@/utils/chunked-upload'
 import { PhpDirectUploader } from '@/utils/php-direct-upload'
 import { API_BASE } from '@/config'
+import '@/styles/upload-theme-v3.css'
+
+if (typeof document !== 'undefined') {
+  document.body.classList.add('upload-theme-page')
+}
 
 const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
@@ -697,11 +937,69 @@ const expireAt = ref(null)
 const remainingDays = ref(null)
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
+const selectedDirectories = computed(() => selectedFiles.value.filter(f => f.type === 'directory'))
+const parentPathLabel = computed(() => currentPath.value || '根目录')
+
+const contextMenu = ref({ visible: false, x: 0, y: 0, file: null })
+const contextMenuStyle = computed(() => ({
+  left: `${contextMenu.value.x}px`,
+  top: `${contextMenu.value.y}px`
+}))
+
+const hideContextMenu = () => {
+  contextMenu.value.visible = false
+}
+
+const showContextMenu = (e, file) => {
+  e.preventDefault()
+  e.stopPropagation()
+  const pad = 10
+  const menuW = 180
+  const menuH = 320
+  let x = e.clientX
+  let y = e.clientY
+  if (x + menuW + pad > window.innerWidth) x = Math.max(pad, window.innerWidth - menuW - pad)
+  if (y + menuH + pad > window.innerHeight) y = Math.max(pad, window.innerHeight - menuH - pad)
+  contextMenu.value = { visible: true, x, y, file }
+}
+
+const runCtx = (handler, file) => {
+  hideContextMenu()
+  if (file && handler) handler(file)
+}
+
+const onContextMenuDismiss = (e) => {
+  const menu = document.querySelector('.loft-context-menu')
+  if (menu && menu.contains(e.target)) return
+  hideContextMenu()
+}
+const onContextMenuKeydown = (e) => {
+  if (e.key === 'Escape') hideContextMenu()
+}
 
 const currentPath = ref('')
 const files = ref([])
 const loading = ref(false)
 const viewMode = ref('list')
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalFiles = ref(0)
+const totalFileCount = ref(0)
+const totalFolderCount = ref(0)
+const searchKeyword = ref('')
+const searchSubdirs = ref(localStorage.getItem('upload_search_subdirs') === 'true')
+const searchTruncated = ref(false)
+let searchTimer = null
+let skipSearchWatch = false
+
+const fileKey = (file) => file.rel_path || file.name
+const fileRelPath = (file) => file.rel_path ?? (currentPath.value ? `${currentPath.value}/${file.name}` : file.name)
+const fileParentHint = (file) => {
+  const rel = fileRelPath(file)
+  const idx = rel.lastIndexOf('/')
+  return idx > -1 ? rel.slice(0, idx) : '根目录'
+}
+const showSearchLocation = computed(() => !!searchKeyword.value.trim() && searchSubdirs.value)
 
 // 多选相关
 const selectedFiles = ref([])
@@ -713,11 +1011,11 @@ const clipboard = ref({
 })
 
 const isSelected = (file) => {
-  return selectedFiles.value.some(f => f.name === file.name)
+  return selectedFiles.value.some(f => fileKey(f) === fileKey(file))
 }
 
 const toggleSelect = (file) => {
-  const index = selectedFiles.value.findIndex(f => f.name === file.name)
+  const index = selectedFiles.value.findIndex(f => fileKey(f) === fileKey(file))
   if (index > -1) {
     selectedFiles.value.splice(index, 1)
   } else {
@@ -742,7 +1040,7 @@ const handleFileClick = (event, file) => {
   }
   // 普通点击
   if (file.type === 'directory') {
-    navigateTo(currentPath.value ? currentPath.value + '/' + file.name : file.name)
+    navigateTo(fileRelPath(file))
   } else {
     // 单击文件时，如果已有选中则切换选中状态，否则打开文件
     if (selectedFiles.value.length > 0) {
@@ -759,7 +1057,7 @@ const handleGridClick = (event, file) => {
   }
   // 普通点击
   if (file.type === 'directory') {
-    navigateTo(currentPath.value ? currentPath.value + '/' + file.name : file.name)
+    navigateTo(fileRelPath(file))
   } else {
     // 单击文件时，如果已有选中则切换选中状态
     if (selectedFiles.value.length > 0) {
@@ -777,21 +1075,9 @@ const deleteSelected = async () => {
       '批量删除',
       { type: 'warning' }
     )
-    let success = 0, failed = 0
-    for (const file of selectedFiles.value) {
-      try {
-        const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-        await api('/delete', { path: filePath })
-        success++
-      } catch (e) {
-        failed++
-      }
-    }
-    if (failed === 0) {
-      ElMessage.success(`成功删除 ${success} 个项目`)
-    } else {
-      ElMessage.warning(`删除完成: 成功 ${success} 个, 失败 ${failed} 个`)
-    }
+    const paths = selectedFiles.value.map(file => fileRelPath(file))
+    const result = await api('/delete', { paths })
+    ElMessage.success(`成功删除 ${result.deleted ?? paths.length} 个项目`)
     selectedFiles.value = []
     loadFiles()
   } catch (e) {
@@ -806,7 +1092,7 @@ const copyFiles = () => {
     files: selectedFiles.value.map(f => ({
       name: f.name,
       type: f.type,
-      path: currentPath.value ? `${currentPath.value}/${f.name}` : f.name
+      path: fileRelPath(f)
     })),
     operation: 'copy'
   }
@@ -821,7 +1107,7 @@ const cutFiles = () => {
     files: selectedFiles.value.map(f => ({
       name: f.name,
       type: f.type,
-      path: currentPath.value ? `${currentPath.value}/${f.name}` : f.name
+      path: fileRelPath(f)
     })),
     operation: 'cut'
   }
@@ -844,7 +1130,7 @@ const pasteFiles = async () => {
     
     for (const file of clipboard.value.files) {
       try {
-        const targetPath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+        const targetPath = fileRelPath(file)
         
         if (clipboard.value.operation === 'copy') {
           await api('/copy', { source_path: file.path, target_path: targetPath })
@@ -881,6 +1167,158 @@ const clearClipboard = () => {
   clipboard.value = { files: [], operation: '' }
 }
 
+const enterFolder = (file) => {
+  if (file.type !== 'directory') return
+  navigateTo(fileRelPath(file))
+}
+
+const copyFilePath = async (file) => {
+  try {
+    await navigator.clipboard.writeText(fileRelPath(file))
+    ElMessage.success('路径已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+const resolveLiftConflict = async (conflicts, parentLabel) => {
+  const preview = conflicts.slice(0, 8).map(c => {
+    const tag = c.type === 'directory' ? '文件夹' : '文件'
+    return `· ${c.name}（${tag}）`
+  }).join('\n')
+  const more = conflicts.length > 8 ? `\n… 还有 ${conflicts.length - 8} 项` : ''
+
+  try {
+    await ElMessageBox.confirm(
+      `「${parentLabel}」中已有 ${conflicts.length} 个同名项：\n\n${preview}${more}\n\n覆盖将删除上级目录中的同名项后再移动。`,
+      '发现重名',
+      {
+        type: 'warning',
+        confirmButtonText: '覆盖',
+        cancelButtonText: '跳过重名项',
+        distinguishCancelAndClose: true
+      }
+    )
+    return 'overwrite'
+  } catch (action) {
+    if (action === 'cancel') return 'skip'
+    return null
+  }
+}
+
+const executeLiftContents = async (folderRelPath, folderName, { silent = false } = {}) => {
+  const check = await api('/lift-contents/check', { path: folderRelPath })
+  if (check.total === 0) {
+    if (!silent) ElMessage.info(folderName ? `「${folderName}」已是空的` : '文件夹已是空的')
+    return { ok: true, moved: 0, empty: true }
+  }
+
+  let onConflict = 'skip'
+  if (check.conflicts?.length > 0) {
+    const choice = await resolveLiftConflict(check.conflicts, parentPathLabel.value)
+    if (!choice) return { ok: false, cancelled: true }
+    onConflict = choice
+  }
+
+  const res = await api('/lift-contents', { path: folderRelPath, on_conflict: onConflict })
+  if (!silent) {
+    if (res.failed > 0) {
+      ElMessage.warning(folderName ? `「${folderName}」：${res.message}` : res.message)
+    } else {
+      ElMessage.success(folderName ? `「${folderName}」：${res.message}` : res.message)
+    }
+  }
+  return { ok: res.failed === 0, ...res }
+}
+
+const liftFolderContents = async (file) => {
+  if (file.type !== 'directory') return
+  try {
+    await ElMessageBox.confirm(
+      `将「${file.name}」内的所有内容移动到「${parentPathLabel.value}」。\n子文件夹会整体移动，不会递归拆散。`,
+      '提取到上级目录',
+      { type: 'info', confirmButtonText: '继续', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+
+  const loadingMsg = ElMessage({ message: '正在提取...', type: 'info', duration: 0 })
+  try {
+    const result = await executeLiftContents(fileRelPath(file), file.name)
+    loadingMsg.close()
+    if (result.cancelled) return
+    clearSelection()
+    loadFiles()
+  } catch (e) {
+    loadingMsg.close()
+    ElMessage.error(e.message)
+  }
+}
+
+const liftSelectedFolders = async () => {
+  const dirs = selectedDirectories.value
+  if (dirs.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `将选中的 ${dirs.length} 个文件夹内的内容全部提取到「${parentPathLabel.value}」。`,
+      '批量提取到上级',
+      { type: 'info', confirmButtonText: '继续', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+
+  const loadingMsg = ElMessage({ message: '正在批量提取...', type: 'info', duration: 0 })
+  let moved = 0
+  let failed = 0
+  let cancelled = false
+  try {
+    for (const file of dirs) {
+      const result = await executeLiftContents(fileRelPath(file), file.name, { silent: true })
+      if (result.cancelled) {
+        cancelled = true
+        break
+      }
+      moved += result.moved || 0
+      if (!result.ok && !result.cancelled) failed += 1
+    }
+    loadingMsg.close()
+    if (cancelled) return
+    if (failed === 0) {
+      ElMessage.success(`已处理 ${dirs.length} 个文件夹，共提取 ${moved} 项`)
+    } else {
+      ElMessage.warning(`完成：${dirs.length - failed} 个成功，${failed} 个失败，共提取 ${moved} 项`)
+    }
+    clearSelection()
+    loadFiles()
+  } catch (e) {
+    loadingMsg.close()
+    ElMessage.error(e.message)
+  }
+}
+
+const emptyFolder = async (file) => {
+  if (file.type !== 'directory') return
+  try {
+    await ElMessageBox.confirm(
+      `确定清空「${file.name}」内的所有内容？文件夹本身会保留。`,
+      '清空文件夹',
+      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const res = await api('/empty-folder', { path: fileRelPath(file) })
+    ElMessage.success(res.message)
+    loadFiles()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
 // 压缩文件
 const compressFiles = async () => {
   if (selectedFiles.value.length === 0) return
@@ -905,9 +1343,7 @@ const compressFiles = async () => {
     })
     
     try {
-      const paths = selectedFiles.value.map(f => 
-        currentPath.value ? `${currentPath.value}/${f.name}` : f.name
-      )
+      const paths = selectedFiles.value.map(f => fileRelPath(f))
       
       const format = archiveName.endsWith('.tar.gz') ? 'tar.gz' : 'zip'
       const fullArchiveName = currentPath.value ? `${currentPath.value}/${archiveName}` : archiveName
@@ -1114,8 +1550,46 @@ const isExpired = computed(() => {
   return remainingDays.value <= 0
 })
 
+const showExpiryAlertDialog = ref(false)
+const expiryAlertDontShow = ref(false)
+const EXPIRY_ALERT_DISMISS_KEY = 'upload_expiry_alert_dismiss'
+
 // 是否显示续费提醒
 const showRenewAlert = computed(() => isExpiringSoon.value || isExpired.value)
+
+const getExpiryAlertDismissId = () => `${domain.value}|${expireAt.value || ''}`
+
+const isExpiryAlertDismissed = () =>
+  localStorage.getItem(EXPIRY_ALERT_DISMISS_KEY) === getExpiryAlertDismissId()
+
+const saveExpiryAlertDismiss = () => {
+  localStorage.setItem(EXPIRY_ALERT_DISMISS_KEY, getExpiryAlertDismissId())
+}
+
+const shouldPromptExpiryAlert = () => {
+  if (remainingDays.value === null) return false
+  return remainingDays.value <= 3
+}
+
+const maybeShowExpiryAlert = () => {
+  if (!shouldPromptExpiryAlert()) return
+  if (isExpiryAlertDismissed()) return
+  expiryAlertDontShow.value = false
+  showExpiryAlertDialog.value = true
+}
+
+const closeExpiryAlertDialog = () => {
+  showExpiryAlertDialog.value = false
+}
+
+const onExpiryAlertClosed = () => {
+  if (expiryAlertDontShow.value) saveExpiryAlertDismiss()
+}
+
+const openRenewFromExpiryAlert = () => {
+  showExpiryAlertDialog.value = false
+  showContactDialog.value = true
+}
 
 const showUploadDialog = ref(false)
 const showMkdirDialog = ref(false)
@@ -1212,6 +1686,22 @@ const storageStatus = computed(() => {
   return ''
 })
 
+const fileCount = computed(() => totalFileCount.value)
+const folderCount = computed(() => totalFolderCount.value)
+
+const expiryLabel = computed(() => {
+  if (remainingDays.value === null) return '永久'
+  if (remainingDays.value <= 0) return '已过期'
+  return `${remainingDays.value} 天`
+})
+
+const expiryHint = computed(() => {
+  if (remainingDays.value === null) return ''
+  if (remainingDays.value <= 0) return '请联系续费'
+  if (remainingDays.value <= 7) return '即将到期'
+  return ''
+})
+
 watch(autoStartUpload, (val) => {
   localStorage.setItem('upload_auto_start', val ? 'true' : 'false')
 })
@@ -1257,6 +1747,7 @@ const verifyAuth = async () => {
     localStorage.setItem('upload_auth_code', authCode.value)
     await loadFiles()
     await loadDirectUploadConfig()
+    maybeShowExpiryAlert()
   } catch (e) {
     if (e.code === 'disabled' || e.status === 403) {
       authBlocked.value = 'disabled'
@@ -1317,8 +1808,7 @@ const loadDirectUploadConfig = async () => {
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
 const openWebsite = () => window.open(siteUrl.value, '_blank')
 const openFileUrl = (file) => {
-  const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-  window.open(`${siteUrl.value}/${filePath}`, '_blank')
+  window.open(`${siteUrl.value}/${fileRelPath(file)}`, '_blank')
 }
 const copyWechat = () => {
   navigator.clipboard.writeText('feiyu3305')
@@ -1338,23 +1828,35 @@ const copyDomain = async () => {
 const loadFiles = async (skipUsage = false) => {
   loading.value = true
   try {
-    // 并行请求文件列表和空间使用情况
-    const promises = [api('/list', { path: currentPath.value })]
-    
-    // 空间使用情况不需要每次都获取，只在必要时获取
+    const promises = [api('/list', {
+      path: currentPath.value,
+      page: currentPage.value,
+      pageSize: pageSize.value,
+      keyword: searchKeyword.value.trim(),
+      search_subdirs: searchSubdirs.value
+    })]
+
     if (!skipUsage) {
       promises.push(api('/usage'))
     }
-    
+
     const results = await Promise.all(promises)
-    
-    // 处理文件列表
-    files.value = results[0].files.sort((a, b) => { 
-      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
-      return a.name.localeCompare(b.name) 
-    })
-    
-    // 处理空间使用情况（如果有）
+    const listResult = results[0]
+
+    totalFiles.value = listResult.total ?? listResult.files.length
+    totalFileCount.value = listResult.file_count ?? listResult.files.filter(f => f.type === 'file').length
+    totalFolderCount.value = listResult.folder_count ?? listResult.files.filter(f => f.type === 'directory').length
+
+    const maxPage = Math.max(1, Math.ceil(totalFiles.value / pageSize.value))
+    if (currentPage.value > maxPage) {
+      currentPage.value = maxPage
+      loading.value = false
+      return loadFiles(skipUsage)
+    }
+
+    files.value = listResult.files
+    searchTruncated.value = !!listResult.search_truncated
+
     if (results[1]) {
       usedSize.value = results[1].used_size || 0
     }
@@ -1365,8 +1867,53 @@ const loadFiles = async (skipUsage = false) => {
   }
 }
 
-const navigateTo = (path) => { currentPath.value = path; selectedFiles.value = []; loadFiles(true) } // 导航时跳过空间检查
-const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); selectedFiles.value = []; loadFiles(true) } // 返回时跳过空间检查
+const onPageChange = (page) => {
+  currentPage.value = page
+  selectedFiles.value = []
+  loadFiles(true)
+}
+
+const onPageSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+  selectedFiles.value = []
+  loadFiles(true)
+}
+
+const resetSearch = () => {
+  skipSearchWatch = true
+  searchKeyword.value = ''
+  skipSearchWatch = false
+}
+
+const clearSearch = () => {
+  resetSearch()
+  searchTruncated.value = false
+  currentPage.value = 1
+  selectedFiles.value = []
+  loadFiles(true)
+}
+
+watch(searchKeyword, () => {
+  if (skipSearchWatch) return
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1
+    selectedFiles.value = []
+    loadFiles(true)
+  }, 300)
+})
+
+watch(searchSubdirs, (val) => {
+  localStorage.setItem('upload_search_subdirs', val ? 'true' : 'false')
+  if (!searchKeyword.value.trim()) return
+  currentPage.value = 1
+  selectedFiles.value = []
+  loadFiles(true)
+})
+
+const navigateTo = (path) => { currentPath.value = path; currentPage.value = 1; selectedFiles.value = []; resetSearch(); loadFiles(true) }
+const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); currentPage.value = 1; selectedFiles.value = []; resetSearch(); loadFiles(true) }
 
 const handleFileSelect = (e) => { checkAndAddFiles(e.target.files, false); e.target.value = '' }
 const handleFolderSelect = (e) => { checkAndAddFiles(e.target.files, true); e.target.value = '' }
@@ -2038,8 +2585,7 @@ const openNewFileDialog = () => {
 
 const deleteFile = async (file) => {
   await ElMessageBox.confirm(`确定删除 "${file.name}"？${file.type === 'directory' ? '文件夹内所有内容将被删除！' : ''}`, '确认删除', { type: 'warning' })
-  const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-  await api('/delete', { path: filePath })
+  await api('/delete', { path: fileRelPath(file) })
   ElMessage.success('删除成功')
   await loadFiles()
 }
@@ -2061,8 +2607,10 @@ const renameFile = async () => {
     return
   }
   renaming.value = true
-  const oldPath = currentPath.value ? `${currentPath.value}/${renamingFile.value.name}` : renamingFile.value.name
-  const newPath = currentPath.value ? `${currentPath.value}/${newFileName.value}` : newFileName.value
+  const oldPath = fileRelPath(renamingFile.value)
+  const newPath = oldPath.includes('/')
+    ? `${oldPath.slice(0, oldPath.lastIndexOf('/') + 1)}${newFileName.value}`
+    : newFileName.value
   await api('/rename', { oldPath, newPath })
   ElMessage.success('重命名成功')
   showRenameDialog.value = false
@@ -2081,8 +2629,7 @@ const openFile = async (file) => {
   showEditDialog.value = true
   loadingFile.value = true
   try {
-    const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-    const res = await api('/read', { path: filePath })
+    const res = await api('/read', { path: fileRelPath(file) })
     fileContent.value = res.content || ''
   } catch (e) {
     ElMessage.error('读取文件失败: ' + e.message)
@@ -2097,8 +2644,7 @@ const saveFile = async () => {
   if (!editingFile.value) return
   savingFile.value = true
   try {
-    const filePath = currentPath.value ? `${currentPath.value}/${editingFile.value.name}` : editingFile.value.name
-    await api('/write', { path: filePath, content: fileContent.value })
+    await api('/write', { path: fileRelPath(editingFile.value), content: fileContent.value })
     ElMessage.success('保存成功')
     showEditDialog.value = false
     loadFiles()
@@ -2114,7 +2660,7 @@ const previewFile = async (file) => {
   if (!isPreviewableFile(file.name)) return
   previewingFile.value = file
   previewType.value = 'image'
-  const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+  const filePath = fileRelPath(file)
   // 通过接口获取图片base64
   try {
     const res = await api('/read-binary', { path: filePath })
@@ -2153,8 +2699,7 @@ const extractFile = async (file) => {
     })
     
     try {
-      const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
-      await api('/extract', { path: filePath })
+      await api('/extract', { path: fileRelPath(file) })
       loadingMsg.close()
       ElMessage.success('解压成功！')
       loadFiles()
@@ -2190,7 +2735,7 @@ const compressSingleFile = async (file) => {
     })
     
     try {
-      const filePath = currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+      const filePath = fileRelPath(file)
       const format = archiveName.endsWith('.tar.gz') ? 'tar.gz' : 'zip'
       const fullArchiveName = currentPath.value ? `${currentPath.value}/${archiveName}` : archiveName
       
@@ -2218,7 +2763,7 @@ const copySingleFile = (file) => {
     files: [{
       name: file.name,
       type: file.type,
-      path: currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+      path: fileRelPath(file)
     }],
     operation: 'copy'
   }
@@ -2231,7 +2776,7 @@ const cutSingleFile = (file) => {
     files: [{
       name: file.name,
       type: file.type,
-      path: currentPath.value ? `${currentPath.value}/${file.name}` : file.name
+      path: fileRelPath(file)
     }],
     operation: 'cut'
   }
@@ -2293,6 +2838,8 @@ const formatExpireDate = (dateStr) => {
 }
 
 onMounted(() => {
+  document.body.classList.add('upload-theme-page')
+  document.title = '文件空间'
   // 检查 URL 参数中的授权码
   const urlParams = new URLSearchParams(window.location.search)
   const codeFromUrl = urlParams.get('code')
@@ -2305,15 +2852,24 @@ onMounted(() => {
 
   window.addEventListener('resize', handleResize)
   window.addEventListener('paste', handlePaste)
+  document.addEventListener('mousedown', onContextMenuDismiss)
+  document.addEventListener('scroll', hideContextMenu, true)
+  document.addEventListener('keydown', onContextMenuKeydown)
 })
 
 watch([authorized, showUploadDialog], updatePageDragEvents, { immediate: true })
 
 onUnmounted(() => {
+  document.body.classList.remove('upload-theme-page')
+  document.title = '虚拟主机管理系统'
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('paste', handlePaste)
+  document.removeEventListener('mousedown', onContextMenuDismiss)
+  document.removeEventListener('scroll', hideContextMenu, true)
+  document.removeEventListener('keydown', onContextMenuKeydown)
   unbindPageDragEvents()
   if (uploadStatsInterval.value) clearInterval(uploadStatsInterval.value)
+  if (searchTimer) clearTimeout(searchTimer)
 })
 
 const handleResize = () => {
@@ -2322,852 +2878,321 @@ const handleResize = () => {
 </script>
 
 <style scoped>
-.upload-page { 
-  min-height: 100vh; 
-  background: linear-gradient(135deg, #F5F5F7 0%, #FAFAFA 100%);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-  position: relative;
-}
-.upload-page::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    radial-gradient(circle at 20% 30%, rgba(0, 122, 255, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 80% 70%, rgba(88, 86, 214, 0.06) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, rgba(255, 149, 0, 0.03) 0%, transparent 60%);
-  pointer-events: none;
-  z-index: 0;
-  animation: backgroundPulse 20s ease-in-out infinite;
-}
-@keyframes backgroundPulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-.auth-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; position: relative; }
-.auth-box { 
-  width: 420px; 
-  padding: 50px 40px; 
-  background: rgba(255, 255, 255, 0.5); 
-  backdrop-filter: blur(80px) saturate(180%);
-  -webkit-backdrop-filter: blur(80px) saturate(180%);
-  border-radius: 28px; 
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 24px 64px rgba(0, 0, 0, 0.06),
-    0 4px 12px rgba(0, 0, 0, 0.03); 
-  text-align: center;
-  border: 0.5px solid rgba(255, 255, 255, 1);
-}
+/* Layout-only — Canvas Loft visuals in upload-theme-v3.css */
 
-.auth-blocked-icon {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 16px;
-  border-radius: 50%;
-  background: #fef0f0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 32px;
-  color: #f56c6c;
-}
-
-.auth-blocked-desc {
-  margin: 12px 0 8px;
-  color: #606266;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.auth-blocked-domain {
-  margin: 0 0 20px;
-  color: #909399;
-  font-size: 13px;
-  word-break: break-all;
-}
-.auth-contact { 
-  position: fixed; 
-  bottom: 30px; 
-  right: 30px; 
-  background: linear-gradient(135deg, #007AFF 0%, #0095FF 100%); 
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  color: #fff; 
-  padding: 12px 24px; 
-  border-radius: 24px; 
-  cursor: pointer; 
-  display: flex; 
-  align-items: center; 
-  gap: 8px; 
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.2) inset,
-    0 8px 24px rgba(0, 122, 255, 0.3),
-    0 2px 8px rgba(0, 122, 255, 0.2); 
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-  font-weight: 500;
-  font-size: 14px;
-}
-.auth-contact:hover { 
-  transform: translateY(-2px) scale(1.02); 
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.3) inset,
-    0 12px 32px rgba(0, 122, 255, 0.4),
-    0 4px 12px rgba(0, 122, 255, 0.25); 
-}
-.auth-logo { font-size: 48px; margin-bottom: 10px; }
-.auth-title { margin-bottom: 10px; color: #1c1c1e; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; }
-.auth-subtitle { color: #8e8e93; margin-bottom: 30px; font-size: 14px; font-weight: 400; }
-.auth-version {
-  margin-top: 20px;
-  padding: 6px 16px;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.1) 0%, rgba(0, 122, 255, 0.05) 100%);
-  border: 0.5px solid rgba(0, 122, 255, 0.2);
-  border-radius: 14px;
-  color: #007AFF;
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.5px;
-  display: inline-block;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
-}
-.main-container { max-width: 1200px; margin: 0 auto; padding: 20px; position: relative; z-index: 1; }
-.header { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center; 
-  margin-bottom: 20px; 
-  padding: 12px 20px; 
-  background: rgba(255, 255, 255, 0.5); 
-  backdrop-filter: blur(80px) saturate(180%);
-  -webkit-backdrop-filter: blur(80px) saturate(180%);
-  border-radius: 20px; 
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 8px 24px rgba(0, 0, 0, 0.04),
-    0 1px 3px rgba(0, 0, 0, 0.02);
-  border: 0.5px solid rgba(255, 255, 255, 1);
-}
-.header-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.domain-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px 8px 14px;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.08) 0%, rgba(0, 122, 255, 0.04) 100%);
-  border: 0.5px solid rgba(0, 122, 255, 0.18);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  max-width: 100%;
-}
-.domain-badge:hover {
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
-  border-color: rgba(0, 122, 255, 0.35);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.1);
-}
-.domain-badge:active {
-  transform: translateY(0);
-}
-.domain-badge-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #86868b;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.domain-badge-label::after {
-  content: '：';
-}
-.domain-badge-value {
-  font-size: 15px;
-  font-weight: 600;
-  color: #007aff;
-  letter-spacing: -0.2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-.domain-copy-icon {
-  font-size: 14px;
-  color: #86868b;
-  flex-shrink: 0;
-  transition: color 0.2s;
-}
-.domain-badge:hover .domain-copy-icon {
-  color: #007aff;
-}
-.header-actions { display: flex; gap: 10px; }
-
-/* 全页拖拽上传 */
-.drag-hint-bar {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
-  padding: 6px 12px; background: #ecf5ff;
-  border: 1px solid #d9ecff; border-radius: 4px;
-  font-size: 12px; color: #606266;
-}
-.drag-hint-icon { color: #409eff; font-size: 16px; flex-shrink: 0; }
-.drag-hint-bar strong { color: #409eff; font-weight: 600; }
 .page-drag-overlay {
-  position: fixed; inset: 0; z-index: 2000;
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
   pointer-events: none;
-  border: 3px dashed #409eff;
-  background: rgba(64, 158, 255, 0.05);
-  box-shadow: inset 0 0 60px rgba(64, 158, 255, 0.08);
 }
+
 .page-drag-tip {
-  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-  padding: 8px 24px; background: #409eff; color: #fff;
-  border-radius: 4px; font-size: 14px; font-weight: 500;
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.35);
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 24px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
-.stats-row { 
-  display: grid; 
-  grid-template-columns: repeat(4, 1fr); 
-  gap: 10px; 
-  margin-bottom: 14px; 
-}
-.stat-card { 
-  padding: 10px 12px; 
-  border-radius: 12px; 
-  box-shadow: 
-    0 0 0 0.5px rgba(0, 0, 0, 0.04) inset,
-    0 1px 4px rgba(0, 0, 0, 0.03); 
-  text-align: center;
-  transition: all 0.2s ease;
+.file-list {
+  overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
-  overflow: hidden;
-  border: 0.5px solid rgba(0, 0, 0, 0.06);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: auto;
-}
-.stat-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.4) 100%);
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-}
-.stat-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 
-    0 0 0 0.5px rgba(0, 122, 255, 0.1) inset,
-    0 4px 12px rgba(0, 0, 0, 0.06);
-}
-.stat-card:hover::before {
-  opacity: 0.6;
-}
-.stat-card:active {
-  transform: translateY(0);
-  transition: all 0.1s;
-}
-.stat-card:nth-child(1) { 
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
-  border-color: rgba(0, 122, 255, 0.15);
-}
-.stat-card:nth-child(2) { 
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.85) 100%);
-}
-.stat-card:nth-child(3) { 
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.85) 100%);
-}
-.stat-card:nth-child(4) { 
-  background: linear-gradient(135deg, rgba(255, 249, 240, 0.95) 0%, rgba(255, 249, 240, 0.85) 100%);
-  border-color: rgba(255, 149, 0, 0.1);
-}
-.stat-card-storage {
-  gap: 4px;
-  padding: 10px 12px;
-}
-.stat-card-storage .stat-label {
-  margin-top: 0;
-  margin-bottom: 0;
-}
-.stat-storage-text {
-  font-size: 12px;
-  font-weight: 600;
-  color: #1c1c1e;
-  letter-spacing: -0.2px;
-  position: relative;
-  z-index: 1;
-}
-.stat-storage-progress {
-  width: 100%;
-  position: relative;
-  z-index: 1;
-}
-.stat-value { 
-  font-size: 22px; 
-  font-weight: 700; 
-  color: #1c1c1e;
-  position: relative;
-  z-index: 1;
-  letter-spacing: -1.2px;
-  line-height: 1.2;
-  background: linear-gradient(135deg, #1c1c1e 0%, #3c3c43 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin: 0;
-}
-.stat-card:nth-child(1) .stat-value {
-  background: linear-gradient(135deg, #007AFF 0%, #0051D5 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.stat-label { 
-  color: #6e6e73; 
-  font-size: 11px; 
-  margin-top: 3px;
-  margin-bottom: 0;
-  font-weight: 600;
-  position: relative;
-  z-index: 1;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  opacity: 0.85;
+  transition: background 0.2s, border-color 0.2s;
 }
 
-/* 剩余时间卡片特殊样式 */
-.stat-card-time {
-  gap: 2px;
-}
-.stat-card-time .stat-value {
-  margin-top: 0 !important;
-}
-.stat-card-time .stat-label {
-  margin-top: 2px !important;
-}
-.stat-card-time.expired {
-  background: linear-gradient(135deg, rgba(255, 59, 48, 0.12) 0%, rgba(255, 59, 48, 0.06) 100%) !important;
-  border-color: rgba(255, 59, 48, 0.25) !important;
-}
-.stat-card-time.warning {
-  background: linear-gradient(135deg, rgba(255, 149, 0, 0.12) 0%, rgba(255, 149, 0, 0.06) 100%) !important;
-  border-color: rgba(255, 149, 0, 0.25) !important;
-}
-.stat-icon {
-  margin-bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.stat-value-time {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 4px;
-  background: none !important;
-  -webkit-text-fill-color: inherit !important;
-}
-.days-number {
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1;
-  background: linear-gradient(135deg, #1c1c1e 0%, #3c3c43 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.stat-card-time.expired .days-number,
-.stat-card-time.expired .stat-value-time {
-  background: linear-gradient(135deg, #FF3B30 0%, #D70015 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.stat-card-time.warning .days-number {
-  background: linear-gradient(135deg, #FF9500 0%, #FF6B00 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.days-unit {
-  font-size: 13px;
-  font-weight: 600;
-  color: #6e6e73;
-  opacity: 0.8;
-}
-
-/* 续费提醒样式 */
-.renew-alert-container { 
-  margin-bottom: 20px; 
-}
-.renew-alert-card {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 20px 24px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.8) inset,
-    0 4px 24px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  position: relative;
-  overflow: hidden;
-}
-.renew-alert-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #FF9500 0%, #FF6B00 100%);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-.renew-alert-card.expired::before {
-  background: linear-gradient(90deg, #FF3B30 0%, #D70015 100%);
-  opacity: 1;
-}
-.renew-alert-card.warning::before {
-  opacity: 1;
-}
-.renew-alert-card.expired {
-  background: linear-gradient(135deg, rgba(255, 59, 48, 0.1) 0%, rgba(255, 59, 48, 0.05) 100%);
-  border-color: rgba(255, 59, 48, 0.25);
-}
-.renew-alert-card.warning {
-  background: linear-gradient(135deg, rgba(255, 149, 0, 0.1) 0%, rgba(255, 149, 0, 0.05) 100%);
-  border-color: rgba(255, 149, 0, 0.25);
-}
-.renew-alert-card:hover {
-  transform: translateY(-3px) scale(1.01);
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 8px 40px rgba(0, 0, 0, 0.12),
-    0 4px 16px rgba(0, 0, 0, 0.06);
-}
-.renew-alert-icon {
-  flex-shrink: 0;
-}
-.renew-alert-content {
-  flex: 1;
-  min-width: 0;
-}
-.renew-alert-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1D1D1F;
-  margin-bottom: 6px;
-  letter-spacing: -0.3px;
-}
-.renew-alert-message {
-  font-size: 14px;
-  color: #3c3c43;
-  line-height: 1.5;
-  margin-bottom: 4px;
-}
-.renew-alert-info {
-  margin-top: 4px;
-}
-.renew-alert-action {
-  flex-shrink: 0;
-}
-
-.card { 
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.5) 100%); 
-  backdrop-filter: blur(80px) saturate(180%);
-  -webkit-backdrop-filter: blur(80px) saturate(180%);
-  padding: 16px; 
-  border-radius: 16px; 
-  margin-bottom: 16px; 
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 8px 32px rgba(0, 0, 0, 0.05),
-    0 2px 8px rgba(0, 0, 0, 0.03);
-  border: 0.5px solid rgba(255, 255, 255, 1);
-  transition: all 0.3s;
-}
-.card:hover {
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 12px 40px rgba(0, 0, 0, 0.06),
-    0 4px 12px rgba(0, 0, 0, 0.04);
-}
-.toolbar { 
-  display: flex; 
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px; 
-  padding: 8px 12px; 
-  background: linear-gradient(135deg, rgba(248, 248, 250, 0.8) 0%, rgba(242, 242, 247, 0.6) 100%);
-  backdrop-filter: blur(60px) saturate(180%);
-  -webkit-backdrop-filter: blur(60px) saturate(180%);
-  border-radius: 16px;
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.8) inset,
-    0 2px 12px rgba(0, 0, 0, 0.03),
-    0 1px 3px rgba(0, 0, 0, 0.02);
-  border: 0.5px solid rgba(209, 209, 214, 0.25);
-  transition: all 0.3s;
-}
-.toolbar:hover {
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.9) inset,
-    0 4px 16px rgba(0, 0, 0, 0.04),
-    0 2px 6px rgba(0, 0, 0, 0.02);
-}
-.toolbar-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 15px;
-}
-.toolbar-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.batch-operations {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.08) 0%, rgba(0, 122, 255, 0.04) 100%);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  border-radius: 14px;
-  border: 0.5px solid rgba(0, 122, 255, 0.2);
-  box-shadow: 
-    0 0 0 0.5px rgba(0, 122, 255, 0.05) inset,
-    0 2px 8px rgba(0, 122, 255, 0.06);
-  animation: slideDown 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.breadcrumb { 
-  display: flex; 
-  align-items: center; 
-  gap: 8px; 
-  flex-wrap: wrap;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.7) 100%);
-  backdrop-filter: blur(60px);
-  -webkit-backdrop-filter: blur(60px);
-  padding: 8px 14px;
-  border-radius: 14px;
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 0.9) inset,
-    0 2px 8px rgba(0, 0, 0, 0.03),
-    0 1px 2px rgba(0, 0, 0, 0.02);
-  border: 0.5px solid rgba(209, 209, 214, 0.3);
-  transition: all 0.3s;
-}
-.breadcrumb:hover {
-  box-shadow: 
-    0 0 0 0.5px rgba(255, 255, 255, 1) inset,
-    0 4px 12px rgba(0, 0, 0, 0.04),
-    0 2px 4px rgba(0, 0, 0, 0.02);
-}
-.breadcrumb-item { 
-  cursor: pointer; 
-  color: #007aff; 
-  padding: 4px 10px; 
-  border-radius: 8px; 
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-  font-weight: 600;
-  font-size: 13px;
-  position: relative;
-}
-.breadcrumb-item::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
-  border-radius: 8px;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-.breadcrumb-item:hover { 
-  transform: translateY(-1px) scale(1.05);
-}
-.breadcrumb-item:hover::before {
-  opacity: 1;
-}
-.breadcrumb-item span {
-  position: relative;
-  z-index: 1;
-}
-.breadcrumb-sep { 
-  color: #c7c7cc; 
-}
-.file-list { 
-  height: 350px; 
-  overflow-y: auto; 
-  overflow-x: hidden; 
-  position: relative;
-  transition: all 0.3s;
-}
-.file-list.drag-over {
-  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
-  border: 2px dashed #409eff;
-  border-radius: 8px;
-}
-/* 只在空目录时显示大提示 */
 .file-list.drag-over.empty-list::before {
   content: '📤 拖放文件到这里上传';
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 18px;
-  color: #409eff;
-  font-weight: bold;
+  font-size: 16px;
+  font-weight: 600;
   pointer-events: none;
   z-index: 10;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 20px 40px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+  padding: 16px 32px;
+  border-radius: var(--loft-radius, 12px);
 }
-/* 有文件时显示小提示 */
+
 .file-list.drag-over:not(.empty-list)::after {
   content: '📤 松开鼠标上传文件';
   position: fixed;
   bottom: 20px;
   right: 20px;
-  font-size: 14px;
-  color: #fff;
-  background: #409eff;
-  padding: 12px 24px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.5);
+  font-size: 13px;
+  padding: 10px 20px;
+  border-radius: 999px;
   z-index: 1000;
-  animation: bounce 0.5s ease-in-out infinite alternate;
 }
-@keyframes bounce {
-  from { transform: translateY(0); }
-  to { transform: translateY(-5px); }
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-bottom: 1px solid var(--loft-border, rgba(42, 38, 34, 0.08));
 }
-.file-item { 
-  display: flex; 
-  align-items: center; 
-  padding: 3px 8px; 
-  border-radius: 4px; 
-  margin-bottom: 0; 
-  cursor: pointer; 
-  transition: background 0.15s ease; 
-  background: transparent;
-  border: none;
-  border-bottom: 0.5px solid rgba(209, 209, 214, 0.25);
-  box-shadow: none;
-  position: relative;
-}
-.file-item::before {
-  display: none;
-}
-.file-item:hover { 
-  background: rgba(0, 122, 255, 0.04); 
-  transform: none;
-  box-shadow: none;
-}
-.file-item:hover::before {
-  display: none;
-}
-.file-item.selected { 
-  background: rgba(0, 122, 255, 0.08); 
-  border: none;
-  border-bottom: 0.5px solid rgba(0, 122, 255, 0.15);
-  box-shadow: none;
-}
-.file-item.selected::before {
-  display: none;
-}
-.file-checkbox { width: 24px; display: flex; align-items: center; justify-content: center; }
-.file-checkbox :deep(.el-checkbox) { height: 16px; }
-.file-checkbox :deep(.el-checkbox__inner) { width: 14px; height: 14px; }
-.file-icon { 
-  width: 24px; 
-  font-size: 14px; 
+
+.file-checkbox {
+  width: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  flex-shrink: 0;
 }
-.file-item:hover .file-icon {
-  transform: none;
-}
-.file-info { flex: 1; min-width: 0; }
-.file-name { 
-  font-weight: 500; 
-  color: #1c1c1e; 
-  font-size: 11px; 
-  line-height: 1.3;
-  overflow: hidden; 
-  text-overflow: ellipsis; 
-  white-space: nowrap; 
-  letter-spacing: -0.2px;
-  transition: color 0.2s;
-}
-.file-item:hover .file-name {
-  color: #007AFF;
-}
-.file-meta { font-size: 9px; color: #8e8e93; margin-top: 1px; line-height: 1.2; }
-.file-type-label { 
-  color: #34c759; 
-  font-weight: 600;
-  padding: 1px 4px;
-  background: rgba(52, 199, 89, 0.1);
-  border-radius: 3px;
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-.file-size-col { 
-  width: 72px; 
-  text-align: right; 
-  color: #007aff; 
-  font-weight: 500; 
-  font-size: 10px; 
-  flex-shrink: 0; 
-  padding-right: 8px;
-  font-variant-numeric: tabular-nums;
-}
-.file-date-col { 
-  width: 120px; 
-  text-align: right; 
-  color: #8e8e93; 
-  font-size: 9px; 
-  flex-shrink: 0; 
-  padding-right: 8px;
-  font-variant-numeric: tabular-nums;
-}
-.file-actions { transition: opacity 0.2s; flex-shrink: 0; }
-.file-actions :deep(.el-button) { padding: 4px 8px; font-size: 11px; height: 24px; }
 
-/* 网格视图 */
-.file-grid { display: grid; grid-template-columns: repeat(auto-fill, 100px); gap: 15px; padding: 10px 0; justify-content: center; }
-.grid-item { 
-  position: relative; 
-  display: flex; 
-  flex-direction: column; 
-  align-items: center; 
-  padding: 15px 10px; 
-  border-radius: 16px; 
-  cursor: pointer; 
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); 
-  background: #FFFFFF; 
-  width: 100px; 
-  height: 100px; 
+.file-checkbox :deep(.el-checkbox) {
+  height: 16px;
+}
+
+.file-checkbox :deep(.el-checkbox__inner) {
+  width: 14px;
+  height: 14px;
+}
+
+.file-icon {
+  width: 28px;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  border: 0.5px solid rgba(209, 209, 214, 0.2);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.01);
+  flex-shrink: 0;
 }
-.grid-item:hover { 
-  background: #F2F2F7; 
-  border-color: rgba(209, 209, 214, 0.3);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+
+.file-info {
+  flex: 1;
+  min-width: 0;
 }
-.grid-item.selected { 
-  background: rgba(0, 122, 255, 0.08); 
-  border: 1px solid rgba(0, 122, 255, 0.3); 
-  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.08);
+
+.file-name {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.grid-checkbox { position: absolute; top: 5px; left: 5px; opacity: 0; transition: opacity 0.2s; }
-.grid-item:hover .grid-checkbox, .grid-item.selected .grid-checkbox { opacity: 1; }
-.grid-icon { font-size: 36px; margin-bottom: 6px; }
-.grid-name { font-size: 12px; color: #1c1c1e; text-align: center; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; font-weight: 500; letter-spacing: -0.1px; }
-.grid-size { font-size: 10px; color: #007aff; text-align: center; margin-top: 2px; font-weight: 500; }
-.grid-more { position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity 0.2s; }
-.grid-item:hover .grid-more { opacity: 1; }
+
+.file-meta {
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+.file-type-label {
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.file-size-col {
+  width: 80px;
+  text-align: right;
+  font-size: 12px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-date-col {
+  width: 130px;
+  text-align: right;
+  font-size: 11px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 88px;
+  justify-content: flex-end;
+}
+
+.file-actions :deep(.el-dropdown) {
+  line-height: 1;
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  justify-content: center;
+}
+
+.grid-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 10px;
+  border-radius: var(--loft-radius, 12px);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  min-height: 100px;
+  justify-content: center;
+}
+
+.grid-checkbox {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+}
+
+.grid-icon {
+  font-size: 32px;
+  margin-bottom: 6px;
+}
+
+.grid-name {
+  font-size: 12px;
+  text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  font-weight: 500;
+}
+
+.grid-size {
+  font-size: 10px;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.grid-more {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
 
 .upload-dialog-header {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-left: 6px;
 }
-.upload-dialog-title { font-size: 15px; font-weight: 600; color: #303133; }
-.upload-dialog :deep(.el-dialog__header) { padding: 12px 16px 8px; margin-right: 0; }
-.upload-dialog :deep(.el-dialog__body) { padding: 0 16px 8px; }
-.upload-dialog :deep(.el-dialog__footer) { padding: 8px 16px 12px; border-top: 1px solid #ebeef5; }
-.upload-dialog-body { display: flex; flex-direction: column; gap: 8px; }
+
+.upload-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.upload-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .upload-overall-progress {
   padding: 6px 0 0;
 }
+
 .upload-overall-header {
   display: flex;
   justify-content: space-between;
   margin-bottom: 4px;
   font-size: 12px;
-  color: #909399;
 }
+
 .upload-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  color: #606266;
 }
-.upload-queue-actions { display: flex; gap: 2px; }
+
+.upload-queue-actions {
+  display: flex;
+  gap: 2px;
+}
+
 .upload-queue-list {
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
+  border-radius: var(--loft-radius, 12px);
 }
+
 .upload-queue-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 12px;
-  border-bottom: 1px solid #f0f0f0;
 }
-.upload-queue-item:last-child { border-bottom: none; }
-.upload-queue-item:hover { background: #fafafa; }
-.upload-item-icon { font-size: 16px; flex-shrink: 0; }
-.upload-item-info { flex: 1; min-width: 0; overflow: hidden; }
-.upload-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #303133; }
-.upload-item-path { font-size: 11px; color: #909399; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.upload-item-error { font-size: 11px; color: #f56c6c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.upload-item-progress { margin-top: 3px; }
-.upload-item-step { font-size: 10px; color: #909399; }
-.upload-item-size { color: #909399; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
-.upload-item-tag { flex-shrink: 0; }
+
+.upload-queue-item:last-child {
+  border-bottom: none;
+}
+
+.upload-item-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.upload-item-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.upload-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-item-path {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-item-error {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-item-progress {
+  margin-top: 4px;
+}
+
+.upload-item-step {
+  font-size: 10px;
+}
+
+.upload-item-size {
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.upload-item-tag {
+  flex-shrink: 0;
+}
+
 .upload-stats-bar {
-  display: flex; gap: 16px; padding: 4px 8px;
-  background: #f5f7fa; border-radius: 4px;
-  font-size: 11px; color: #606266;
+  display: flex;
+  gap: 16px;
+  padding: 6px 10px;
+  border-radius: var(--loft-radius, 12px);
+  font-size: 11px;
 }
 
 .upload-dialog-footer {
@@ -3178,6 +3203,7 @@ const handleResize = () => {
   flex-wrap: wrap;
   gap: 8px;
 }
+
 .upload-dialog-footer-btns {
   display: flex;
   gap: 6px;
@@ -3194,362 +3220,524 @@ const handleResize = () => {
   z-index: 2000;
   cursor: pointer;
 }
+
 .upload-float-content {
   display: flex;
   align-items: center;
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  border: 0.5px solid rgba(255, 255, 255, 0.8);
 }
+
 .upload-float-info {
   display: flex;
   flex-direction: column;
   min-width: 72px;
 }
-.upload-float-title { font-size: 14px; font-weight: 600; color: #1c1c1e; }
-.upload-float-detail { font-size: 12px; color: #86868b; margin-top: 2px; }
 
-.slide-up-enter-active, .slide-up-leave-active {
+.upload-float-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.upload-float-detail {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.slide-up-enter-from, .slide-up-leave-to {
+
+.slide-up-enter-from,
+.slide-up-leave-to {
   opacity: 0;
   transform: translateY(20px);
 }
 
-.empty-hint { color: #909399; font-size: 13px; margin-bottom: 4px; }
-
-.upload-area { 
-  border: 1px dashed #dcdfe6; 
-  border-radius: 4px; 
-  padding: 24px 16px; 
-  text-align: center; 
+.upload-area {
+  border: 2px dashed var(--loft-border-strong, rgba(42, 38, 34, 0.14));
+  border-radius: var(--loft-radius-lg, 18px);
+  padding: 28px 16px;
+  text-align: center;
   transition: border-color 0.2s, background 0.2s;
-  background: #fafafa;
 }
-.upload-area:hover { border-color: #409eff; background: #f5f9ff; }
-.upload-area.dragover { border-color: #409eff; background: #ecf5ff; }
-.upload-area-icon { font-size: 32px; color: #409eff; margin-bottom: 8px; }
-.upload-text { color: #606266; font-size: 13px; margin-bottom: 10px; }
-.upload-hint { color: #909399; font-size: 11px; margin-top: 8px; }
+
+.upload-area-icon {
+  font-size: 36px;
+  margin-bottom: 10px;
+}
+
+.upload-text {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.upload-hint {
+  font-size: 12px;
+  margin-top: 10px;
+}
 
 .upload-add-strip {
-  display: flex; align-items: center; gap: 4px;
-  padding: 6px 10px;
-  border: 1px dashed #dcdfe6; border-radius: 4px;
-  font-size: 12px; color: #909399; transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px dashed var(--loft-border-strong, rgba(42, 38, 34, 0.14));
+  border-radius: var(--loft-radius, 12px);
+  font-size: 12px;
+  transition: all 0.2s;
 }
-.upload-add-strip-or { color: #c0c4cc; margin-left: auto; font-size: 11px; }
-.upload-add-strip .el-icon { color: #409eff; font-size: 14px; }
-.upload-add-strip.dragover { border-color: #409eff; background: #ecf5ff; color: #409eff; }
 
-.empty-tip { text-align: center; color: #909399; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.empty-icon { font-size: 48px; color: #dcdfe6; margin-bottom: 10px; }
-.quick-actions { display: flex; gap: 10px; margin-top: 15px; justify-content: center; }
-.footer { 
-  text-align: center; 
-  padding: 20px; 
-  color: #86868B; 
+.upload-add-strip-or {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.empty-tip {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.empty-icon {
+  font-size: 52px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.empty-hint {
   font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  justify-content: center;
+}
+
+.editor-container {
+  border-radius: var(--loft-radius, 12px);
+  overflow: hidden;
+  min-height: 400px;
+}
+
+.editor-container :deep(.cm-editor) {
+  font-size: 14px;
+}
+
+.editor-container :deep(.cm-scroller) {
+  font-family: 'IBM Plex Mono', 'Fira Code', 'Monaco', 'Menlo', monospace;
+}
+
+.contact-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-left: 6px;
+}
+
+.contact-dialog-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  margin-top: 20px;
+  font-size: 22px;
 }
-.footer .version {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 12px;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.1) 0%, rgba(0, 122, 255, 0.05) 100%);
-  border: 0.5px solid rgba(0, 122, 255, 0.2);
-  border-radius: 12px;
-  color: #007AFF;
+
+.contact-dialog-title {
+  font-size: 17px;
   font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.5px;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
+  letter-spacing: -0.02em;
 }
-.editor-container { border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden; }
-.editor-container :deep(.cm-editor) { font-size: 14px; }
-.editor-container :deep(.cm-scroller) { font-family: 'Fira Code', 'Monaco', 'Menlo', monospace; }
-.tutorial-content { color: #606266; }
-.tutorial-section { margin-bottom: 20px; }
-.tutorial-section h4 { color: #303133; margin-bottom: 10px; font-size: 15px; }
-.tutorial-section ol, .tutorial-section ul { padding-left: 20px; line-height: 2; }
-.tutorial-section li { font-size: 14px; }
-.highlight-section { background: linear-gradient(135deg, #ecf5ff 0%, #f0f9eb 100%); padding: 20px; border-radius: 8px; border-left: 4px solid #409eff; }
-.highlight-section h4 { color: #409eff; font-size: 16px; }
-.tip-box { background: #fff; padding: 12px 15px; border-radius: 6px; margin-top: 10px; font-size: 13px; color: #e6a23c; }
-.contact-dialog :deep(.el-dialog__header) { padding: 20px 24px 0; margin-right: 0; }
-.contact-dialog :deep(.el-dialog__body) { padding: 16px 24px 24px; }
-.contact-dialog-header { display: flex; align-items: center; gap: 14px; }
-.contact-dialog-icon {
-  width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.12) 0%, rgba(0, 122, 255, 0.06) 100%);
-  border: 0.5px solid rgba(0, 122, 255, 0.15);
-  display: flex; align-items: center; justify-content: center;
-  color: #007aff; font-size: 22px;
+
+.contact-dialog-subtitle {
+  font-size: 12px;
+  margin-top: 2px;
 }
-.contact-dialog-title { font-size: 17px; font-weight: 600; color: #1c1c1e; letter-spacing: -0.3px; }
-.contact-dialog-subtitle { font-size: 12px; color: #86868b; margin-top: 2px; }
-.contact-content { display: flex; flex-direction: column; gap: 16px; }
+
+.contact-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .contact-card {
-  background: rgba(255, 255, 255, 0.6);
-  border: 0.5px solid rgba(0, 0, 0, 0.06);
-  border-radius: 16px;
+  border-radius: var(--loft-radius-lg, 18px);
   padding: 24px 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
 }
-.contact-qrcode-section { text-align: center; }
+
+.contact-qrcode-section {
+  text-align: center;
+}
+
 .qrcode-frame {
-  display: inline-block; padding: 10px;
-  background: #fff; border-radius: 16px;
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  display: inline-block;
+  padding: 10px;
+  background: #fff;
+  border-radius: var(--loft-radius-lg, 18px);
 }
-.qrcode-img { width: 160px; height: 160px; border-radius: 8px; display: block; }
-.qrcode-tip { color: #86868b; font-size: 13px; margin-top: 12px; font-weight: 500; }
+
+.qrcode-img {
+  width: 160px;
+  height: 160px;
+  border-radius: 8px;
+  display: block;
+}
+
+.qrcode-tip {
+  font-size: 13px;
+  margin-top: 12px;
+  font-weight: 500;
+}
+
 .contact-divider {
-  display: flex; align-items: center; gap: 12px;
-  margin: 20px 0 16px; color: #c7c7cc; font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 16px;
+  font-size: 12px;
 }
-.contact-divider::before, .contact-divider::after {
-  content: ''; flex: 1; height: 0.5px; background: rgba(0, 0, 0, 0.08);
+
+.contact-divider::before,
+.contact-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
 }
-.contact-wechat-section { display: flex; flex-direction: column; gap: 10px; }
+
+.contact-wechat-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .wechat-id-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(7, 193, 96, 0.08) 0%, rgba(7, 193, 96, 0.04) 100%);
-  border: 0.5px solid rgba(7, 193, 96, 0.2);
-  border-radius: 12px;
+  border-radius: var(--loft-radius, 12px);
 }
-.wechat-id-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.wechat-label { font-size: 11px; color: #86868b; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
-.wechat-id { font-size: 20px; font-weight: 600; color: #1c1c1e; letter-spacing: 0.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.wechat-copy-btn { flex-shrink: 0; }
-.contact-desc { color: #86868b; font-size: 12px; line-height: 1.5; margin: 0; padding: 0 4px; }
+
+.wechat-id-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wechat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wechat-id {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-family: var(--loft-font-mono, monospace);
+}
+
+.wechat-copy-btn {
+  flex-shrink: 0;
+}
+
+.contact-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0 4px;
+}
+
 .contact-footer {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 10px 16px; border-radius: 10px;
-  background: rgba(0, 0, 0, 0.03); color: #86868b; font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--loft-radius, 12px);
+  font-size: 12px;
 }
-.contact-footer-icon { font-size: 14px; color: #aeaeb2; }
 
-/* 教程样式 */
-.tutorial-content { color: #606266; }
-.tutorial-highlight { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 25px; margin-bottom: 20px; color: #fff; }
-.highlight-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-.highlight-icon { font-size: 28px; }
-.highlight-title { font-size: 18px; font-weight: 600; }
-.highlight-steps { display: flex; flex-direction: column; gap: 12px; }
-.step-item { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.15); padding: 12px 15px; border-radius: 8px; }
-.step-num { width: 28px; height: 28px; background: #fff; color: #667eea; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0; }
-.step-text { font-size: 14px; }
-.highlight-tip { display: flex; align-items: center; gap: 8px; margin-top: 15px; padding: 12px 15px; background: rgba(255,255,255,0.2); border-radius: 8px; font-size: 13px; }
-.tutorial-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
-.tutorial-card { background: #f8f9fa; border-radius: 10px; padding: 20px; transition: all 0.3s; }
-.tutorial-card:hover { background: #ecf5ff; transform: translateY(-2px); }
-.card-icon { font-size: 32px; margin-bottom: 10px; }
-.card-title { font-size: 15px; font-weight: 600; color: #303133; margin-bottom: 10px; }
-.card-list { padding-left: 18px; margin: 0; font-size: 13px; color: #606266; line-height: 1.8; }
-.tutorial-tips { background: #fffbeb; border-radius: 10px; padding: 15px 20px; border: 1px solid #ffeeba; }
-.tips-title { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #e6a23c; margin-bottom: 12px; }
-.tips-list { display: flex; flex-wrap: wrap; gap: 10px; }
-.tip-tag { background: #fff; padding: 6px 12px; border-radius: 15px; font-size: 12px; color: #e6a23c; border: 1px solid #ffeeba; }
+.contact-footer-icon {
+  font-size: 14px;
+}
 
-/* 上传教程紧凑布局 */
-.help-dialog :deep(.el-dialog__body) { padding: 8px 16px 4px; }
-.help-dialog :deep(.el-dialog__header) { padding: 12px 16px 6px; margin-bottom: 0; }
-.help-dialog :deep(.el-dialog__footer) { padding: 6px 16px 12px; border-top: 1px solid #ebeef5; }
-.help-compact { display: flex; flex-direction: column; gap: 6px; }
+.help-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .help-rule-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 6px 12px; background: #409eff;
-  border-radius: 4px; color: #fff; font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--loft-radius, 12px);
+  font-size: 12px;
 }
-.help-rule-key { font-weight: 600; }
-.help-rule-domain { font-size: 12px; opacity: 0.9; }
-.help-rule-domain code { background: rgba(255,255,255,0.2); padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+
+.help-rule-key {
+  font-weight: 600;
+}
+
+.help-rule-domain {
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+.help-rule-domain code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
 .help-steps-inline {
-  display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
   padding: 4px 0;
 }
+
 .help-step-pill {
-  display: flex; align-items: center; gap: 6px; font-size: 12px; color: #303133; font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
 }
+
 .help-step-pill span {
-  width: 18px; height: 18px; background: #409eff;
-  color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
-.help-step-arrow { color: #c0c4cc; font-size: 11px; }
-.help-main-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.help-tree-card { border-radius: 4px; padding: 8px 10px; border: 1px solid #e4e7ed; display: flex; flex-direction: column; gap: 4px; }
-.help-tree-good { background: #f0f9eb; border-color: #c2e7b0; }
-.help-tree-bad { background: #fef0f0; border-color: #fbc4c4; }
-.help-tree-badge { font-size: 12px; font-weight: 600; }
-.help-tree-good .help-tree-badge { color: #67c23a; }
-.help-tree-bad .help-tree-badge { color: #f56c6c; }
-.help-tree { font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 11px; line-height: 1.5; background: rgba(255,255,255,0.7); border-radius: 6px; padding: 6px 8px; }
-.help-tree-line { color: #303133; }
-.help-tree-sm .help-tree-line { color: #303133; }
-.help-tree-root { font-weight: 600; }
-.help-tree-branch { color: #909399; }
-.help-tree-highlight { color: #409eff; font-weight: 600; }
-.help-tree-warn { color: #f56c6c; font-size: 10px; }
-.help-tree-foot { font-size: 11px; color: #606266; line-height: 1.4; }
-.help-tree-foot code { background: rgba(0,0,0,0.06); padding: 0 4px; border-radius: 3px; font-size: 10px; }
-.help-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.help-step-arrow {
+  font-size: 11px;
+}
+
+.help-main-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.help-tree-card {
+  border-radius: var(--loft-radius, 12px);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.help-tree-badge {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.help-tree {
+  font-family: var(--loft-font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.help-tree-line {
+  display: block;
+}
+
+.help-tree-root {
+  font-weight: 600;
+}
+
+.help-tree-foot {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.help-tree-foot code {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.help-bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .help-path-mini {
-  display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 6px;
-  font-size: 11px; border: 1px solid; overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: var(--loft-radius, 12px);
+  font-size: 11px;
+  overflow: hidden;
 }
-.help-path-mini-label { font-weight: 600; flex-shrink: 0; font-size: 11px; }
-.help-path-mini code { font-family: 'SF Mono', 'Menlo', monospace; font-size: 10px; background: rgba(255,255,255,0.6); padding: 1px 4px; border-radius: 3px; }
-.help-path-mini.help-path-good { background: #f0f9eb; border-color: #c2e7b0; color: #67c23a; }
-.help-path-mini.help-path-good code { color: #303133; }
-.help-path-mini.help-path-bad { background: #fef0f0; border-color: #fbc4c4; color: #f56c6c; }
-.help-path-mini.help-path-bad code { color: #f56c6c; }
-.help-footnote { font-size: 11px; color: #909399; text-align: center; line-height: 1.4; }
-.help-footnote code { background: #f4f4f5; padding: 0 4px; border-radius: 3px; font-size: 10px; color: #606266; }
+
+.help-path-mini-label {
+  font-weight: 600;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.help-path-mini code {
+  font-family: var(--loft-font-mono, monospace);
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.help-footnote {
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.help-footnote code {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
 
 .upload-help-link {
-  display: inline-flex; align-items: center; gap: 5px; margin-top: 10px;
-  font-size: 12px; color: #909399; cursor: pointer; transition: color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s;
 }
-.upload-help-link:hover { color: #409eff; }
-.upload-help-link code { background: #f4f4f5; padding: 0 4px; border-radius: 3px; font-size: 11px; color: #606266; }
-.upload-help-link:hover code { background: #ecf5ff; color: #409eff; }
 
-/* 手机端响应式 */
+.upload-help-link code {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
 @media (max-width: 768px) {
-  .main-container { padding: 10px; }
-  
-  .header { flex-direction: column; gap: 15px; padding: 15px; }
-  .header-left { width: 100%; justify-content: center; }
-  .domain-badge { max-width: 100%; padding: 8px 10px; }
-  .domain-badge-value { font-size: 14px; }
-  .header-actions { width: 100%; flex-wrap: wrap; justify-content: center; }
-  .header-actions .el-button { flex: 1; min-width: 80px; padding: 8px 10px; font-size: 12px; }
-  .header-actions .el-button .el-icon { margin-right: 3px !important; }
-
-  .drag-hint-bar { flex-wrap: wrap; font-size: 12px; padding: 8px 12px; margin-bottom: 12px; }
-  .page-drag-tip { font-size: 13px; padding: 6px 16px; top: 12px; max-width: 90vw; white-space: normal; text-align: center; }
-  
-  /* 续费提醒移动端 */
-  .renew-alert-card {
-    flex-direction: column;
-    text-align: center;
-    gap: 15px;
-    padding: 20px 15px;
-  }
-  .renew-alert-title {
-    font-size: 16px;
-  }
-  .renew-alert-message {
+  .page-drag-tip {
     font-size: 13px;
+    padding: 6px 16px;
+    top: 12px;
+    max-width: 90vw;
+    white-space: normal;
+    text-align: center;
   }
-  .renew-alert-action {
-    width: 100%;
+
+  .file-item {
+    padding: 5px 8px;
   }
-  .renew-alert-action .el-button {
-    width: 100%;
-  }
-  
-  /* 统计卡片移动端 - 2行3列布局 */
-  .stats-row { 
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-  .stat-card { 
-    padding: 8px 8px;
-  }
-  .stat-card:nth-child(4) {
-    grid-column: 1 / -1;
-  }
-  .stat-value { font-size: 18px; color: #1D1D1F; }
-  .stat-label { font-size: 10px; color: #86868B; }
-  
-  .card { padding: 12px; }
-  .toolbar { 
-    flex-direction: column; 
-    gap: 12px; 
-    align-items: stretch;
-    padding: 12px 15px;
-  }
-  .toolbar > div { width: 100%; }
-  .toolbar > div:last-child { 
-    display: flex; 
-    flex-wrap: wrap; 
-    gap: 8px; 
-  }
-  .toolbar > div:last-child .el-button { 
-    flex: 1; 
-    min-width: 90px;
-    font-size: 12px;
-  }
-  .toolbar > div:last-child .el-button .el-icon {
+
+  .file-icon {
+    width: 24px;
     font-size: 14px;
   }
-  
-  .file-item { padding: 4px 8px; }
-  .file-icon { width: 22px; font-size: 13px; }
-  .file-name { font-size: 11px; }
-  .file-meta { font-size: 9px; }
-  .file-actions { opacity: 1; display: flex; flex-wrap: wrap; gap: 5px; }
-  .file-actions .el-button { padding: 5px 8px; font-size: 12px; }
-  
-  .auth-box { width: 95%; padding: 30px 20px; }
-  .auth-logo { font-size: 40px; }
-  .auth-title { font-size: 20px; }
-  
-  /* 对话框响应式 */
-  .contact-dialog :deep(.el-dialog__header) { padding: 16px 16px 0; }
-  .contact-dialog :deep(.el-dialog__body) { padding: 12px 16px 20px; }
-  .contact-card { padding: 20px 16px; }
-  .qrcode-img { width: 140px; height: 140px; }
-  .wechat-id-row { flex-direction: column; align-items: stretch; gap: 12px; }
-  .wechat-copy-btn { width: 100%; }
-  
-  .tutorial-cards { grid-template-columns: 1fr; }
-  
-  .help-main-grid { grid-template-columns: 1fr; }
-  .help-bottom-row { grid-template-columns: 1fr; }
-  .help-rule-bar { flex-direction: column; align-items: flex-start; gap: 4px; }
-  
-  .upload-area { padding: 20px 12px; }
-  .upload-queue-list { max-height: 200px; }
-  
-  .upload-dialog-footer { flex-direction: column; align-items: stretch; }
-  .upload-dialog-footer-btns { justify-content: flex-end; }
-  .upload-float-panel { left: 12px; right: 12px; bottom: 12px; }
-  
-  .empty-tip { padding: 30px 0; }
-  .empty-icon { font-size: 40px; }
-  .quick-actions { flex-direction: column; }
-}
 
-@media (max-width: 480px) {
-  .header-actions .el-button span { display: none; }
-  .header-actions .el-button .el-icon { margin-right: 0 !important; }
-  
-  /* 统计卡片 2行布局 */
-  .stats-row {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
+  .file-name {
+    font-size: 12px;
   }
-  .stat-card:nth-child(4) {
-    grid-column: 1 / -1;
+
+  .file-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
-  
-  .tips-list { flex-direction: column; }
-  .tip-tag { text-align: center; }
+
+  .contact-card {
+    padding: 20px 16px;
+  }
+
+  .qrcode-img {
+    width: 140px;
+    height: 140px;
+  }
+
+  .wechat-id-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .wechat-copy-btn {
+    width: 100%;
+  }
+
+  .help-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .help-bottom-row {
+    grid-template-columns: 1fr;
+  }
+
+  .help-rule-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .upload-area {
+    padding: 20px 12px;
+  }
+
+  .upload-queue-list {
+    max-height: 200px;
+  }
+
+  .upload-dialog-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .upload-dialog-footer-btns {
+    justify-content: flex-end;
+  }
+
+  .upload-float-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .empty-tip {
+    padding: 32px 16px;
+  }
+
+  .empty-icon {
+    font-size: 40px;
+  }
+
+  .quick-actions {
+    flex-direction: column;
+    width: 100%;
+    max-width: 240px;
+  }
 }
 </style>
