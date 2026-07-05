@@ -388,23 +388,45 @@
     </el-dialog>
 
     <!-- 续费/时长调整对话框 -->
-    <el-dialog v-model="renewDialogVisible" title="续费 / 时长调整" width="500px" append-to-body>
-      <el-form :model="renewForm" label-width="100px">
-        <el-form-item label="域名">
-          <span class="full-domain">{{ renewForm.fullDomain }}</span>
-        </el-form-item>
-        <el-form-item label="当前状态">
-          <el-tag :type="getUseStatusType(renewForm.use_status)">{{ getUseStatusText(renewForm.use_status) }}</el-tag>
-        </el-form-item>
-        <el-form-item label="到期时间">
-          <span v-if="renewForm.expire_at" :style="{ color: isExpired(renewForm.expire_at) ? '#f56c6c' : '#67c23a' }">
-            {{ renewForm.expire_at }}
-            <el-tag v-if="isExpired(renewForm.expire_at)" type="danger" size="small" style="margin-left:8px">已过期</el-tag>
-          </span>
-          <span v-else style="color:#999">未设置</span>
-        </el-form-item>
-        <el-divider>时长调整</el-divider>
-        <el-form-item label="快捷续费">
+    <el-dialog v-model="renewDialogVisible" title="续费 / 时长调整" width="560px" append-to-body class="renew-dialog">
+      <div class="renew-dialog-body">
+        <div class="renew-overview-card">
+          <div class="renew-overview-main">
+            <div class="renew-overview-label">调整对象</div>
+            <div class="renew-overview-domain">{{ renewForm.fullDomain }}</div>
+            <div class="renew-overview-meta">
+              <span class="renew-overview-meta-label">当前状态</span>
+              <el-tag :type="getUseStatusType(renewForm.use_status)">{{ getUseStatusText(renewForm.use_status) }}</el-tag>
+            </div>
+          </div>
+          <div
+            class="renew-expire-card"
+            :class="{
+              'is-expired': renewForm.expire_at && isExpired(renewForm.expire_at),
+              'is-empty': !renewForm.expire_at
+            }"
+          >
+            <div class="renew-expire-label">当前到期</div>
+            <template v-if="renewForm.expire_at">
+              <div class="renew-expire-value">{{ renewForm.expire_at }}</div>
+              <div class="renew-expire-meta">
+                <el-tag :type="isExpired(renewForm.expire_at) ? 'danger' : 'success'" size="small">
+                  {{ isExpired(renewForm.expire_at) ? '已过期' : `剩余 ${getRemainingDays(renewForm.expire_at)} 天` }}
+                </el-tag>
+              </div>
+            </template>
+            <template v-else>
+              <div class="renew-expire-value is-muted">未设置</div>
+              <div class="renew-expire-tip">未设置到期时间时，不支持扣减操作。</div>
+            </template>
+          </div>
+        </div>
+
+        <div class="renew-section">
+          <div class="renew-section-header">
+            <div class="renew-section-title">快捷续费</div>
+            <div class="renew-section-tip">选择常用时长，确认后立即顺延到期时间。</div>
+          </div>
           <div class="renew-quick-actions">
             <el-button
               v-for="option in renewIncreaseOptions"
@@ -418,10 +440,14 @@
               {{ option.shortLabel }}
             </el-button>
           </div>
-          <div class="renew-quick-tip">点击选择快捷时长，然后点击下方确认按钮执行。</div>
-        </el-form-item>
-        <el-form-item label="快捷扣减">
-          <div class="renew-quick-actions">
+        </div>
+
+        <div class="renew-section">
+          <div class="renew-section-header">
+            <div class="renew-section-title">快捷扣减</div>
+            <div class="renew-section-tip">扣减会把当前到期时间往前调整，未设置到期时间时不可用。</div>
+          </div>
+          <div class="renew-quick-actions renew-quick-actions--danger">
             <el-button
               v-for="option in renewDecreaseOptions"
               :key="`single-decrease-${option.value}`"
@@ -434,52 +460,63 @@
               {{ option.shortLabel }}
             </el-button>
           </div>
-          <div class="renew-quick-tip">扣减会把当前到期时间往前调整，未设置到期时间时不可扣减。</div>
-        </el-form-item>
-        <el-form-item label="自定义时长">
-          <div style="display:flex;gap:10px;align-items:center">
-            <el-input-number 
-              v-model="renewForm.customValue" 
-              :min="1" 
-              :max="999" 
-              style="width:120px"
+        </div>
+
+        <div class="renew-section">
+          <div class="renew-section-header">
+            <div class="renew-section-title">自定义时长</div>
+            <div class="renew-section-tip">输入数值和单位后点击应用。扣减请使用上方快捷扣减。</div>
+          </div>
+          <div class="renew-custom-row">
+            <el-input-number
+              v-model="renewForm.customValue"
+              :min="1"
+              :max="999"
+              style="width: 120px"
               @change="onCustomValueChange"
             />
-            <el-select 
-              v-model="renewForm.customUnit" 
-              style="width:100px"
+            <el-select
+              v-model="renewForm.customUnit"
+              style="width: 110px"
               @change="onCustomValueChange"
             >
               <el-option label="天" value="day" />
               <el-option label="月" value="month" />
               <el-option label="年" value="year" />
             </el-select>
-            <el-button 
-              type="primary" 
-              size="small" 
+            <el-button
+              type="primary"
               @click="applyCustomDuration"
               :disabled="!renewForm.customValue"
             >
               应用
             </el-button>
           </div>
-          <div class="renew-quick-tip">输入数值和单位，点击应用按钮。负数表示扣减。</div>
-        </el-form-item>
-        <el-form-item label="已选时长" v-if="renewForm.quickDuration">
-          <el-tag :type="renewForm.quickDuration > 0 ? 'warning' : 'danger'" size="large">
-            {{ getDurationText(renewForm.quickDuration) }}
-          </el-tag>
-        </el-form-item>
-      </el-form>
+        </div>
+
+        <div
+          v-if="renewForm.quickDuration"
+          class="renew-selection-card"
+          :class="renewForm.quickDuration > 0 ? 'is-increase' : 'is-decrease'"
+        >
+          <div class="renew-selection-label">已选操作</div>
+          <div class="renew-selection-value">
+            {{ getDurationActionText(renewForm.quickDuration) }} {{ getDurationText(renewForm.quickDuration) }}
+          </div>
+          <div class="renew-selection-tip">
+            {{ renewForm.quickDuration > 0 ? '确认后将按当前到期时间顺延。' : '确认后将把当前到期时间向前调整。' }}
+          </div>
+        </div>
+      </div>
       <template #footer>
         <el-button @click="renewDialogVisible = false">取消</el-button>
-        <el-button 
-          type="warning" 
-          @click="confirmRenewAdjust" 
-          :loading="renewing" 
+        <el-button
+          :type="renewForm.quickDuration && renewForm.quickDuration < 0 ? 'danger' : 'warning'"
+          @click="confirmRenewAdjust"
+          :loading="renewing"
           :disabled="!renewForm.quickDuration"
         >
-          确认调整
+          {{ renewForm.quickDuration ? `确认${getDurationActionText(renewForm.quickDuration)}` : '确认调整' }}
         </el-button>
       </template>
     </el-dialog>
@@ -1807,10 +1844,138 @@ async function handleRateLimitSave() {
   line-height: 1.4;
 }
 
+.renew-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.renew-overview-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 1fr);
+  gap: 14px;
+}
+
+.renew-overview-main,
+.renew-expire-card,
+.renew-selection-card,
+.renew-section {
+  border: 1px solid #ebeef5;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.renew-overview-main {
+  padding: 18px 18px 16px;
+  background: linear-gradient(135deg, rgba(64, 158, 255, 0.08), rgba(64, 158, 255, 0.02));
+}
+
+.renew-overview-label,
+.renew-expire-label,
+.renew-selection-label {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.renew-overview-domain {
+  margin-top: 6px;
+  color: #303133;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.renew-overview-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.renew-overview-meta-label {
+  font-size: 12px;
+  color: #606266;
+}
+
+.renew-expire-card {
+  padding: 16px 16px 14px;
+  background: linear-gradient(180deg, #f8fafc, #ffffff);
+}
+
+.renew-expire-card.is-expired {
+  border-color: rgba(245, 108, 108, 0.3);
+  background: linear-gradient(180deg, rgba(254, 240, 240, 0.95), #ffffff);
+}
+
+.renew-expire-card.is-empty {
+  background: linear-gradient(180deg, #fafafa, #ffffff);
+}
+
+.renew-expire-value {
+  margin-top: 8px;
+  color: #303133;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.renew-expire-value.is-muted,
+.renew-expire-tip {
+  color: #909399;
+}
+
+.renew-expire-meta {
+  margin-top: 10px;
+}
+
+.renew-expire-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.renew-section {
+  padding: 16px;
+}
+
+.renew-section-header {
+  margin-bottom: 12px;
+}
+
+.renew-section-title {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.renew-section-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
 .renew-quick-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.renew-quick-actions .el-button {
+  min-width: 88px;
+  margin: 0;
+  border-radius: 10px;
+}
+
+.renew-quick-actions--danger .el-button.is-disabled {
+  opacity: 0.6;
 }
 
 .renew-quick-tip {
@@ -1818,6 +1983,43 @@ async function handleRateLimitSave() {
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+
+.renew-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.renew-selection-card {
+  padding: 14px 16px;
+  background: #f9fafc;
+}
+
+.renew-selection-card.is-increase {
+  border-color: rgba(230, 162, 60, 0.3);
+  background: linear-gradient(180deg, rgba(253, 246, 236, 0.95), #ffffff);
+}
+
+.renew-selection-card.is-decrease {
+  border-color: rgba(245, 108, 108, 0.28);
+  background: linear-gradient(180deg, rgba(254, 240, 240, 0.95), #ffffff);
+}
+
+.renew-selection-value {
+  margin-top: 6px;
+  color: #303133;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.renew-selection-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
 }
 
 .full-domain {
@@ -2124,6 +2326,18 @@ async function handleRateLimitSave() {
 }
 /* ========== 移动端适配 ========== */
 @media (max-width: 768px) {
+  .renew-overview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .renew-custom-row {
+    align-items: stretch;
+  }
+
+  .renew-custom-row > * {
+    flex: 1 1 100%;
+  }
+
   .card {
     padding: 15px;
     border-radius: 12px;
@@ -2336,6 +2550,16 @@ async function handleRateLimitSave() {
   .renew-quick-actions .el-button {
     width: 100%;
     margin: 0;
+  }
+
+  .renew-section {
+    padding: 14px;
+  }
+
+  .renew-overview-main,
+  .renew-expire-card,
+  .renew-selection-card {
+    padding: 14px;
   }
 
   .renew-quick-tip {

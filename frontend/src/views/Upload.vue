@@ -788,19 +788,34 @@
         </div>
       </template>
       <div class="expiry-alert-body">
+        <div class="expiry-alert-status-card" :class="{ 'is-expired': isExpired }">
+          <div class="expiry-alert-status-label">{{ isExpired ? '当前状态' : '剩余时间' }}</div>
+          <div class="expiry-alert-status-value">
+            {{ isExpired ? '已过期' : `${remainingDays} 天` }}
+          </div>
+          <div class="expiry-alert-status-meta">
+            {{ expireAt ? `到期日 ${formatExpireDate(expireAt)}` : '暂未获取到期时间' }}
+          </div>
+        </div>
         <p v-if="isExpired" class="expiry-alert-text">
-          您的文件空间已过期，请尽快联系客服续费。
+          您的文件空间已过期，请尽快联系客服完成续费，避免上传、访问和管理受到影响。
         </p>
         <p v-else class="expiry-alert-text">
-          还剩 <strong>{{ remainingDays }}</strong> 天到期（{{ formatExpireDate(expireAt) }}），请提前续费。
+          当前服务还剩 <strong>{{ remainingDays }}</strong> 天到期。建议提前处理续费，避免使用中断。
         </p>
+        <div class="expiry-alert-note">
+          <el-icon><Service /></el-icon>
+          <span>续费、咨询、技术支持均可通过客服入口处理。</span>
+        </div>
         <label class="expiry-alert-dismiss">
           <el-checkbox v-model="expiryAlertDontShow">不再弹框提示</el-checkbox>
         </label>
       </div>
       <template #footer>
-        <el-button @click="closeExpiryAlertDialog">我知道了</el-button>
-        <el-button type="primary" @click="openRenewFromExpiryAlert">联系客服续费</el-button>
+        <div class="expiry-alert-footer">
+          <el-button @click="closeExpiryAlertDialog">我知道了</el-button>
+          <el-button type="primary" @click="openRenewFromExpiryAlert">联系客服续费</el-button>
+        </div>
       </template>
     </el-dialog>
 
