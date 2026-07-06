@@ -2591,8 +2591,29 @@ body.upload-theme-page .el-message--info .el-message__icon {
     grid-template-columns: 1fr;
   }
 
+  /* 侧栏横向排布：指标卡与操作区并排，减少纵向占用 */
   .upload-page.theme-v3 .side-panel {
     position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .upload-page.theme-v3 .side-summary {
+    flex: 1 1 260px;
+  }
+
+  .upload-page.theme-v3 .side-actions {
+    flex: 1 1 260px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+  }
+
+  .upload-page.theme-v3 .side-actions .el-button {
+    flex: 1 1 calc(50% - 3px);
+    justify-content: center;
+    min-height: 42px;
   }
 }
 
@@ -2624,12 +2645,19 @@ body.upload-theme-page .el-message--info .el-message__icon {
     justify-content: space-between;
   }
 
-  .upload-page.theme-v3 .top-bar-actions .btn-text {
-    display: none;
+  /* 退出按钮只有文字无图标，小屏保留文字避免空白按钮 */
+  .upload-page.theme-v3 .top-bar-actions {
+    justify-content: flex-end;
   }
 
-  .upload-page.theme-v3 .side-actions .btn-text {
-    display: none;
+  .upload-page.theme-v3 .top-bar-actions .el-button {
+    flex: 0 0 auto;
+  }
+
+  /* 侧栏操作按钮：2 列网格，保留文字标签更易识别 */
+  .upload-page.theme-v3 .side-actions .el-button {
+    flex: 1 1 calc(50% - 3px);
+    min-height: 44px;
   }
 
   .upload-page.theme-v3 .auth-form-pane {

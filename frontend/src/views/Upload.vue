@@ -409,7 +409,9 @@
               :page-size="pageSize"
               :page-sizes="[10, 20, 50]"
               :total="totalFiles"
-              layout="total, sizes, prev, pager, next"
+              :small="isMobile"
+              :pager-count="isMobile ? 5 : 7"
+              :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
               @size-change="onPageSizeChange"
               @current-change="onPageChange"
             />
@@ -3667,22 +3669,41 @@ const handleResize = () => {
   }
 
   .file-item {
-    padding: 5px 8px;
+    padding: 8px;
   }
 
   .file-icon {
-    width: 24px;
-    font-size: 14px;
+    width: 26px;
+    font-size: 15px;
   }
 
   .file-name {
-    font-size: 12px;
+    font-size: 13px;
+  }
+
+  /* 手机端隐藏修改时间列，把空间让给文件名 */
+  .file-date-col {
+    display: none;
+  }
+
+  .file-size-col {
+    width: auto;
+    min-width: 46px;
+    padding-right: 6px;
+    font-size: 11px;
   }
 
   .file-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px;
+    min-width: auto;
+  }
+
+  /* 触摸友好：加大列表/网格操作按钮点击区 */
+  .file-action-visit,
+  .file-action-trigger {
+    min-height: 30px;
   }
 
   .contact-card {
