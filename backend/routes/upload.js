@@ -292,10 +292,21 @@ function escapeFindPattern(keyword) {
   return keyword.replace(/\\/g, '\\\\').replace(/[*?[]/g, '\\$&').replace(/'/g, "'\\''");
 }
 
-function sortFileEntries(files) {
+function sortFileEntries(files, sortBy = 'name', sortOrder = 'asc') {
+  const dir = sortOrder === 'desc' ? -1 : 1;
   files.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-    return a.name.localeCompare(b.name);
+    if (sortBy === 'size') {
+      if (a.size !== b.size) return (a.size - b.size) * dir;
+      return a.name.localeCompare(b.name);
+    }
+    if (sortBy === 'date') {
+      const at = new Date(a.date).getTime();
+      const bt = new Date(b.date).getTime();
+      if (at !== bt) return (at - bt) * dir;
+      return a.name.localeCompare(b.name);
+    }
+    return a.name.localeCompare(b.name) * dir;
   });
   return files;
 }
@@ -370,7 +381,8 @@ async function searchInSubdirs(config, targetPath, dirPath, keyword) {
     });
   }
 
-  sortFileEntries(files);
+  // 排序在调用方按用户选择的字段执行，此处仅截断
+  sortFileEntries(files); // 默认按名称排序，保证截断前顺序稳定
   const truncated = files.length > MAX_SEARCH_RESULTS;
   if (truncated) files.length = MAX_SEARCH_RESULTS;
   return { files, truncated };
@@ -379,11 +391,13 @@ async function searchInSubdirs(config, targetPath, dirPath, keyword) {
 // 获取文件列表（使用连接池优化，支持分页）
 router.post('/list', async (req, res) => {
   try {
-    const { auth_code, path: dirPath, page: pageRaw, pageSize: pageSizeRaw, keyword: keywordRaw, search_subdirs: searchSubdirsRaw } = req.body;
+    const { auth_code, path: dirPath, page: pageRaw, pageSize: pageSizeRaw, keyword: keywordRaw, search_subdirs: searchSubdirsRaw, sort_by: sortByRaw, sort_order: sortOrderRaw } = req.body;
     const page = Math.max(1, parseInt(pageRaw, 10) || 1);
-    const pageSize = Math.min(200, Math.max(1, parseInt(pageSizeRaw, 10) || 10));
+    const pageSize = Math.min(500, Math.max(1, parseInt(pageSizeRaw, 10) || 10));
     const keyword = typeof keywordRaw === 'string' ? keywordRaw.trim().toLowerCase() : '';
     const search_subdirs = !!searchSubdirsRaw && !!keyword;
+    const sortBy = ['name', 'size', 'date'].includes(sortByRaw) ? sortByRaw : 'name';
+    const sortOrder = sortOrderRaw === 'desc' ? 'desc' : 'asc';
     
     const ftp = await findFtpByAuthCode(auth_code);
     
@@ -435,11 +449,12 @@ router.post('/list', async (req, res) => {
       const searchResult = await searchInSubdirs(config, targetPath, dirPath || '', keyword);
       files = searchResult.files;
       search_truncated = searchResult.truncated;
+      sortFileEntries(files, sortBy, sortOrder);
     } else {
       files = keyword
         ? dirFiles.filter(f => f.name.toLowerCase().includes(keyword))
         : dirFiles;
-      sortFileEntries(files);
+      sortFileEntries(files, sortBy, sortOrder);
     }
 
     const filtered = files;
@@ -459,6 +474,48 @@ router.post('/list', async (req, res) => {
       search_subdirs,
       search_truncated
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 获取全空间目录树（用于"移动到..."目录选择器）
+router.post('/folders', async (req, res) => {
+  try {
+    const { auth_code } = req.body;
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    const config = {
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    };
+
+    // 只列目录，深度不限，按路径排序方便前端构建树
+    const result = await sshPool.exec(
+      config,
+      `find "${ftp.home_dir}" -type d -printf '%P\\n' 2>/dev/null | sort`
+    );
+
+    const folders = [];
+    if (result.success && result.output) {
+      for (const line of result.output.split('\n')) {
+        const rel = normalizeRelPath(line);
+        if (!rel) continue; // 根目录本身跳过，前端单独表示"根目录"
+        if (isProtectedPath(rel)) continue;
+        const name = pathPosix.basename(rel);
+        const parentRel = pathPosix.dirname(rel);
+        if (shouldHideInList(name, parentRel === '.' ? '' : parentRel)) continue;
+        folders.push(rel);
+      }
+    }
+
+    res.json({ folders });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

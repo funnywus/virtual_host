@@ -1,0 +1,3761 @@
+/* ═══════════════════════════════════════════════════════════
+   文件空间 · 用户端主题 v4.0
+   Liquid Glass · 仿 macOS 26（Tahoe）液态玻璃
+   墨绿品牌强调 · 半透明材质 · 明暗自动切换
+   ─────────────────────────────────────────────────────────
+   设计要点：
+   · 半透明玻璃材质 + backdrop-blur + 高饱和，背景微透
+   · 镜面高光边缘（顶部内高光）+ 分层柔和阴影
+   · 连续大圆角，墨绿作强调色（深色下提亮）
+   · 布局仍由 Upload.vue 的 scoped <style> 承担（Layout-only）
+     本文件负责视觉材质与配色，沿用 --loft-* 变量名以兼容布局层
+   ═══════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+/* ─────────────────────────────────────────────
+   设计令牌 · 浅色（默认）
+   ───────────────────────────────────────────── */
+.upload-page.theme-v4 {
+  /* 品牌强调（墨绿） */
+  --loft-teal: #00695c;
+  --loft-teal-hover: #005248;
+  --loft-teal-bright: #00897b;
+  --loft-teal-soft: rgba(0, 105, 92, 0.10);
+  --loft-teal-softer: rgba(0, 105, 92, 0.05);
+  --loft-teal-border: rgba(0, 105, 92, 0.22);
+  --loft-teal-text: #00695c;
+
+  /* 语义色 */
+  --loft-gold: #b8860b;
+  --loft-mint: #2a9d6e;
+  --loft-coral: #c4553a;
+  --loft-coral-soft: rgba(196, 85, 58, 0.10);
+  --loft-red: #c0392b;
+
+  /* 文字（Apple 系统灰阶） */
+  --loft-ink: #1c1c1e;
+  --loft-ink-soft: #48484a;
+  --loft-ink-muted: #8a8a8e;
+  --loft-ink-faint: #b4b4b8;
+
+  /* 基底背景（玻璃之下） */
+  --loft-bg: #e9edf1;
+  --loft-bg-warm: rgba(255, 255, 255, 0.34);
+
+  /* 玻璃材质 */
+  --loft-surface: rgba(255, 255, 255, 0.62);
+  --loft-surface-2: rgba(255, 255, 255, 0.44);
+  --loft-glass: rgba(255, 255, 255, 0.60);
+  --loft-glass-strong: rgba(255, 255, 255, 0.78);
+  --loft-glass-thin: rgba(255, 255, 255, 0.42);
+  --loft-glass-elev: rgba(255, 255, 255, 0.80);
+  --loft-blur: 24px;
+  --loft-blur-strong: 40px;
+  --loft-saturate: 180%;
+
+  /* 描边 / 镜面高光 */
+  --loft-border: rgba(0, 0, 0, 0.07);
+  --loft-border-strong: rgba(0, 0, 0, 0.12);
+  --loft-highlight: rgba(255, 255, 255, 0.70);
+  --loft-highlight-soft: rgba(255, 255, 255, 0.45);
+  /* 玻璃镜面环：顶部内高光模拟光线打在玻璃边缘 */
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.28);
+
+  /* 分层阴影 */
+  --loft-shadow-sm: 0 1px 2px rgba(15, 23, 30, 0.05), 0 4px 12px rgba(15, 23, 30, 0.06);
+  --loft-shadow: 0 4px 16px rgba(15, 23, 30, 0.07), 0 14px 40px rgba(15, 23, 30, 0.10);
+  --loft-shadow-lg: 0 10px 28px rgba(15, 23, 30, 0.12), 0 30px 70px rgba(15, 23, 30, 0.18);
+
+  /* 圆角 */
+  --loft-radius: 14px;
+  --loft-radius-lg: 20px;
+  --loft-radius-xl: 28px;
+
+  /* 字体（系统 SF 优先，Web 端 Inter/Noto 兜底） */
+  --loft-font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', sans-serif;
+  --loft-font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --loft-font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', 'Menlo', monospace;
+
+  /* Element Plus 主题色映射（墨绿） */
+  --el-color-primary: #00695c;
+  --el-color-primary-light-3: #33887d;
+  --el-color-primary-light-5: #66a69e;
+  --el-color-primary-light-7: #99c3be;
+  --el-color-primary-light-9: rgba(0, 105, 92, 0.10);
+  --el-color-primary-dark-2: #005248;
+
+  min-height: 100vh;
+  position: relative;
+  color: var(--loft-ink);
+  font-family: var(--loft-font-body);
+  background: var(--loft-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 环境背景：柔和极光色块（浅色） */
+.upload-page.theme-v4::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 48% at 8% 4%, rgba(0, 137, 123, 0.20) 0%, transparent 58%),
+    radial-gradient(ellipse 50% 42% at 96% 8%, rgba(70, 130, 180, 0.16) 0%, transparent 55%),
+    radial-gradient(ellipse 62% 50% at 78% 96%, rgba(0, 105, 92, 0.14) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 46% at 22% 92%, rgba(184, 134, 11, 0.08) 0%, transparent 52%),
+    linear-gradient(165deg, #eef2f5 0%, #e6ebf1 52%, #e9eef2 100%);
+}
+
+/* 细腻颗粒，减弱玻璃平涂感 */
+.upload-page.theme-v4::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* ─────────────────────────────────────────────
+   设计令牌 · 深色
+   默认跟随系统（由 JS 计算 prefers-color-scheme 后写入 body class），
+   也支持侧栏手动切换强制浅色/深色。仅重定义变量，样式规则通过变量级联自动切换。
+   ───────────────────────────────────────────── */
+body.is-dark-mode .upload-page.theme-v4 {
+    /* 品牌强调（墨绿提亮） */
+    --loft-teal: #2bb3a3;
+    --loft-teal-hover: #38c6b6;
+    --loft-teal-bright: #35c4b3;
+    --loft-teal-soft: rgba(45, 212, 191, 0.16);
+    --loft-teal-softer: rgba(45, 212, 191, 0.08);
+    --loft-teal-border: rgba(45, 212, 191, 0.30);
+    --loft-teal-text: #4fd6c4;
+
+    --loft-gold: #e0a92e;
+    --loft-mint: #35c48b;
+    --loft-coral: #e57055;
+    --loft-coral-soft: rgba(229, 112, 85, 0.16);
+    --loft-red: #ff6b5e;
+
+    --loft-ink: #f5f5f7;
+    --loft-ink-soft: #d1d1d6;
+    --loft-ink-muted: #8e8e93;
+    --loft-ink-faint: #636366;
+
+    --loft-bg: #0b0c0f;
+    --loft-bg-warm: rgba(255, 255, 255, 0.04);
+
+    --loft-surface: rgba(44, 46, 51, 0.62);
+    --loft-surface-2: rgba(58, 60, 66, 0.52);
+    --loft-glass: rgba(44, 46, 51, 0.58);
+    --loft-glass-strong: rgba(52, 54, 60, 0.80);
+    --loft-glass-thin: rgba(64, 66, 72, 0.40);
+    --loft-glass-elev: rgba(54, 56, 62, 0.82);
+    --loft-blur: 26px;
+    --loft-blur-strong: 44px;
+    --loft-saturate: 170%;
+
+    --loft-border: rgba(255, 255, 255, 0.08);
+    --loft-border-strong: rgba(255, 255, 255, 0.15);
+    --loft-highlight: rgba(255, 255, 255, 0.14);
+    --loft-highlight-soft: rgba(255, 255, 255, 0.07);
+    --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+
+    --loft-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.40);
+    --loft-shadow: 0 4px 16px rgba(0, 0, 0, 0.42), 0 16px 44px rgba(0, 0, 0, 0.55);
+    --loft-shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.50), 0 30px 70px rgba(0, 0, 0, 0.65);
+
+    --el-color-primary: #2bb3a3;
+    --el-color-primary-light-3: #2a8a7f;
+    --el-color-primary-light-5: #256b64;
+    --el-color-primary-light-7: #204f4a;
+    --el-color-primary-light-9: rgba(45, 212, 191, 0.14);
+    --el-color-primary-dark-2: #38c6b6;
+}
+
+body.is-dark-mode .upload-page.theme-v4::before {
+  background:
+    radial-gradient(ellipse 60% 48% at 8% 4%, rgba(0, 137, 123, 0.24) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 42% at 96% 8%, rgba(60, 110, 160, 0.20) 0%, transparent 58%),
+    radial-gradient(ellipse 62% 50% at 80% 98%, rgba(0, 105, 92, 0.22) 0%, transparent 58%),
+    radial-gradient(ellipse 55% 46% at 20% 94%, rgba(120, 90, 20, 0.12) 0%, transparent 55%),
+    linear-gradient(165deg, #121318 0%, #0b0c0f 52%, #0e1013 100%);
+}
+
+body.is-dark-mode .upload-page.theme-v4::after {
+  opacity: 0.22;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   授权页
+   ═══════════════════════════════════════════════════════════ */
+.upload-page.theme-v4 .auth-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.upload-page.theme-v4 .auth-card {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  max-width: 840px;
+  width: 100%;
+  background: var(--loft-glass-strong);
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  border-radius: var(--loft-radius-xl);
+  border: 0.5px solid var(--loft-border);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-lg);
+  overflow: hidden;
+  animation: loftFadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes loftFadeUp {
+  from { opacity: 0; transform: translateY(22px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.upload-page.theme-v4 .auth-brand-pane {
+  position: relative;
+  padding: 44px 34px;
+  background:
+    radial-gradient(ellipse 120% 80% at 20% 0%, rgba(255, 255, 255, 0.22) 0%, transparent 50%),
+    linear-gradient(165deg, #00897b 0%, #00695c 46%, #004d40 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+.upload-page.theme-v4 .auth-brand-pane::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  right: -30%;
+  width: 90%;
+  height: 90%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, transparent 62%);
+  pointer-events: none;
+}
+
+.upload-page.theme-v4 .auth-brand-mark {
+  position: relative;
+  font-family: var(--loft-font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.upload-page.theme-v4 .auth-brand-tagline {
+  position: relative;
+  font-size: 13px;
+  opacity: 0.9;
+  line-height: 1.65;
+  margin-top: 14px;
+}
+
+.upload-page.theme-v4 .auth-brand-features {
+  position: relative;
+  list-style: none;
+  margin: 34px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.upload-page.theme-v4 .auth-brand-features li {
+  font-size: 12.5px;
+  padding-left: 22px;
+  position: relative;
+  opacity: 0.92;
+}
+
+.upload-page.theme-v4 .auth-brand-features li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.upload-page.theme-v4 .auth-brand-edition {
+  position: relative;
+  font-family: var(--loft-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  opacity: 0.7;
+  margin-top: auto;
+  padding-top: 26px;
+}
+
+.upload-page.theme-v4 .auth-form-pane {
+  padding: 48px 42px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.upload-page.theme-v4 .auth-title {
+  font-family: var(--loft-font-display);
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--loft-ink);
+  margin: 0 0 8px;
+  letter-spacing: -0.03em;
+}
+
+.upload-page.theme-v4 .auth-subtitle {
+  color: var(--loft-ink-soft);
+  font-size: 14px;
+  margin: 0 0 26px;
+  line-height: 1.5;
+}
+
+.upload-page.theme-v4 .auth-input {
+  margin-bottom: 16px;
+}
+
+.upload-page.theme-v4 .auth-input .el-input__wrapper {
+  background: var(--loft-glass-thin);
+  border-radius: var(--loft-radius);
+  box-shadow: 0 0 0 0.5px var(--loft-border-strong) inset;
+  padding: 9px 15px;
+  transition: box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.upload-page.theme-v4 .auth-input .el-input__wrapper.is-focus {
+  background: var(--loft-glass);
+  box-shadow: 0 0 0 1px var(--loft-teal) inset, 0 0 0 4px var(--loft-teal-soft);
+}
+
+.upload-page.theme-v4 .auth-input .el-input__inner {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .auth-input .el-input__prefix {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .auth-primary-btn {
+  width: 100%;
+  height: 48px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--loft-radius);
+  border: none !important;
+  background: linear-gradient(180deg, var(--loft-teal-bright) 0%, var(--loft-teal) 100%) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px var(--loft-teal-soft), var(--loft-glass-ring) !important;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease !important;
+}
+
+.upload-page.theme-v4 .auth-primary-btn:hover,
+.upload-page.theme-v4 .auth-primary-btn:focus {
+  filter: brightness(1.05) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 8px 22px rgba(0, 105, 92, 0.28), var(--loft-glass-ring) !important;
+}
+
+.upload-page.theme-v4 .auth-primary-btn:active {
+  transform: translateY(0) !important;
+}
+
+.upload-page.theme-v4 .auth-hint {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+  text-align: center;
+}
+
+.upload-page.theme-v4 .auth-blocked-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 18px;
+  border-radius: 50%;
+  background: var(--loft-coral-soft);
+  color: var(--loft-coral);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  box-shadow: var(--loft-glass-ring);
+}
+
+.upload-page.theme-v4 .auth-blocked-desc {
+  color: var(--loft-ink-soft);
+  text-align: center;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.upload-page.theme-v4 .auth-blocked-domain {
+  font-family: var(--loft-font-mono);
+  font-size: 12px;
+  padding: 11px 14px;
+  background: var(--loft-glass-thin);
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius);
+  color: var(--loft-teal-text);
+  word-break: break-all;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.upload-page.theme-v4 .auth-contact {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  background: var(--loft-glass-strong);
+  -webkit-backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  border: 0.5px solid var(--loft-teal-border);
+  border-radius: 999px;
+  color: var(--loft-teal-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.upload-page.theme-v4 .auth-contact:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   工作区布局
+   ═══════════════════════════════════════════════════════════ */
+.upload-page.theme-v4 .workspace {
+  position: relative;
+  z-index: 1;
+  height: 100vh;
+  min-height: 560px;
+  padding: 22px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   macOS 窗口外壳（Finder 风格）
+   ═══════════════════════════════════════════════════════════ */
+.upload-page.theme-v4 .mac-window {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  background: var(--loft-glass);
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius-xl);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-lg);
+  overflow: hidden;
+}
+
+/* ─── 侧边栏 ─── */
+.upload-page.theme-v4 .mac-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 14px;
+  background: var(--loft-bg-warm);
+  border-right: 0.5px solid var(--loft-border);
+  overflow-y: auto;
+}
+
+.upload-page.theme-v4 .mac-traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-traffic-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+.upload-page.theme-v4 .mac-traffic-dot.is-red { background: #ff5f57; }
+.upload-page.theme-v4 .mac-traffic-dot.is-yellow { background: #febc2e; }
+.upload-page.theme-v4 .mac-traffic-dot.is-green { background: #28c840; }
+
+.upload-page.theme-v4 .mac-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 6px 14px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+/* 图标 + 名称同行，域名独占侧栏整行宽度，单行省略（hover/title 查看完整地址） */
+.upload-page.theme-v4 .mac-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .mac-brand-row .brand-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-page.theme-v4 .mac-brand .brand-domain {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.upload-page.theme-v4 .mac-brand .brand-domain-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-page.theme-v4 .mac-brand .brand-domain .el-icon {
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-nav-label {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--loft-ink-muted);
+  text-transform: uppercase;
+}
+
+.upload-page.theme-v4 .mac-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--loft-ink-soft);
+  font-size: 13.5px;
+  font-weight: 500;
+  font-family: var(--loft-font-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.1s ease;
+}
+
+.upload-page.theme-v4 .mac-nav-item .el-icon {
+  font-size: 16px;
+  color: var(--loft-teal-text);
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-nav-item:hover {
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .mac-nav-item:active {
+  transform: scale(0.98);
+}
+
+.upload-page.theme-v4 .mac-nav-item.is-primary {
+  background: linear-gradient(180deg, var(--loft-teal-bright) 0%, var(--loft-teal) 100%);
+  color: #fff;
+  box-shadow: 0 3px 10px var(--loft-teal-soft), var(--loft-glass-ring);
+  margin-bottom: 4px;
+}
+
+.upload-page.theme-v4 .mac-nav-item.is-primary .el-icon {
+  color: #fff;
+}
+
+.upload-page.theme-v4 .mac-nav-item.is-primary:hover {
+  filter: brightness(1.05);
+  color: #fff;
+}
+
+.upload-page.theme-v4 .mac-sidebar-spacer {
+  flex: 1 1 auto;
+  min-height: 16px;
+}
+
+/* 侧栏内的存储信息卡：融入侧栏，弱化独立卡片感 */
+.upload-page.theme-v4 .mac-sidebar .side-summary {
+  padding: 12px;
+  background: var(--loft-glass-thin);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius);
+  box-shadow: none;
+  flex-shrink: 0;
+}
+
+/* ─── 内容区 ─── */
+.upload-page.theme-v4 .mac-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+}
+
+/* ─── 统一工具栏（标题栏 + 工具栏合一） ─── */
+.upload-page.theme-v4 .mac-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  border-bottom: 0.5px solid var(--loft-border);
+  background: var(--loft-bg-warm);
+}
+
+.upload-page.theme-v4 .mac-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0.5px solid var(--loft-border);
+  border-radius: 8px;
+  background: var(--loft-glass-thin);
+  color: var(--loft-teal-text);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+
+.upload-page.theme-v4 .mac-tool-btn .el-icon {
+  font-size: 14px;
+}
+
+.upload-page.theme-v4 .mac-tool-btn:hover:not(.is-disabled):not(:disabled) {
+  background: var(--loft-teal-soft);
+  border-color: var(--loft-teal-border);
+}
+
+.upload-page.theme-v4 .mac-tool-btn.is-disabled,
+.upload-page.theme-v4 .mac-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--loft-ink-muted);
+}
+
+.upload-page.theme-v4 .mac-toolbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--loft-ink);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 2px;
+}
+
+.upload-page.theme-v4 .mac-toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.upload-page.theme-v4 .mac-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 260px;
+  min-width: 120px;
+}
+
+.upload-page.theme-v4 .mac-search .file-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .mac-search .file-search-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 9px;
+  background: var(--loft-glass-thin);
+  border: 0.5px solid var(--loft-border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--loft-ink-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.upload-page.theme-v4 .mac-search.is-active .file-search-option {
+  border-color: var(--loft-teal-border);
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .mac-view-switch {
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-logout-btn {
+  flex-shrink: 0;
+}
+
+/* ─── 路径栏 ─── */
+.upload-page.theme-v4 .mac-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  border-bottom: 0.5px solid var(--loft-border);
+  background: transparent;
+}
+
+/* ─── 批量操作栏 ─── */
+.upload-page.theme-v4 .mac-batchbar {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-bottom: 0.5px solid var(--loft-border);
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.upload-page.theme-v4 .mac-batchbar.is-batch-active {
+  background: var(--loft-teal-softer);
+}
+
+.upload-page.theme-v4 .mac-batchbar .batch-operations {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 30px;
+}
+
+.upload-page.theme-v4 .mac-batchbar .batch-operations.is-active .batch-label {
+  color: var(--loft-teal-text);
+}
+
+/* ─── 状态栏 ─── */
+.upload-page.theme-v4 .mac-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-top: 0.5px solid var(--loft-border);
+  background: var(--loft-bg-warm);
+}
+
+.upload-page.theme-v4 .mac-status-count {
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+  font-family: var(--loft-font-mono);
+}
+
+.upload-page.theme-v4 .mac-statusbar .file-pagination {
+  padding: 0;
+  border: none;
+  background: transparent;
+  margin-left: auto;
+}
+
+/* ─── 复用：品牌标识（侧栏内） ─── */
+.upload-page.theme-v4 .brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: linear-gradient(160deg, var(--loft-teal-bright) 0%, var(--loft-teal) 70%, var(--loft-teal-hover) 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px var(--loft-teal-soft), var(--loft-glass-ring);
+}
+
+.upload-page.theme-v4 .brand-text {
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .brand-name {
+  font-family: var(--loft-font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--loft-ink);
+  line-height: 1.2;
+}
+
+.upload-page.theme-v4 .brand-domain {
+  font-family: var(--loft-font-mono);
+  font-size: 12px;
+  color: var(--loft-teal-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.upload-page.theme-v4 .brand-domain:hover {
+  text-decoration: underline;
+}
+
+.upload-page.theme-v4 .side-summary {
+  padding: 14px;
+  background: var(--loft-glass);
+  -webkit-backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius-lg);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm);
+}
+
+.upload-page.theme-v4 .side-summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.upload-page.theme-v4 .side-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .side-summary-mono {
+  font-family: var(--loft-font-mono);
+  font-size: 11px;
+  color: var(--loft-ink-muted);
+  white-space: nowrap;
+}
+
+.upload-page.theme-v4 .side-summary-progress {
+  margin: 0;
+}
+
+.upload-page.theme-v4 .side-summary-foot {
+  font-size: 11px;
+  color: var(--loft-ink-muted);
+}
+
+.upload-page.theme-v4 .side-summary-divider {
+  height: 0.5px;
+  margin: 12px 0;
+  background: var(--loft-border);
+}
+
+.upload-page.theme-v4 .side-summary-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .side-summary-inline strong {
+  color: var(--loft-teal-text);
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.upload-page.theme-v4 .side-expiry {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .side-expiry.is-teal {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .side-expiry.is-warn {
+  color: var(--loft-gold);
+}
+
+.upload-page.theme-v4 .side-expiry.is-danger {
+  color: var(--loft-red);
+}
+
+.upload-page.theme-v4 .breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .breadcrumb-item {
+  cursor: pointer;
+  color: var(--loft-teal-text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 7px;
+  transition: background 0.12s ease;
+}
+
+.upload-page.theme-v4 .breadcrumb-item:hover {
+  background: var(--loft-teal-soft);
+}
+
+.upload-page.theme-v4 .breadcrumb-sep {
+  color: var(--loft-ink-faint);
+}
+
+.upload-page.theme-v4 .file-search-input {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+}
+
+.upload-page.theme-v4 .file-search-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 5px 11px;
+  background: var(--loft-glass-thin);
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius);
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.upload-page.theme-v4 .file-search-notice {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--loft-gold);
+}
+
+.upload-page.theme-v4 .file-path-hint,
+.upload-page.theme-v4 .grid-path {
+  font-size: 11px;
+  color: var(--loft-ink-muted);
+  font-family: var(--loft-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-page.theme-v4 .file-search-input .el-input__wrapper {
+  background: var(--loft-glass-thin);
+  border-radius: var(--loft-radius);
+  box-shadow: 0 0 0 0.5px var(--loft-border) inset;
+}
+
+.upload-page.theme-v4 .file-search-input .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--loft-teal) inset, 0 0 0 3px var(--loft-teal-soft);
+}
+
+/* ─── 批量操作 ─── */
+.upload-page.theme-v4 .batch-select-btn {
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .batch-label {
+  flex-shrink: 0;
+  min-width: 64px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--loft-ink-muted);
+  white-space: nowrap;
+}
+
+.upload-page.theme-v4 .batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.upload-page.theme-v4 .batch-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.upload-page.theme-v4 .batch-actions .el-button--primary {
+  --el-button-bg-color: var(--loft-teal);
+  --el-button-border-color: var(--loft-teal);
+  --el-button-hover-bg-color: var(--loft-teal-hover);
+  --el-button-hover-border-color: var(--loft-teal-hover);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button--warning {
+  --el-button-bg-color: var(--loft-gold);
+  --el-button-border-color: var(--loft-gold);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button--success {
+  --el-button-bg-color: var(--loft-mint);
+  --el-button-border-color: var(--loft-mint);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button--danger {
+  --el-button-bg-color: var(--loft-coral);
+  --el-button-border-color: var(--loft-coral);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button--default,
+.upload-page.theme-v4 .batch-actions .el-button:not([class*='el-button--']) {
+  --el-button-bg-color: var(--loft-glass-thin);
+  --el-button-border-color: var(--loft-border-strong);
+  --el-button-text-color: var(--loft-ink-soft);
+  --el-button-hover-bg-color: var(--loft-teal-soft);
+  --el-button-hover-border-color: var(--loft-teal-border);
+  --el-button-hover-text-color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button.is-text,
+.upload-page.theme-v4 .batch-actions .el-button.is-link {
+  --el-button-text-color: var(--loft-teal-text);
+  --el-button-hover-text-color: var(--loft-teal-hover);
+  --el-button-hover-bg-color: var(--loft-teal-soft);
+}
+
+.upload-page.theme-v4 .batch-actions .el-button.is-disabled {
+  opacity: 0.45;
+}
+
+.upload-page.theme-v4 .batch-divider {
+  height: 20px;
+  margin: 0 2px;
+}
+
+/* ─── 文件列表 / 网格 ─── */
+.upload-page.theme-v4 .file-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: transparent;
+}
+
+/* 内容区内的续费横幅：内缩留白，避免被压缩 */
+.upload-page.theme-v4 .mac-content .renew-banner {
+  flex-shrink: 0;
+  margin: 10px 14px 0;
+}
+
+.upload-page.theme-v4 .file-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 0.5px solid var(--loft-border);
+  background: var(--loft-bg-warm);
+}
+
+.upload-page.theme-v4 .file-pagination .el-pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-button-bg-color: var(--loft-glass-thin);
+  --el-pagination-hover-color: var(--loft-teal-text);
+  --el-pagination-text-color: var(--loft-ink-soft);
+  --el-text-color-regular: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .file-pagination .el-pager li {
+  border-radius: 8px;
+  margin: 0 2px;
+  background: transparent;
+  color: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .file-pagination .el-pager li:hover {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-pagination .el-pager li.is-active {
+  background: var(--loft-teal);
+  color: #fff;
+}
+
+.upload-page.theme-v4 .file-item {
+  border-bottom-color: var(--loft-border);
+}
+
+.upload-page.theme-v4 .file-item:hover {
+  background: var(--loft-teal-soft);
+}
+
+.upload-page.theme-v4 .file-item.selected {
+  background: var(--loft-teal-soft);
+  box-shadow: inset 3px 0 0 var(--loft-teal);
+}
+
+/* 键盘焦点态：细描边提示当前键盘定位的文件，不与鼠标选中态冲突 */
+.upload-page.theme-v4 .file-item.is-focused {
+  outline: 1.5px solid var(--loft-teal-border);
+  outline-offset: -1.5px;
+}
+
+/* 拖拽移动：目标文件夹悬停高亮 */
+.upload-page.theme-v4 .file-item.drop-target,
+.upload-page.theme-v4 .grid-item.drop-target {
+  background: var(--loft-teal-soft) !important;
+  outline: 2px dashed var(--loft-teal);
+  outline-offset: -2px;
+}
+
+/* 拖拽移动：被拖拽项本身半透明反馈 */
+.upload-page.theme-v4 .file-item.is-dragging,
+.upload-page.theme-v4 .grid-item.is-dragging {
+  opacity: 0.45;
+}
+
+.upload-page.theme-v4 .file-name {
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .file-item:hover .file-name {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-size-col {
+  color: var(--loft-teal-text);
+  font-family: var(--loft-font-mono);
+}
+
+.upload-page.theme-v4 .file-date-col,
+.upload-page.theme-v4 .file-meta {
+  color: var(--loft-ink-muted);
+}
+
+/* ─── 列表表头（可排序） ─── */
+.upload-page.theme-v4 .file-list-head {
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 0.5px solid var(--loft-border);
+  background: var(--loft-bg-warm);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.upload-page.theme-v4 .file-list-head .file-checkbox,
+.upload-page.theme-v4 .file-list-head .file-icon {
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .file-sort-col {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--loft-ink-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s ease;
+}
+
+.upload-page.theme-v4 .file-sort-col:hover {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-sort-col .el-icon {
+  font-size: 11px;
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-sort-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .file-list-head .file-size-col,
+.upload-page.theme-v4 .file-list-head .file-date-col {
+  justify-content: flex-end;
+  color: var(--loft-ink-muted);
+  font-family: var(--loft-font-body);
+}
+
+.upload-page.theme-v4 .file-actions-head {
+  flex-shrink: 0;
+  min-width: 88px;
+}
+
+.upload-page.theme-v4 .file-type-label {
+  background: rgba(42, 157, 110, 0.14);
+  color: var(--loft-mint);
+}
+
+.upload-page.theme-v4 .grid-item {
+  background: var(--loft-glass-thin);
+  border: 0.5px solid var(--loft-border);
+  box-shadow: var(--loft-glass-ring);
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.upload-page.theme-v4 .grid-item:hover {
+  border-color: var(--loft-teal-border);
+  background: var(--loft-teal-soft);
+  transform: translateY(-2px);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm);
+}
+
+.upload-page.theme-v4 .grid-item.selected {
+  border-color: var(--loft-teal);
+  background: var(--loft-teal-soft);
+  box-shadow: var(--loft-glass-ring), 0 0 0 1px var(--loft-teal-border);
+}
+
+.upload-page.theme-v4 .grid-item.is-focused {
+  outline: 1.5px solid var(--loft-teal-border);
+  outline-offset: -1.5px;
+}
+
+.upload-page.theme-v4 .grid-name {
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .grid-size {
+  color: var(--loft-teal-text);
+  font-family: var(--loft-font-mono);
+}
+
+.upload-page.theme-v4 .empty-tip {
+  color: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .empty-hint {
+  color: var(--loft-ink-muted);
+}
+
+/* ─── 列表拖拽提示 ─── */
+.upload-page.theme-v4 .file-list.drag-over {
+  border: 2px dashed var(--loft-teal-border);
+  background: var(--loft-teal-soft);
+}
+
+.upload-page.theme-v4 .file-list.drag-over.empty-list::before {
+  color: var(--loft-teal-text);
+  background: var(--loft-glass-strong);
+  -webkit-backdrop-filter: blur(var(--loft-blur));
+  backdrop-filter: blur(var(--loft-blur));
+  border: 0.5px solid var(--loft-teal-border);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm);
+}
+
+.upload-page.theme-v4 .file-list.drag-over:not(.empty-list)::after {
+  background: var(--loft-teal);
+  color: #fff;
+  box-shadow: var(--loft-shadow-sm);
+}
+
+/* ─── 整页拖拽遮罩 ─── */
+.upload-page.theme-v4 .page-drag-overlay {
+  border: 2px dashed var(--loft-teal);
+  background: var(--loft-teal-soft);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  border-radius: var(--loft-radius-lg);
+}
+
+.upload-page.theme-v4 .page-drag-tip {
+  background: var(--loft-teal);
+  color: #fff;
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow: var(--loft-shadow);
+}
+
+/* ─── 续费提醒横幅 ─── */
+.upload-page.theme-v4 .renew-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  background: var(--loft-glass);
+  -webkit-backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate));
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius-lg);
+  border-left: 3px solid var(--loft-gold);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm);
+}
+
+.upload-page.theme-v4 .renew-banner.is-expired {
+  border-left-color: var(--loft-red);
+  background: linear-gradient(90deg, rgba(192, 57, 43, 0.10) 0%, var(--loft-glass) 42%);
+}
+
+.upload-page.theme-v4 .renew-banner-icon {
+  font-size: 28px;
+  color: var(--loft-gold);
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .renew-banner.is-expired .renew-banner-icon {
+  color: var(--loft-red);
+}
+
+.upload-page.theme-v4 .renew-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-page.theme-v4 .renew-banner-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--loft-ink);
+  margin-bottom: 4px;
+}
+
+.upload-page.theme-v4 .renew-banner-text {
+  font-size: 13px;
+  color: var(--loft-ink-soft);
+  line-height: 1.5;
+}
+
+.upload-page.theme-v4 .renew-banner-text em {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--loft-gold);
+}
+
+.upload-page.theme-v4 .renew-banner.is-expired .renew-banner-text em {
+  color: var(--loft-red);
+}
+
+/* ─── 页脚 ─── */
+.upload-page.theme-v4 .workspace-footer {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+  font-family: var(--loft-font-mono);
+}
+
+.upload-page.theme-v4 .workspace-footer .version {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 10px;
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+/* ─── 上传浮窗 ─── */
+.upload-page.theme-v4 .upload-float-content {
+  background: var(--loft-glass-strong);
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate));
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius-lg);
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-lg);
+}
+
+.upload-page.theme-v4 .upload-float-title {
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .upload-float-detail {
+  color: var(--loft-ink-muted);
+}
+
+/* ─── 列表「访问 / 操作」按钮 ─── */
+.upload-page.theme-v4 .file-actions {
+  gap: 2px;
+}
+
+.upload-page.theme-v4 .file-action-visit,
+.upload-page.theme-v4 .file-action-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--loft-font-body);
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.upload-page.theme-v4 .file-action-visit {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-action-trigger {
+  color: var(--loft-ink-soft);
+}
+
+.upload-page.theme-v4 .file-action-visit .el-icon,
+.upload-page.theme-v4 .file-action-trigger .el-icon {
+  font-size: 13px;
+}
+
+.upload-page.theme-v4 .file-action-visit:hover,
+.upload-page.theme-v4 .file-action-trigger:hover {
+  background: var(--loft-teal-soft);
+  border-color: var(--loft-teal-border);
+}
+
+.upload-page.theme-v4 .file-action-trigger:hover {
+  color: var(--loft-teal-text);
+}
+
+.upload-page.theme-v4 .file-action-trigger.is-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  color: var(--loft-ink-muted);
+  box-sizing: border-box;
+}
+
+.upload-page.theme-v4 .file-action-trigger.is-icon:hover {
+  border-color: var(--loft-teal-border);
+  color: var(--loft-teal-text);
+}
+
+/* 右键目标行高亮 */
+.upload-page.theme-v4 .file-item.ctx-target,
+.upload-page.theme-v4 .grid-item.ctx-target {
+  background: var(--loft-teal-soft) !important;
+  outline: 1px solid var(--loft-teal-border);
+  outline-offset: -1px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Element Plus · 全局主题（墨绿）
+   body.upload-theme-page 承载令牌，供 teleport 弹层读取
+   ═══════════════════════════════════════════════════════════ */
+body.upload-theme-page {
+  --loft-teal: #00695c;
+  --loft-teal-hover: #005248;
+  --loft-teal-bright: #00897b;
+  --loft-teal-soft: rgba(0, 105, 92, 0.10);
+  --loft-teal-softer: rgba(0, 105, 92, 0.05);
+  --loft-teal-border: rgba(0, 105, 92, 0.22);
+  --loft-teal-text: #00695c;
+  --loft-gold: #b8860b;
+  --loft-mint: #2a9d6e;
+  --loft-coral: #c4553a;
+  --loft-coral-soft: rgba(196, 85, 58, 0.10);
+  --loft-red: #c0392b;
+  --loft-ink: #1c1c1e;
+  --loft-ink-soft: #48484a;
+  --loft-ink-muted: #8a8a8e;
+  --loft-ink-faint: #b4b4b8;
+  --loft-bg-warm: rgba(255, 255, 255, 0.34);
+  --loft-surface: rgba(255, 255, 255, 0.62);
+  --loft-surface-2: rgba(255, 255, 255, 0.44);
+  --loft-glass: rgba(255, 255, 255, 0.60);
+  --loft-glass-strong: rgba(255, 255, 255, 0.80);
+  --loft-glass-thin: rgba(255, 255, 255, 0.42);
+  --loft-glass-elev: rgba(255, 255, 255, 0.80);
+  --loft-blur: 24px;
+  --loft-blur-strong: 40px;
+  --loft-saturate: 180%;
+  --loft-border: rgba(0, 0, 0, 0.07);
+  --loft-border-strong: rgba(0, 0, 0, 0.12);
+  --loft-highlight: rgba(255, 255, 255, 0.70);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.28);
+  --loft-shadow-sm: 0 1px 2px rgba(15, 23, 30, 0.05), 0 4px 12px rgba(15, 23, 30, 0.06);
+  --loft-shadow: 0 4px 16px rgba(15, 23, 30, 0.07), 0 14px 40px rgba(15, 23, 30, 0.10);
+  --loft-shadow-lg: 0 10px 28px rgba(15, 23, 30, 0.12), 0 30px 70px rgba(15, 23, 30, 0.18);
+  --loft-radius: 14px;
+  --loft-radius-lg: 20px;
+  --loft-radius-xl: 28px;
+  --loft-font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', 'PingFang SC', 'Noto Sans SC', 'Helvetica Neue', sans-serif;
+  --loft-font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', 'Menlo', monospace;
+
+  --el-color-primary: #00695c;
+  --el-color-primary-light-3: #33887d;
+  --el-color-primary-light-5: #66a69e;
+  --el-color-primary-light-7: #99c3be;
+  --el-color-primary-light-9: rgba(0, 105, 92, 0.10);
+  --el-color-primary-dark-2: #005248;
+  --el-color-warning: #b8860b;
+  --el-color-warning-light-9: rgba(184, 134, 11, 0.12);
+  --el-color-success: #2a9d6e;
+  --el-color-success-light-9: rgba(42, 157, 110, 0.12);
+  --el-color-danger: #c4553a;
+  --el-color-danger-light-9: rgba(196, 85, 58, 0.12);
+}
+
+body.is-dark-mode.upload-theme-page {
+  --loft-teal: #2bb3a3;
+  --loft-teal-hover: #38c6b6;
+  --loft-teal-bright: #35c4b3;
+  --loft-teal-soft: rgba(45, 212, 191, 0.16);
+  --loft-teal-softer: rgba(45, 212, 191, 0.08);
+  --loft-teal-border: rgba(45, 212, 191, 0.30);
+  --loft-teal-text: #4fd6c4;
+  --loft-gold: #e0a92e;
+  --loft-mint: #35c48b;
+  --loft-coral: #e57055;
+  --loft-coral-soft: rgba(229, 112, 85, 0.16);
+  --loft-red: #ff6b5e;
+  --loft-ink: #f5f5f7;
+  --loft-ink-soft: #d1d1d6;
+  --loft-ink-muted: #8e8e93;
+  --loft-ink-faint: #636366;
+  --loft-bg-warm: rgba(255, 255, 255, 0.04);
+  --loft-surface: rgba(44, 46, 51, 0.62);
+  --loft-surface-2: rgba(58, 60, 66, 0.52);
+  --loft-glass: rgba(44, 46, 51, 0.58);
+  --loft-glass-strong: rgba(52, 54, 60, 0.80);
+  --loft-glass-thin: rgba(64, 66, 72, 0.40);
+  --loft-glass-elev: rgba(54, 56, 62, 0.82);
+  --loft-saturate: 170%;
+  --loft-border: rgba(255, 255, 255, 0.08);
+  --loft-border-strong: rgba(255, 255, 255, 0.15);
+  --loft-highlight: rgba(255, 255, 255, 0.14);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --loft-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.40);
+  --loft-shadow: 0 4px 16px rgba(0, 0, 0, 0.42), 0 16px 44px rgba(0, 0, 0, 0.55);
+  --loft-shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.50), 0 30px 70px rgba(0, 0, 0, 0.65);
+  --el-color-primary: #2bb3a3;
+  --el-color-primary-light-3: #2a8a7f;
+  --el-color-primary-light-5: #256b64;
+  --el-color-primary-light-7: #204f4a;
+  --el-color-primary-light-9: rgba(45, 212, 191, 0.14);
+  --el-color-primary-dark-2: #38c6b6;
+}
+
+/* ─── 按钮 ─── */
+body.upload-theme-page .el-button--primary,
+.upload-page.theme-v4 .el-button--primary {
+  --el-button-bg-color: var(--loft-teal);
+  --el-button-border-color: var(--loft-teal);
+  --el-button-hover-bg-color: var(--loft-teal-hover);
+  --el-button-hover-border-color: var(--loft-teal-hover);
+  --el-button-active-bg-color: var(--loft-teal-hover);
+  --el-button-active-border-color: var(--loft-teal-hover);
+  --el-button-text-color: #fff;
+  --el-button-hover-text-color: #fff;
+  background: var(--loft-teal) !important;
+  background-color: var(--loft-teal) !important;
+  border: 0.5px solid var(--loft-teal) !important;
+  border-color: var(--loft-teal) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+  transform: none !important;
+  opacity: 1 !important;
+  transition: filter 0.16s ease, background 0.16s ease !important;
+}
+
+body.upload-theme-page .el-button--primary:hover,
+body.upload-theme-page .el-button--primary:focus,
+.upload-page.theme-v4 .el-button--primary:hover,
+.upload-page.theme-v4 .el-button--primary:focus {
+  background: var(--loft-teal-hover) !important;
+  background-color: var(--loft-teal-hover) !important;
+  border-color: var(--loft-teal-hover) !important;
+  color: #fff !important;
+  transform: none !important;
+  box-shadow: var(--loft-glass-ring) !important;
+  opacity: 1 !important;
+}
+
+body.upload-theme-page .el-button--primary:active,
+.upload-page.theme-v4 .el-button--primary:active {
+  background: var(--loft-teal-hover) !important;
+  background-color: var(--loft-teal-hover) !important;
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--warning,
+.upload-page.theme-v4 .el-button--warning {
+  --el-button-bg-color: var(--loft-gold);
+  --el-button-border-color: var(--loft-gold);
+  background: var(--loft-gold) !important;
+  background-color: var(--loft-gold) !important;
+  border: 0.5px solid var(--loft-gold) !important;
+  border-color: var(--loft-gold) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--warning:hover,
+body.upload-theme-page .el-button--warning:focus,
+.upload-page.theme-v4 .el-button--warning:hover,
+.upload-page.theme-v4 .el-button--warning:focus {
+  filter: brightness(1.06);
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--success,
+.upload-page.theme-v4 .el-button--success {
+  --el-button-bg-color: var(--loft-mint);
+  --el-button-border-color: var(--loft-mint);
+  background: var(--loft-mint) !important;
+  background-color: var(--loft-mint) !important;
+  border: 0.5px solid var(--loft-mint) !important;
+  border-color: var(--loft-mint) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--success:hover,
+body.upload-theme-page .el-button--success:focus,
+.upload-page.theme-v4 .el-button--success:hover,
+.upload-page.theme-v4 .el-button--success:focus {
+  filter: brightness(1.06);
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--danger,
+.upload-page.theme-v4 .el-button--danger {
+  --el-button-bg-color: var(--loft-coral);
+  --el-button-border-color: var(--loft-coral);
+  background: var(--loft-coral) !important;
+  background-color: var(--loft-coral) !important;
+  border: 0.5px solid var(--loft-coral) !important;
+  border-color: var(--loft-coral) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--danger:hover,
+body.upload-theme-page .el-button--danger:focus,
+.upload-page.theme-v4 .el-button--danger:hover,
+.upload-page.theme-v4 .el-button--danger:focus {
+  filter: brightness(1.06);
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button--default,
+.upload-page.theme-v4 .el-button--default {
+  --el-button-bg-color: var(--loft-glass-thin);
+  --el-button-border-color: var(--loft-border-strong);
+  --el-button-text-color: var(--loft-ink-soft);
+  background: var(--loft-glass-thin) !important;
+  background-color: var(--loft-glass-thin) !important;
+  border: 0.5px solid var(--loft-border-strong) !important;
+  border-color: var(--loft-border-strong) !important;
+  color: var(--loft-ink-soft) !important;
+  box-shadow: none !important;
+  transform: none !important;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease !important;
+}
+
+body.upload-theme-page .el-button--default:hover,
+body.upload-theme-page .el-button--default:focus,
+.upload-page.theme-v4 .el-button--default:hover,
+.upload-page.theme-v4 .el-button--default:focus {
+  background: var(--loft-teal-soft) !important;
+  background-color: var(--loft-teal-soft) !important;
+  border-color: var(--loft-teal-border) !important;
+  color: var(--loft-teal-text) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+body.upload-theme-page .el-button.is-link,
+body.upload-theme-page .el-button.is-text,
+.upload-page.theme-v4 .el-button.is-link,
+.upload-page.theme-v4 .el-button.is-text {
+  --el-button-text-color: var(--loft-teal-text);
+  --el-button-hover-text-color: var(--loft-teal-hover);
+  --el-button-hover-bg-color: var(--loft-teal-soft);
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--loft-teal-text) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+body.upload-theme-page .el-button.is-link:hover,
+body.upload-theme-page .el-button.is-text:hover,
+.upload-page.theme-v4 .el-button.is-link:hover,
+.upload-page.theme-v4 .el-button.is-text:hover {
+  background: var(--loft-teal-soft) !important;
+  background-color: var(--loft-teal-soft) !important;
+  color: var(--loft-teal-hover) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+body.upload-theme-page .el-button.is-link.el-button--danger,
+body.upload-theme-page .el-button.is-text.el-button--danger,
+.upload-page.theme-v4 .el-button.is-link.el-button--danger,
+.upload-page.theme-v4 .el-button.is-text.el-button--danger {
+  color: var(--loft-coral) !important;
+}
+
+body.upload-theme-page .el-button.is-link.el-button--danger:hover,
+body.upload-theme-page .el-button.is-text.el-button--danger:hover,
+.upload-page.theme-v4 .el-button.is-link.el-button--danger:hover,
+.upload-page.theme-v4 .el-button.is-text.el-button--danger:hover {
+  color: var(--loft-coral) !important;
+  filter: brightness(1.05);
+  background: var(--loft-coral-soft) !important;
+}
+
+body.upload-theme-page .el-button.is-link.el-button--primary,
+body.upload-theme-page .el-button.is-text.el-button--primary,
+.upload-page.theme-v4 .el-button.is-link.el-button--primary,
+.upload-page.theme-v4 .el-button.is-text.el-button--primary {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--loft-teal-text) !important;
+}
+
+/* 圆角基线 */
+body.upload-theme-page .el-button,
+.upload-page.theme-v4 .el-button {
+  border-radius: 10px !important;
+  font-weight: 500 !important;
+  font-family: var(--loft-font-body) !important;
+}
+
+body.upload-theme-page .el-button.is-circle,
+.upload-page.theme-v4 .el-button.is-circle {
+  border-radius: 50% !important;
+}
+
+/* ─── 进度条 ─── */
+.upload-page.theme-v4 .el-progress-bar__outer {
+  background: var(--loft-border);
+}
+
+.upload-page.theme-v4 .el-progress-bar__inner {
+  background: linear-gradient(90deg, var(--loft-teal), var(--loft-teal-bright));
+}
+
+/* ─── 单选按钮组（视图切换） ─── */
+.upload-page.theme-v4 .el-radio-group {
+  --el-fill-color-blank: var(--loft-glass-thin);
+}
+
+.upload-page.theme-v4 .el-radio-button__inner {
+  background: var(--loft-glass-thin);
+  border-color: var(--loft-border-strong);
+  color: var(--loft-ink-soft);
+  box-shadow: none;
+}
+
+.upload-page.theme-v4 .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background: var(--loft-teal-soft);
+  border-color: var(--loft-teal-border);
+  color: var(--loft-teal-text);
+  box-shadow: none;
+}
+
+/* ─── 复选框 ─── */
+body.upload-theme-page .el-checkbox__input.is-checked .el-checkbox__inner,
+.upload-page.theme-v4 .el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: var(--loft-teal);
+  border-color: var(--loft-teal);
+}
+
+body.upload-theme-page .el-checkbox__label,
+.upload-page.theme-v4 .el-checkbox__label {
+  color: var(--loft-ink-soft);
+}
+
+body.upload-theme-page .el-checkbox__input.is-checked + .el-checkbox__label,
+.upload-page.theme-v4 .el-checkbox__input.is-checked + .el-checkbox__label {
+  color: var(--loft-teal-text);
+}
+
+/* ─── 开关 ─── */
+body.upload-theme-page .el-switch.is-checked .el-switch__core,
+.upload-page.theme-v4 .el-switch.is-checked .el-switch__core {
+  background-color: var(--loft-teal);
+  border-color: var(--loft-teal);
+}
+
+/* ─── 加载遮罩 ─── */
+.upload-page.theme-v4 .el-loading-mask {
+  background-color: rgba(255, 255, 255, 0.35);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+body.is-dark-mode .upload-page.theme-v4 .el-loading-mask {
+  background-color: rgba(20, 21, 25, 0.45);
+}
+
+body.is-dark-mode .upload-page.theme-v4 .el-loading-spinner .path {
+  stroke: var(--loft-teal);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   对话框（append-to-body，需自带令牌）
+   ═══════════════════════════════════════════════════════════ */
+.upload-theme-dialog {
+  --loft-teal: #00695c;
+  --loft-teal-hover: #005248;
+  --loft-teal-bright: #00897b;
+  --loft-teal-soft: rgba(0, 105, 92, 0.10);
+  --loft-teal-softer: rgba(0, 105, 92, 0.05);
+  --loft-teal-border: rgba(0, 105, 92, 0.22);
+  --loft-teal-text: #00695c;
+  --loft-gold: #b8860b;
+  --loft-mint: #2a9d6e;
+  --loft-coral: #c4553a;
+  --loft-coral-soft: rgba(196, 85, 58, 0.10);
+  --loft-red: #c0392b;
+  --loft-ink: #1c1c1e;
+  --loft-ink-soft: #48484a;
+  --loft-ink-muted: #8a8a8e;
+  --loft-ink-faint: #b4b4b8;
+  --loft-bg-warm: rgba(255, 255, 255, 0.40);
+  --loft-surface: rgba(255, 255, 255, 0.70);
+  --loft-surface-2: rgba(255, 255, 255, 0.48);
+  --loft-glass-thin: rgba(255, 255, 255, 0.50);
+  --loft-glass-strong: rgba(255, 255, 255, 0.86);
+  --loft-blur: 24px;
+  --loft-blur-strong: 44px;
+  --loft-saturate: 180%;
+  --loft-border: rgba(0, 0, 0, 0.07);
+  --loft-border-strong: rgba(0, 0, 0, 0.12);
+  --loft-highlight: rgba(255, 255, 255, 0.72);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.30);
+  --loft-shadow: 0 10px 28px rgba(15, 23, 30, 0.14), 0 30px 70px rgba(15, 23, 30, 0.20);
+  --loft-shadow-sm: 0 1px 2px rgba(15, 23, 30, 0.05), 0 4px 12px rgba(15, 23, 30, 0.06);
+  --loft-radius: 14px;
+  --loft-radius-lg: 20px;
+  --loft-radius-xl: 24px;
+  --loft-font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --loft-font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'IBM Plex Mono', 'Menlo', monospace;
+  --el-color-primary: #00695c;
+  --el-color-primary-light-3: #33877d;
+  --el-color-primary-light-5: #66a6a0;
+  --el-color-primary-light-7: #99c4c0;
+  --el-color-primary-light-9: rgba(0, 105, 92, 0.10);
+  --el-color-primary-dark-2: #005248;
+  font-family: var(--loft-font-body);
+}
+
+body.is-dark-mode .upload-theme-dialog {
+  --loft-teal: #2bb3a3;
+  --loft-teal-hover: #38c6b6;
+  --loft-teal-bright: #35c4b3;
+  --loft-teal-soft: rgba(45, 212, 191, 0.16);
+  --loft-teal-softer: rgba(45, 212, 191, 0.08);
+  --loft-teal-border: rgba(45, 212, 191, 0.30);
+  --loft-teal-text: #4fd6c4;
+  --loft-gold: #e0a92e;
+  --loft-mint: #35c48b;
+  --loft-coral: #e57055;
+  --loft-coral-soft: rgba(229, 112, 85, 0.16);
+  --loft-red: #ff6b5e;
+  --loft-ink: #f5f5f7;
+  --loft-ink-soft: #d1d1d6;
+  --loft-ink-muted: #8e8e93;
+  --loft-ink-faint: #636366;
+  --loft-bg-warm: rgba(255, 255, 255, 0.05);
+  --loft-surface: rgba(48, 50, 56, 0.72);
+  --loft-surface-2: rgba(62, 64, 70, 0.55);
+  --loft-glass-thin: rgba(66, 68, 74, 0.48);
+  --loft-glass-strong: rgba(52, 54, 60, 0.88);
+  --loft-saturate: 170%;
+  --loft-border: rgba(255, 255, 255, 0.08);
+  --loft-border-strong: rgba(255, 255, 255, 0.15);
+  --loft-highlight: rgba(255, 255, 255, 0.14);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --loft-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 30px 70px rgba(0, 0, 0, 0.68);
+  --loft-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.45);
+  --el-color-primary: #2bb3a3;
+  --el-color-primary-light-3: #2a8a7f;
+  --el-color-primary-light-5: #256b64;
+  --el-color-primary-light-7: #204f4a;
+  --el-color-primary-light-9: rgba(45, 212, 191, 0.14);
+  --el-color-primary-dark-2: #38c6b6;
+}
+
+.upload-theme-dialog.el-dialog {
+  background: var(--loft-glass-strong) !important;
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate)) !important;
+  backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate)) !important;
+  border-radius: var(--loft-radius-lg) !important;
+  border: 0.5px solid var(--loft-border) !important;
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow) !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+}
+
+.upload-theme-dialog .el-dialog__header {
+  position: relative;
+  background: var(--loft-bg-warm) !important;
+  border-bottom: 0.5px solid var(--loft-border) !important;
+  padding: 15px 18px 13px !important;
+  margin: 0 !important;
+}
+
+.upload-theme-dialog .el-dialog__header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--loft-teal) 0%, var(--loft-teal-bright) 100%);
+}
+
+.upload-theme-dialog .el-dialog__title {
+  color: var(--loft-ink) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+  padding-left: 8px;
+}
+
+.upload-theme-dialog .el-dialog__headerbtn {
+  top: 13px !important;
+  right: 13px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.upload-theme-dialog .el-dialog__headerbtn .el-dialog__close {
+  color: var(--loft-ink-muted) !important;
+  font-size: 16px !important;
+  transition: color 0.15s ease;
+}
+
+.upload-theme-dialog .el-dialog__headerbtn:hover {
+  background: var(--loft-teal-soft) !important;
+}
+
+.upload-theme-dialog .el-dialog__headerbtn:hover .el-dialog__close {
+  color: var(--loft-teal-text) !important;
+}
+
+.upload-theme-dialog .el-dialog__body {
+  padding: 16px 18px !important;
+  color: var(--loft-ink-soft) !important;
+  background: transparent !important;
+}
+
+.upload-theme-dialog .el-dialog__footer {
+  padding: 11px 18px 15px !important;
+  background: var(--loft-bg-warm) !important;
+  border-top: 0.5px solid var(--loft-border) !important;
+}
+
+.upload-theme-dialog .el-dialog__footer .el-button {
+  border-radius: 9px !important;
+  font-weight: 500 !important;
+  font-family: var(--loft-font-body) !important;
+}
+
+.upload-theme-dialog .el-dialog__footer .el-button--default {
+  background: var(--loft-glass-thin) !important;
+  background-color: var(--loft-glass-thin) !important;
+  border: 0.5px solid var(--loft-border-strong) !important;
+  border-color: var(--loft-border-strong) !important;
+  color: var(--loft-ink-soft) !important;
+  box-shadow: none !important;
+}
+
+.upload-theme-dialog .el-dialog__footer .el-button--default:hover,
+.upload-theme-dialog .el-dialog__footer .el-button--default:focus {
+  background: var(--loft-teal-soft) !important;
+  background-color: var(--loft-teal-soft) !important;
+  border-color: var(--loft-teal-border) !important;
+  color: var(--loft-teal-text) !important;
+}
+
+.upload-theme-dialog .el-button--primary {
+  background: var(--loft-teal) !important;
+  background-color: var(--loft-teal) !important;
+  border: 0.5px solid var(--loft-teal) !important;
+  border-color: var(--loft-teal) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+}
+
+.upload-theme-dialog .el-button--primary:hover,
+.upload-theme-dialog .el-button--primary:focus {
+  background: var(--loft-teal-hover) !important;
+  background-color: var(--loft-teal-hover) !important;
+  border-color: var(--loft-teal-hover) !important;
+}
+
+.upload-theme-dialog .el-button--warning {
+  background: var(--loft-gold) !important;
+  border: 0.5px solid var(--loft-gold) !important;
+  color: #fff !important;
+}
+
+.upload-theme-dialog .el-button--success {
+  background: var(--loft-mint) !important;
+  border: 0.5px solid var(--loft-mint) !important;
+  color: #fff !important;
+}
+
+.upload-theme-dialog .el-button--danger {
+  background: var(--loft-coral) !important;
+  border: 0.5px solid var(--loft-coral) !important;
+  color: #fff !important;
+}
+
+.upload-theme-dialog .el-button.is-link,
+.upload-theme-dialog .el-button.is-text {
+  --el-button-text-color: var(--loft-teal-text);
+  --el-button-hover-text-color: var(--loft-teal-hover);
+  color: var(--loft-teal-text) !important;
+  background: transparent !important;
+}
+
+.upload-theme-dialog .el-button.is-link.el-button--danger,
+.upload-theme-dialog .el-button.is-text.el-button--danger {
+  color: var(--loft-coral) !important;
+}
+
+/* 对话框内输入 / 文本域 */
+.upload-theme-dialog .el-input__wrapper,
+.upload-theme-dialog .el-textarea__inner {
+  background: var(--loft-glass-thin) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 0.5px var(--loft-border-strong) inset !important;
+  transition: box-shadow 0.15s ease, background 0.15s ease !important;
+}
+
+.upload-theme-dialog .el-input__wrapper:hover,
+.upload-theme-dialog .el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--loft-teal-border) inset !important;
+}
+
+.upload-theme-dialog .el-input__wrapper.is-focus,
+.upload-theme-dialog .el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--loft-teal) inset, 0 0 0 3px var(--loft-teal-soft) !important;
+}
+
+.upload-theme-dialog .el-input__inner,
+.upload-theme-dialog .el-textarea__inner {
+  color: var(--loft-ink) !important;
+  font-family: var(--loft-font-body) !important;
+}
+
+.upload-theme-dialog .el-input__inner::placeholder,
+.upload-theme-dialog .el-textarea__inner::placeholder {
+  color: var(--loft-ink-faint) !important;
+}
+
+.upload-theme-dialog .el-input__prefix .el-icon {
+  color: var(--loft-teal-text) !important;
+}
+
+.upload-theme-dialog .el-form-item__label {
+  color: var(--loft-ink-soft) !important;
+  font-weight: 500 !important;
+}
+
+/* 对话框内选择器 */
+.upload-theme-dialog .el-select .el-select__wrapper {
+  background: var(--loft-glass-thin) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 0.5px var(--loft-border-strong) inset !important;
+}
+
+.upload-theme-dialog .el-select .el-select__wrapper.is-hovering:not(.is-focused) {
+  box-shadow: 0 0 0 1px var(--loft-teal-border) inset !important;
+}
+
+.upload-theme-dialog .el-select .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--loft-teal) inset, 0 0 0 3px var(--loft-teal-soft) !important;
+}
+
+.upload-theme-dialog .el-select__placeholder {
+  color: var(--loft-ink-faint) !important;
+}
+
+.upload-theme-dialog .el-select__selected-item {
+  color: var(--loft-ink) !important;
+}
+
+/* 对话框内开关 / 标签 / 进度 */
+.upload-theme-dialog .el-switch.is-checked .el-switch__core {
+  background: var(--loft-teal) !important;
+  border-color: var(--loft-teal) !important;
+}
+
+.upload-theme-dialog .el-tag {
+  border-radius: 999px !important;
+  font-family: var(--loft-font-body) !important;
+}
+
+.upload-theme-dialog .el-tag.el-tag--success {
+  --el-tag-bg-color: rgba(42, 157, 110, 0.14);
+  --el-tag-border-color: rgba(42, 157, 110, 0.28);
+  --el-tag-text-color: var(--loft-mint);
+}
+
+.upload-theme-dialog .el-tag.el-tag--warning {
+  --el-tag-bg-color: rgba(184, 134, 11, 0.14);
+  --el-tag-border-color: rgba(184, 134, 11, 0.28);
+  --el-tag-text-color: var(--loft-gold);
+}
+
+.upload-theme-dialog .el-tag.el-tag--danger {
+  --el-tag-bg-color: rgba(196, 85, 58, 0.14);
+  --el-tag-border-color: rgba(196, 85, 58, 0.28);
+  --el-tag-text-color: var(--loft-coral);
+}
+
+.upload-theme-dialog .el-tag.el-tag--info {
+  --el-tag-bg-color: var(--loft-surface-2);
+  --el-tag-border-color: var(--loft-border-strong);
+  --el-tag-text-color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .el-progress-bar__outer {
+  background: var(--loft-border-strong) !important;
+}
+
+.upload-theme-dialog .el-progress-bar__inner {
+  background: linear-gradient(90deg, var(--loft-teal), var(--loft-teal-bright)) !important;
+}
+
+.upload-theme-dialog .el-progress.is-success .el-progress-bar__inner {
+  background: var(--loft-mint) !important;
+}
+
+.upload-theme-dialog .el-progress.is-exception .el-progress-bar__inner {
+  background: var(--loft-coral) !important;
+}
+
+.upload-theme-dialog .dialog-form-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .dialog-form-hint.is-muted {
+  color: var(--loft-ink-muted);
+  opacity: 0.75;
+}
+
+.upload-theme-dialog .dialog-input-suffix {
+  color: var(--loft-ink-muted);
+  font-family: var(--loft-font-mono);
+  font-size: 12px;
+}
+
+/* ─── 各对话框内边距微调 ─── */
+.upload-dialog .el-dialog__body {
+  padding: 0 18px 8px !important;
+}
+
+.contact-dialog .el-dialog__body {
+  padding: 16px 18px 18px !important;
+}
+
+.help-dialog .el-dialog__body {
+  padding: 8px 16px 4px !important;
+}
+
+.help-dialog .el-dialog__footer {
+  padding: 6px 16px 12px !important;
+}
+
+.upload-dialog .el-dialog__footer {
+  padding: 11px 18px 15px !important;
+}
+
+/* ─── 上传对话框内容 ─── */
+.upload-theme-dialog .upload-dialog-title {
+  color: var(--loft-ink);
+}
+
+.upload-theme-dialog .upload-overall-header,
+.upload-theme-dialog .upload-toolbar {
+  color: var(--loft-ink-soft);
+}
+
+.upload-theme-dialog .upload-queue-list {
+  border: 0.5px solid var(--loft-border);
+  background: var(--loft-bg-warm);
+}
+
+.upload-theme-dialog .upload-queue-item {
+  border-bottom: 0.5px solid var(--loft-border);
+}
+
+.upload-theme-dialog .upload-queue-item:hover {
+  background: var(--loft-teal-soft);
+}
+
+.upload-theme-dialog .upload-item-name {
+  color: var(--loft-ink);
+}
+
+.upload-theme-dialog .upload-item-path,
+.upload-theme-dialog .upload-item-step,
+.upload-theme-dialog .upload-item-size {
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .upload-item-error {
+  color: var(--loft-red);
+}
+
+.upload-theme-dialog .upload-stats-bar {
+  background: var(--loft-surface-2);
+  color: var(--loft-ink-soft);
+}
+
+.upload-theme-dialog .upload-area {
+  background: var(--loft-glass-thin);
+  border: 2px dashed var(--loft-border-strong);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.upload-theme-dialog .upload-area:hover,
+.upload-theme-dialog .upload-area.dragover {
+  border-color: var(--loft-teal);
+  background: var(--loft-teal-soft);
+}
+
+.upload-theme-dialog .upload-area-icon {
+  color: var(--loft-teal-text);
+}
+
+.upload-theme-dialog .upload-text {
+  color: var(--loft-ink-soft);
+}
+
+.upload-theme-dialog .upload-hint {
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .upload-add-strip {
+  background: var(--loft-glass-thin);
+  border: 1px dashed var(--loft-border-strong);
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .upload-add-strip .el-icon {
+  color: var(--loft-teal-text);
+}
+
+.upload-theme-dialog .upload-add-strip-or {
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .upload-add-strip.dragover {
+  border-color: var(--loft-teal);
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+}
+
+.upload-theme-dialog .editor-container {
+  border: 0.5px solid var(--loft-border);
+}
+
+/* ─── 联系客服对话框 ─── */
+.contact-dialog-icon {
+  background: var(--loft-teal-soft) !important;
+  color: var(--loft-teal-text) !important;
+  box-shadow: var(--loft-glass-ring);
+}
+
+.upload-theme-dialog .contact-dialog-title {
+  color: var(--loft-ink);
+}
+
+.upload-theme-dialog .contact-dialog-subtitle,
+.upload-theme-dialog .qrcode-tip,
+.upload-theme-dialog .contact-desc,
+.upload-theme-dialog .contact-footer {
+  color: var(--loft-ink-soft);
+}
+
+.contact-card {
+  background: var(--loft-bg-warm) !important;
+  border: 0.5px solid var(--loft-border) !important;
+  box-shadow: var(--loft-glass-ring);
+}
+
+.upload-theme-dialog .contact-divider {
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .contact-divider::before,
+.upload-theme-dialog .contact-divider::after {
+  background: var(--loft-border);
+}
+
+.upload-theme-dialog .wechat-label {
+  color: var(--loft-ink-muted);
+}
+
+.upload-theme-dialog .wechat-id {
+  color: var(--loft-ink);
+}
+
+.wechat-id-row {
+  background: rgba(42, 157, 110, 0.08) !important;
+  border: 0.5px solid rgba(42, 157, 110, 0.22) !important;
+}
+
+.upload-theme-dialog .contact-footer {
+  background: var(--loft-surface-2);
+  color: var(--loft-ink-soft);
+}
+
+.upload-theme-dialog .contact-footer-icon {
+  color: var(--loft-ink-muted);
+}
+
+.qrcode-frame {
+  border: 0.5px solid var(--loft-border) !important;
+  box-shadow: var(--loft-shadow-sm);
+}
+
+/* ─── 教程对话框（墨绿强调） ─── */
+.help-rule-bar {
+  background: linear-gradient(120deg, var(--loft-teal) 0%, var(--loft-teal-bright) 100%);
+  color: #fff;
+  box-shadow: var(--loft-glass-ring);
+}
+
+.help-rule-domain code {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.help-step-pill {
+  color: var(--loft-ink);
+}
+
+.help-step-pill span {
+  background: var(--loft-teal);
+  color: #fff;
+}
+
+.help-step-arrow {
+  color: var(--loft-ink-faint);
+}
+
+.help-tree-good {
+  background: rgba(42, 157, 110, 0.10);
+  border: 0.5px solid rgba(42, 157, 110, 0.28);
+}
+
+.help-tree-bad {
+  background: var(--loft-coral-soft);
+  border: 0.5px solid rgba(196, 85, 58, 0.28);
+}
+
+.help-tree-good .help-tree-badge {
+  color: var(--loft-mint);
+}
+
+.help-tree-bad .help-tree-badge {
+  color: var(--loft-coral);
+}
+
+.help-tree {
+  background: var(--loft-glass-thin);
+}
+
+.help-tree-line {
+  color: var(--loft-ink);
+}
+
+.help-tree-branch {
+  color: var(--loft-ink-muted);
+}
+
+.help-tree-highlight {
+  color: var(--loft-teal-text);
+  font-weight: 600;
+}
+
+.help-tree-warn {
+  color: var(--loft-coral);
+}
+
+.help-tree-foot {
+  color: var(--loft-ink-soft);
+}
+
+.help-tree-foot code {
+  background: var(--loft-surface-2);
+}
+
+.help-path-mini.help-path-good {
+  background: rgba(42, 157, 110, 0.10);
+  border: 0.5px solid rgba(42, 157, 110, 0.28);
+  color: var(--loft-mint);
+}
+
+.help-path-mini.help-path-good code {
+  color: var(--loft-ink);
+  background: var(--loft-glass-thin);
+}
+
+.help-path-mini.help-path-bad {
+  background: var(--loft-coral-soft);
+  border: 0.5px solid rgba(196, 85, 58, 0.28);
+  color: var(--loft-coral);
+}
+
+.help-path-mini.help-path-bad code {
+  color: var(--loft-coral);
+  background: var(--loft-glass-thin);
+}
+
+.help-footnote {
+  color: var(--loft-ink-muted);
+}
+
+.help-footnote code {
+  background: var(--loft-surface-2);
+  color: var(--loft-ink-soft);
+}
+
+.upload-help-link {
+  color: var(--loft-ink-muted);
+}
+
+.upload-help-link:hover {
+  color: var(--loft-teal-text);
+}
+
+.upload-help-link code {
+  background: var(--loft-surface-2);
+  color: var(--loft-ink-soft);
+}
+
+.upload-help-link:hover code {
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+}
+
+/* ─── 到期提醒弹框 ─── */
+.expiry-alert-dialog .expiry-alert-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.expiry-alert-dialog .expiry-alert-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(184, 134, 11, 0.14);
+  color: var(--loft-gold);
+  font-size: 22px;
+  flex-shrink: 0;
+  box-shadow: var(--loft-glass-ring);
+}
+
+.expiry-alert-dialog .expiry-alert-icon.is-expired {
+  background: var(--loft-coral-soft);
+  color: var(--loft-red);
+}
+
+.expiry-alert-dialog .expiry-alert-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--loft-ink);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.expiry-alert-dialog .expiry-alert-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--loft-ink-muted);
+}
+
+.expiry-alert-dialog .expiry-alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.expiry-alert-dialog .expiry-alert-status-card {
+  padding: 14px 16px;
+  border-radius: var(--loft-radius);
+  border: 0.5px solid rgba(184, 134, 11, 0.22);
+  background: linear-gradient(135deg, rgba(184, 134, 11, 0.14) 0%, var(--loft-glass-thin) 100%);
+  box-shadow: var(--loft-glass-ring);
+}
+
+.expiry-alert-dialog .expiry-alert-status-card.is-expired {
+  border-color: rgba(196, 85, 58, 0.26);
+  background: linear-gradient(135deg, rgba(196, 85, 58, 0.14) 0%, var(--loft-glass-thin) 100%);
+}
+
+.expiry-alert-dialog .expiry-alert-status-label {
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+  line-height: 1.4;
+}
+
+.expiry-alert-dialog .expiry-alert-status-value {
+  margin-top: 6px;
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: var(--loft-ink);
+}
+
+.expiry-alert-dialog .expiry-alert-status-card.is-expired .expiry-alert-status-value {
+  color: var(--loft-red);
+}
+
+.expiry-alert-dialog .expiry-alert-status-meta {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--loft-ink-soft);
+  line-height: 1.5;
+}
+
+.expiry-alert-dialog .expiry-alert-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--loft-ink-soft);
+}
+
+.expiry-alert-dialog .expiry-alert-text strong {
+  color: var(--loft-gold);
+  font-weight: 700;
+}
+
+.expiry-alert-dialog .expiry-alert-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--loft-radius);
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.expiry-alert-dialog .expiry-alert-note .el-icon {
+  margin-top: 2px;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.expiry-alert-dialog .expiry-alert-dismiss {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--loft-radius);
+  background: var(--loft-bg-warm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.expiry-alert-dialog .expiry-alert-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.expiry-alert-dialog .expiry-alert-footer .el-button {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .expiry-alert-dialog .expiry-alert-status-value {
+    font-size: 22px;
+  }
+  .expiry-alert-dialog .expiry-alert-footer {
+    flex-direction: column-reverse;
+  }
+  .expiry-alert-dialog .expiry-alert-footer .el-button {
+    width: 100%;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   遮罩 / 确认框（MessageBox）/ 消息提示
+   ═══════════════════════════════════════════════════════════ */
+body.upload-theme-page .el-overlay {
+  background-color: rgba(15, 23, 30, 0.30) !important;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+body.upload-theme-page .el-message-box {
+  width: min(420px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  padding: 0 !important;
+  border-radius: var(--loft-radius-lg) !important;
+  border: 0.5px solid var(--loft-border) !important;
+  background: var(--loft-glass-strong) !important;
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate)) !important;
+  backdrop-filter: blur(var(--loft-blur-strong)) saturate(var(--loft-saturate)) !important;
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow) !important;
+  font-family: var(--loft-font-body) !important;
+  overflow: hidden;
+}
+
+body.upload-theme-page .el-message-box__header {
+  position: relative;
+  padding: 15px 18px 9px !important;
+  background: var(--loft-bg-warm) !important;
+  border-bottom: 0.5px solid var(--loft-border) !important;
+}
+
+body.upload-theme-page .el-message-box__header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--loft-teal) 0%, var(--loft-teal-bright) 100%);
+}
+
+body.upload-theme-page .el-message-box__title {
+  padding-left: 8px;
+  color: var(--loft-ink) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+}
+
+body.upload-theme-page .el-message-box__headerbtn {
+  top: 13px !important;
+  right: 13px !important;
+}
+
+body.upload-theme-page .el-message-box__headerbtn .el-message-box__close {
+  color: var(--loft-ink-muted) !important;
+}
+
+body.upload-theme-page .el-message-box__headerbtn:hover .el-message-box__close {
+  color: var(--loft-teal-text) !important;
+}
+
+body.upload-theme-page .el-message-box__content {
+  padding: 15px 18px 6px !important;
+  color: var(--loft-ink-soft) !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+
+body.upload-theme-page .el-message-box__message {
+  color: var(--loft-ink-soft) !important;
+}
+
+body.upload-theme-page .el-message-box__status {
+  color: var(--loft-teal-text) !important;
+}
+
+body.upload-theme-page .el-message-box__status.el-message-box-icon--warning {
+  color: var(--loft-gold) !important;
+}
+
+body.upload-theme-page .el-message-box__status.el-message-box-icon--error {
+  color: var(--loft-coral) !important;
+}
+
+body.upload-theme-page .el-message-box__status.el-message-box-icon--success {
+  color: var(--loft-mint) !important;
+}
+
+body.upload-theme-page .el-message-box__input {
+  padding-top: 8px !important;
+}
+
+body.upload-theme-page .el-message-box__input .el-input__wrapper {
+  background: var(--loft-glass-thin) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 0.5px var(--loft-border-strong) inset !important;
+}
+
+body.upload-theme-page .el-message-box__input .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--loft-teal) inset, 0 0 0 3px var(--loft-teal-soft) !important;
+}
+
+body.upload-theme-page .el-message-box__input .el-input__inner {
+  color: var(--loft-ink) !important;
+}
+
+body.upload-theme-page .el-message-box__btns {
+  padding: 11px 18px 15px !important;
+  background: var(--loft-bg-warm) !important;
+  border-top: 0.5px solid var(--loft-border) !important;
+}
+
+body.upload-theme-page .el-message-box__btns .el-button {
+  border-radius: 9px !important;
+  font-weight: 500 !important;
+  font-family: var(--loft-font-body) !important;
+}
+
+body.upload-theme-page .el-message-box__btns .el-button--default {
+  background: var(--loft-glass-thin) !important;
+  background-color: var(--loft-glass-thin) !important;
+  border: 0.5px solid var(--loft-border-strong) !important;
+  border-color: var(--loft-border-strong) !important;
+  color: var(--loft-ink-soft) !important;
+  box-shadow: none !important;
+}
+
+body.upload-theme-page .el-message-box__btns .el-button--default:hover,
+body.upload-theme-page .el-message-box__btns .el-button--default:focus {
+  background: var(--loft-teal-soft) !important;
+  background-color: var(--loft-teal-soft) !important;
+  border-color: var(--loft-teal-border) !important;
+  color: var(--loft-teal-text) !important;
+}
+
+body.upload-theme-page .el-message-box__btns .el-button--primary {
+  background: var(--loft-teal) !important;
+  background-color: var(--loft-teal) !important;
+  border: 0.5px solid var(--loft-teal) !important;
+  border-color: var(--loft-teal) !important;
+  color: #fff !important;
+  box-shadow: var(--loft-glass-ring) !important;
+}
+
+body.upload-theme-page .el-message-box__btns .el-button--primary:hover,
+body.upload-theme-page .el-message-box__btns .el-button--primary:focus {
+  background: var(--loft-teal-hover) !important;
+  background-color: var(--loft-teal-hover) !important;
+  border-color: var(--loft-teal-hover) !important;
+}
+
+/* 消息提示 */
+body.upload-theme-page .el-message {
+  border-radius: 12px !important;
+  border: 0.5px solid var(--loft-border) !important;
+  background: var(--loft-glass-strong) !important;
+  -webkit-backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate)) !important;
+  backdrop-filter: blur(var(--loft-blur)) saturate(var(--loft-saturate)) !important;
+  box-shadow: var(--loft-glass-ring), var(--loft-shadow-sm) !important;
+  font-family: var(--loft-font-body) !important;
+  padding: 10px 15px !important;
+}
+
+body.upload-theme-page .el-message .el-message__content {
+  color: var(--loft-ink) !important;
+  font-size: 13px !important;
+}
+
+body.upload-theme-page .el-message--success .el-message__icon {
+  color: var(--loft-mint) !important;
+}
+
+body.upload-theme-page .el-message--warning .el-message__icon {
+  color: var(--loft-gold) !important;
+}
+
+body.upload-theme-page .el-message--error .el-message__icon {
+  color: var(--loft-coral) !important;
+}
+
+body.upload-theme-page .el-message--info .el-message__icon {
+  color: var(--loft-teal-text) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   右键菜单
+   ═══════════════════════════════════════════════════════════ */
+.loft-context-menu {
+  --loft-teal-text: #00695c;
+  --loft-teal-soft: rgba(0, 105, 92, 0.10);
+  --loft-teal-border: rgba(0, 105, 92, 0.22);
+  --loft-coral: #c4553a;
+  --loft-coral-soft: rgba(196, 85, 58, 0.10);
+  --loft-ink: #1c1c1e;
+  --loft-ink-muted: #8a8a8e;
+  --loft-border: rgba(0, 0, 0, 0.07);
+  --loft-glass-strong: rgba(255, 255, 255, 0.86);
+  --loft-highlight: rgba(255, 255, 255, 0.72);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.30);
+  --loft-font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'PingFang SC', 'Noto Sans SC', sans-serif;
+
+  position: fixed;
+  z-index: 3000;
+  width: 186px;
+  background: var(--loft-glass-strong);
+  -webkit-backdrop-filter: blur(var(--loft-blur-strong, 40px)) saturate(180%);
+  backdrop-filter: blur(var(--loft-blur-strong, 40px)) saturate(180%);
+  border: 0.5px solid var(--loft-border);
+  border-radius: 14px;
+  box-shadow: var(--loft-glass-ring), 0 12px 32px rgba(15, 23, 30, 0.18), 0 2px 8px rgba(15, 23, 30, 0.08);
+  overflow: hidden;
+  font-family: var(--loft-font-body);
+  transform-origin: top left;
+  user-select: none;
+}
+
+.loft-ctx-enter-active,
+.loft-ctx-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.loft-ctx-enter-from,
+.loft-ctx-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(-4px);
+}
+
+.loft-ctx-header {
+  padding: 7px 12px;
+  border-bottom: 0.5px solid var(--loft-border);
+  background: rgba(0, 105, 92, 0.05);
+}
+
+.loft-ctx-header-name {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--loft-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.loft-ctx-body {
+  padding: 5px;
+  max-height: min(320px, calc(100vh - 80px));
+  overflow-y: auto;
+}
+
+.loft-ctx-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.loft-ctx-body::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 128, 0.35);
+  border-radius: 5px;
+}
+
+.loft-ctx-divider {
+  height: 0.5px;
+  margin: 4px 7px;
+  background: var(--loft-border);
+}
+
+.loft-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--loft-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.loft-ctx-item .el-icon {
+  width: 15px;
+  height: 15px;
+  font-size: 14px;
+  color: var(--loft-teal-text);
+  flex-shrink: 0;
+}
+
+.loft-ctx-item span {
+  flex: 1;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loft-ctx-item:hover {
+  background: var(--loft-teal-soft);
+}
+
+.loft-ctx-item.is-danger {
+  color: var(--loft-coral);
+}
+
+.loft-ctx-item.is-danger .el-icon {
+  color: var(--loft-coral);
+}
+
+.loft-ctx-item.is-danger:hover {
+  background: var(--loft-coral-soft);
+}
+
+body.is-dark-mode .loft-context-menu {
+  --loft-teal-text: #4fd6c4;
+  --loft-teal-soft: rgba(45, 212, 191, 0.16);
+  --loft-teal-border: rgba(45, 212, 191, 0.30);
+  --loft-coral: #e57055;
+  --loft-coral-soft: rgba(229, 112, 85, 0.16);
+  --loft-ink: #f5f5f7;
+  --loft-ink-muted: #8e8e93;
+  --loft-border: rgba(255, 255, 255, 0.08);
+  --loft-glass-strong: rgba(48, 50, 56, 0.86);
+  --loft-highlight: rgba(255, 255, 255, 0.14);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  box-shadow: var(--loft-glass-ring), 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+body.is-dark-mode .loft-ctx-header {
+  background: rgba(45, 212, 191, 0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   「操作」下拉菜单（与右键菜单统一）
+   ═══════════════════════════════════════════════════════════ */
+.loft-file-dropdown.el-popper {
+  --loft-teal-text: #00695c;
+  --loft-teal-soft: rgba(0, 105, 92, 0.10);
+  --loft-coral: #c4553a;
+  --loft-coral-soft: rgba(196, 85, 58, 0.10);
+  --loft-ink: #1c1c1e;
+  --loft-border: rgba(0, 0, 0, 0.07);
+  --loft-glass-strong: rgba(255, 255, 255, 0.86);
+  --loft-highlight: rgba(255, 255, 255, 0.72);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.30);
+  --el-bg-color-overlay: transparent;
+
+  border: 0.5px solid var(--loft-border) !important;
+  border-radius: 14px !important;
+  background: var(--loft-glass-strong) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(180%) !important;
+  backdrop-filter: blur(40px) saturate(180%) !important;
+  box-shadow: var(--loft-glass-ring), 0 12px 32px rgba(15, 23, 30, 0.18), 0 2px 8px rgba(15, 23, 30, 0.08) !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.loft-file-dropdown .el-popper__arrow::before {
+  border-color: var(--loft-border) !important;
+  background: var(--loft-glass-strong) !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 5px !important;
+  min-width: 184px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'PingFang SC', 'Noto Sans SC', sans-serif;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  padding: 6px 9px !important;
+  margin: 0 !important;
+  border-radius: 8px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  color: var(--loft-ink) !important;
+  line-height: 1.3 !important;
+  transition: background 0.12s ease !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item .el-icon {
+  width: 15px !important;
+  height: 15px !important;
+  margin-right: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-sizing: border-box;
+  font-size: 14px !important;
+  color: var(--loft-teal-text) !important;
+  flex-shrink: 0;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item.is-active-sort {
+  background: var(--loft-teal-soft) !important;
+  color: var(--loft-teal-text) !important;
+  font-weight: 600 !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item:not(.is-disabled):hover,
+.loft-file-dropdown .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: var(--loft-teal-soft) !important;
+  color: var(--loft-ink) !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item.is-disabled {
+  opacity: 0.45;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item--divided {
+  position: relative;
+  margin-top: 8px !important;
+  border-top: none !important;
+  padding-top: 6px !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item--divided::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 9px;
+  right: 9px;
+  height: 0.5px;
+  background: var(--loft-border);
+}
+
+.loft-file-dropdown .el-dropdown-menu__item.loft-dd-danger {
+  color: var(--loft-coral) !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item.loft-dd-danger .el-icon {
+  color: var(--loft-coral) !important;
+}
+
+.loft-file-dropdown .el-dropdown-menu__item.loft-dd-danger:not(.is-disabled):hover,
+.loft-file-dropdown .el-dropdown-menu__item.loft-dd-danger:not(.is-disabled):focus {
+  background: var(--loft-coral-soft) !important;
+  color: var(--loft-coral) !important;
+}
+
+body.is-dark-mode .loft-file-dropdown.el-popper {
+  --loft-teal-text: #4fd6c4;
+  --loft-teal-soft: rgba(45, 212, 191, 0.16);
+  --loft-coral: #e57055;
+  --loft-coral-soft: rgba(229, 112, 85, 0.16);
+  --loft-ink: #f5f5f7;
+  --loft-border: rgba(255, 255, 255, 0.08);
+  --loft-glass-strong: rgba(48, 50, 56, 0.86);
+  --loft-highlight: rgba(255, 255, 255, 0.14);
+  --loft-glass-ring: inset 0 1px 0 var(--loft-highlight), inset 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  box-shadow: var(--loft-glass-ring), 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   下拉选择弹层（el-select，teleport 到 body）— 玻璃化 + 明暗
+   ═══════════════════════════════════════════════════════════ */
+body.upload-theme-page .el-select-dropdown.el-popper,
+.el-select-dropdown.upload-theme-select {
+  border: 0.5px solid var(--loft-border, rgba(0, 0, 0, 0.07)) !important;
+  border-radius: 12px !important;
+  background: var(--loft-glass-strong, rgba(255, 255, 255, 0.86)) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+  backdrop-filter: blur(32px) saturate(180%) !important;
+  box-shadow: var(--loft-glass-ring), 0 10px 30px rgba(15, 23, 30, 0.16) !important;
+}
+
+body.upload-theme-page .el-select-dropdown .el-select-dropdown__item {
+  color: var(--loft-ink, #1c1c1e);
+  border-radius: 8px;
+  margin: 2px 5px;
+  font-size: 13px;
+}
+
+body.upload-theme-page .el-select-dropdown .el-select-dropdown__item.is-hovering {
+  background: var(--loft-teal-soft, rgba(0, 105, 92, 0.10));
+  color: var(--loft-teal-text, #00695c);
+}
+
+body.upload-theme-page .el-select-dropdown .el-select-dropdown__item.is-selected {
+  color: var(--loft-teal-text, #00695c);
+  font-weight: 600;
+  background: var(--loft-teal-soft, rgba(0, 105, 92, 0.10));
+}
+
+body.upload-theme-page .el-select-dropdown .el-popper__arrow::before {
+  border-color: var(--loft-border, rgba(0, 0, 0, 0.07)) !important;
+  background: var(--loft-glass-strong, rgba(255, 255, 255, 0.86)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   滚动条
+   ═══════════════════════════════════════════════════════════ */
+.upload-page.theme-v4 *::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.upload-page.theme-v4 *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.upload-page.theme-v4 *::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 128, 0.32);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.upload-page.theme-v4 *::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 128, 0.5);
+  background-clip: padding-box;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   响应式适配
+   ═══════════════════════════════════════════════════════════ */
+/* 平板 / 窄屏：窗口改为纵向堆叠，侧栏转为横向工具行 */
+@media (max-width: 900px) {
+  .upload-page.theme-v4 .auth-card {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-page.theme-v4 .auth-brand-pane {
+    padding: 30px 26px;
+  }
+
+  .upload-page.theme-v4 .auth-brand-features {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+  }
+
+  .upload-page.theme-v4 .workspace {
+    height: auto;
+    min-height: 100vh;
+    padding: 16px;
+  }
+
+  .upload-page.theme-v4 .mac-window {
+    grid-template-columns: 1fr;
+    max-width: 720px;
+  }
+
+  .upload-page.theme-v4 .mac-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 0.5px solid var(--loft-border);
+    overflow: visible;
+  }
+
+  .upload-page.theme-v4 .mac-traffic {
+    display: none;
+  }
+
+  .upload-page.theme-v4 .mac-brand {
+    flex: 1 1 200px;
+    padding: 0;
+  }
+
+  .upload-page.theme-v4 .mac-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 1 100%;
+  }
+
+  .upload-page.theme-v4 .mac-nav-label {
+    display: none;
+  }
+
+  .upload-page.theme-v4 .mac-nav-item {
+    width: auto;
+    flex: 1 1 calc(50% - 3px);
+    justify-content: center;
+    min-height: 42px;
+  }
+
+  .upload-page.theme-v4 .mac-nav-item.is-primary {
+    margin-bottom: 0;
+  }
+
+  .upload-page.theme-v4 .mac-sidebar-spacer {
+    display: none;
+  }
+
+  .upload-page.theme-v4 .mac-sidebar .side-summary {
+    flex: 1 1 100%;
+  }
+
+  .upload-page.theme-v4 .file-list {
+    min-height: 52vh;
+  }
+}
+
+/* 手机：工具栏换行，导航两列 */
+@media (max-width: 600px) {
+  .upload-page.theme-v4 .workspace {
+    padding: 10px;
+  }
+
+  .upload-page.theme-v4 .mac-window {
+    border-radius: var(--loft-radius-lg);
+  }
+
+  .upload-page.theme-v4 .mac-toolbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .upload-page.theme-v4 .mac-toolbar-title {
+    max-width: 140px;
+  }
+
+  .upload-page.theme-v4 .mac-search {
+    flex: 1 1 100%;
+    order: 5;
+  }
+
+  .upload-page.theme-v4 .mac-search .file-search-option {
+    flex-shrink: 0;
+  }
+
+  .upload-page.theme-v4 .mac-nav-item {
+    flex: 1 1 calc(50% - 3px);
+    min-height: 44px;
+  }
+
+  .upload-page.theme-v4 .auth-form-pane {
+    padding: 32px 24px;
+  }
+
+  .upload-page.theme-v4 .mac-statusbar {
+    justify-content: center;
+  }
+
+  .upload-page.theme-v4 .file-pagination {
+    justify-content: center;
+  }
+
+  .upload-page.theme-v4 .mac-statusbar .file-pagination .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 8px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   深色模式收尾：降低玻璃内高光在暗色下的溢出感
+   （大部分组件通过令牌级联自动适配，这里仅处理非变量项）
+   ═══════════════════════════════════════════════════════════ */
+body.is-dark-mode .upload-page.theme-v4 .file-pagination .el-pager li,
+body.is-dark-mode .upload-page.theme-v4 .file-pagination .el-pagination button {
+  background: transparent;
+  color: var(--loft-ink-soft);
+}
+
+body.is-dark-mode .upload-page.theme-v4 .qrcode-frame {
+  background: #fff;
+}
+
+body.is-dark-mode .upload-page.theme-v4 *::-webkit-scrollbar-thumb {
+  background: rgba(160, 160, 168, 0.28);
+  background-clip: padding-box;
+}
+
+body.is-dark-mode .upload-page.theme-v4 *::-webkit-scrollbar-thumb:hover {
+  background: rgba(160, 160, 168, 0.45);
+  background-clip: padding-box;
+}
+
+/* ─── 移动到文件夹对话框 ─── */
+.move-dialog .move-dialog-summary {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--loft-ink-soft);
+}
+
+.move-dialog .move-dialog-summary strong {
+  color: var(--loft-teal-text);
+  font-weight: 600;
+}
+
+.move-dialog .move-folder-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 0.5px solid var(--loft-border);
+  border-radius: var(--loft-radius);
+  background: var(--loft-bg-warm);
+  padding: 4px;
+}
+
+.move-dialog .move-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--loft-ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s ease;
+}
+
+.move-dialog .move-folder-item .el-icon {
+  font-size: 14px;
+  color: var(--loft-teal-text);
+  flex-shrink: 0;
+}
+
+.move-dialog .move-folder-item:hover:not(.is-disabled) {
+  background: var(--loft-teal-softer);
+}
+
+.move-dialog .move-folder-item.selected {
+  background: var(--loft-teal-soft);
+  color: var(--loft-teal-text);
+  font-weight: 600;
+}
+
+.move-dialog .move-folder-item.is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.move-dialog .move-folder-empty {
+  padding: 20px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--loft-ink-muted);
+}
+
+.move-dialog .move-dialog-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--loft-coral);
+}
+
+/* ─── 深色模式手动切换按钮（侧栏底部） ─── */
+.upload-page.theme-v4 .mac-theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  margin-top: 8px;
+  border: 0.5px solid var(--loft-border);
+  border-radius: 9px;
+  background: var(--loft-glass-thin);
+  color: var(--loft-ink-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--loft-font-body);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.upload-page.theme-v4 .mac-theme-toggle .el-icon {
+  font-size: 15px;
+  color: var(--loft-teal-text);
+  flex-shrink: 0;
+}
+
+.upload-page.theme-v4 .mac-theme-toggle:hover {
+  background: var(--loft-teal-soft);
+  border-color: var(--loft-teal-border);
+  color: var(--loft-teal-text);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   文件预览对话框样式（图片/视频/音频/PDF/Markdown）
+   ═══════════════════════════════════════════════════════════ */
+
+.upload-page.theme-v4 .preview-dialog .el-dialog__body {
+  padding: 0;
+}
+
+.upload-page.theme-v4 .preview-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--loft-surface-2);
+  border-radius: 0 0 16px 16px;
+}
+
+/* 图片预览 */
+.upload-page.theme-v4 .preview-image {
+  max-width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
+}
+
+/* 视频预览 */
+.upload-page.theme-v4 .preview-video {
+  max-width: 100%;
+  max-height: 75vh;
+  outline: none;
+  background: #000;
+  border-radius: 0 0 16px 16px;
+}
+
+/* 音频预览 */
+.upload-page.theme-v4 .preview-audio-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 60px;
+  min-width: 360px;
+}
+
+.upload-page.theme-v4 .preview-audio-icon {
+  font-size: 64px;
+  line-height: 1;
+}
+
+.upload-page.theme-v4 .preview-audio-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--loft-ink);
+  text-align: center;
+  max-width: 280px;
+  word-break: break-all;
+}
+
+.upload-page.theme-v4 .preview-audio {
+  width: 100%;
+  max-width: 320px;
+  outline: none;
+}
+
+/* PDF 预览 */
+.upload-page.theme-v4 .preview-pdf {
+  width: 80vw;
+  max-width: 900px;
+  height: 75vh;
+  border: none;
+  border-radius: 0 0 16px 16px;
+}
+
+/* Markdown 预览 */
+.upload-page.theme-v4 .preview-markdown {
+  width: 100%;
+  max-width: 800px;
+  max-height: 75vh;
+  overflow: auto;
+  padding: 24px 32px;
+  background: var(--loft-glass-strong);
+  text-align: left;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body {
+  font-family: var(--loft-font-body);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body h1,
+.upload-page.theme-v4 .preview-markdown .md-body h2,
+.upload-page.theme-v4 .preview-markdown .md-body h3,
+.upload-page.theme-v4 .preview-markdown .md-body h4,
+.upload-page.theme-v4 .preview-markdown .md-body h5,
+.upload-page.theme-v4 .preview-markdown .md-body h6 {
+  margin: 1.2em 0 0.6em;
+  font-weight: 600;
+  color: var(--loft-ink);
+  line-height: 1.3;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body h1 { font-size: 1.8em; }
+.upload-page.theme-v4 .preview-markdown .md-body h2 { font-size: 1.5em; }
+.upload-page.theme-v4 .preview-markdown .md-body h3 { font-size: 1.25em; }
+.upload-page.theme-v4 .preview-markdown .md-body h4 { font-size: 1.1em; }
+
+.upload-page.theme-v4 .preview-markdown .md-body p {
+  margin: 0.8em 0;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body a {
+  color: var(--loft-teal);
+  text-decoration: none;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body a:hover {
+  text-decoration: underline;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body ul {
+  margin: 0.8em 0;
+  padding-left: 1.8em;
+  list-style: disc;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body li {
+  margin: 0.3em 0;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body blockquote {
+  margin: 0.8em 0;
+  padding: 0.6em 1em;
+  border-left: 3px solid var(--loft-teal);
+  background: var(--loft-teal-softer);
+  color: var(--loft-ink-soft);
+  border-radius: 0 6px 6px 0;
+}
+
+.upload-page.theme-v4 .preview-markdown .md-body hr {
+  margin: 1.5em 0;
+  border: none;
+  border-top: 1px solid var(--loft-border);
+}
+
+.upload-page.theme-v4 .preview-markdown .md-code-block {
+  margin: 1em 0;
+  padding: 14px 16px;
+  background: var(--loft-surface-2);
+  border: 1px solid var(--loft-border);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--loft-ink);
+}
+
+.upload-page.theme-v4 .preview-markdown .md-inline-code {
+  padding: 2px 6px;
+  background: var(--loft-surface-2);
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+  font-size: 0.9em;
+  color: var(--loft-coral);
+}
+
+.upload-page.theme-v4 .preview-markdown .md-img {
+  max-width: 100%;
+  margin: 1em 0;
+  border-radius: 6px;
+}
+
+/* 深色模式 Markdown 预览 */
+body.is-dark-mode .upload-page.theme-v4 .preview-markdown .md-code-block {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: var(--loft-border);
+}
+
+body.is-dark-mode .upload-page.theme-v4 .preview-markdown .md-inline-code {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+
+/* Quick Look 代码/文本预览 */
+.upload-page.theme-v4 .preview-code {
+  width: 100%;
+  max-width: 800px;
+  max-height: 75vh;
+  overflow: auto;
+  padding: 0;
+  background: var(--loft-glass-strong);
+  text-align: left;
+}
+
+.upload-page.theme-v4 .preview-code .ql-code-block {
+  margin: 0;
+  padding: 20px 24px;
+  background: transparent;
+  border: none;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--loft-ink);
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+.upload-page.theme-v4 .preview-code .ql-code-block code {
+  font-family: inherit;
+  background: none;
+  padding: 0;
+}
+
+body.is-dark-mode .upload-page.theme-v4 .preview-code .ql-code-block {
+  color: var(--loft-ink);
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   图片画廊模式导航
+   ═══════════════════════════════════════════════════════════ */
+
+.upload-page.theme-v4 .preview-content {
+  position: relative;
+}
+
+.upload-page.theme-v4 .gallery-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: var(--loft-glass-strong);
+  color: var(--loft-ink);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s, transform 0.15s;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.upload-page.theme-v4 .gallery-nav:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--loft-glass-elev);
+}
+
+.upload-page.theme-v4 .gallery-nav:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.upload-page.theme-v4 .gallery-nav:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.upload-page.theme-v4 .gallery-prev {
+  left: 12px;
+}
+
+.upload-page.theme-v4 .gallery-next {
+  right: 12px;
+}
+
+.upload-page.theme-v4 .gallery-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 4px;
+}
+
+.upload-page.theme-v4 .gallery-counter {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--loft-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-page.theme-v4 .gallery-hint {
+  font-size: 11px;
+  color: var(--loft-ink-muted);
+}
+
+/* 深色模式 */
+body.is-dark-mode .upload-page.theme-v4 .gallery-nav {
+  background: var(--loft-glass);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.is-dark-mode .upload-page.theme-v4 .gallery-nav:hover:not(:disabled) {
+  background: var(--loft-glass-strong);
+}

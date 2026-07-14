@@ -1,5 +1,5 @@
 <template>
-  <div class="upload-page theme-v3">
+  <div class="upload-page theme-v4">
     <!-- 授权页 -->
     <div v-if="!authorized" class="auth-container">
       <div class="auth-card">
@@ -47,42 +47,44 @@
 
     <!-- 文件管理工作区 -->
     <div v-else class="workspace">
-      <header class="top-bar">
-        <div class="top-bar-brand">
-          <div class="brand-logo"><el-icon><FolderOpened /></el-icon></div>
-          <div class="brand-text">
-            <div class="brand-name">文件空间</div>
-            <div class="brand-domain" @click="copyDomain" title="点击复制">
-              {{ siteUrl }}
-              <el-icon style="font-size:13px"><DocumentCopy /></el-icon>
-            </div>
-          </div>
-        </div>
-        <div class="top-bar-actions">
-          <el-button @click="logout"><span class="btn-text">退出</span></el-button>
-        </div>
-      </header>
-
       <div v-if="isPageDragOver" class="page-drag-overlay">
         <div class="page-drag-tip">松开鼠标添加文件</div>
       </div>
 
-      <!-- 续费提醒 -->
-      <div v-if="showRenewAlert" class="renew-banner" :class="{ 'is-expired': isExpired }">
-        <el-icon class="renew-banner-icon"><WarningFilled v-if="isExpired" /><Clock v-else /></el-icon>
-        <div class="renew-banner-body">
-          <div class="renew-banner-title">{{ isExpired ? '服务已过期' : '服务即将到期' }}</div>
-          <div class="renew-banner-text">
-            <template v-if="isExpired">请尽快联系客服续费，避免影响使用。</template>
-            <template v-else>还剩 <em>{{ remainingDays }}</em> 天 · 到期 {{ formatExpireDate(expireAt) }}</template>
+      <div class="mac-window">
+        <!-- 侧边栏（Finder 源列表） -->
+        <aside class="mac-sidebar">
+          <div class="mac-traffic">
+            <span class="mac-traffic-dot is-red"></span>
+            <span class="mac-traffic-dot is-yellow"></span>
+            <span class="mac-traffic-dot is-green"></span>
           </div>
-        </div>
-        <el-button type="primary" @click="showContactDialog = true">立即续费</el-button>
-      </div>
-
-      <div class="workspace-grid">
-        <!-- 左侧指标栏 -->
-        <aside class="side-panel">
+          <div class="mac-brand">
+            <div class="mac-brand-row">
+              <div class="brand-logo"><el-icon><FolderOpened /></el-icon></div>
+              <div class="brand-name">文件空间</div>
+            </div>
+            <div class="brand-domain" @click="copyDomain" :title="siteUrl + ' · 点击复制'">
+              <span class="brand-domain-text">{{ siteUrl }}</span>
+              <el-icon style="font-size:12px"><DocumentCopy /></el-icon>
+            </div>
+          </div>
+          <nav class="mac-nav">
+            <div class="mac-nav-label">操作</div>
+            <button type="button" class="mac-nav-item is-primary" @click="showUploadDialog = true">
+              <el-icon><Upload /></el-icon><span>上传文件</span>
+            </button>
+            <button type="button" class="mac-nav-item" @click="showContactDialog = true">
+              <el-icon><Service /></el-icon><span>联系客服</span>
+            </button>
+            <button type="button" class="mac-nav-item" @click="showTutorialDialog = true">
+              <el-icon><QuestionFilled /></el-icon><span>使用教程</span>
+            </button>
+            <button type="button" class="mac-nav-item" @click="openWebsite">
+              <el-icon><Link /></el-icon><span>访问网站</span>
+            </button>
+          </nav>
+          <div class="mac-sidebar-spacer"></div>
           <div class="side-summary">
             <div class="side-summary-block">
               <div class="side-summary-head">
@@ -108,79 +110,121 @@
             </div>
             <div v-if="expiryHint" class="side-summary-foot">{{ expiryHint }}</div>
           </div>
-          <div class="side-actions">
-            <el-button type="primary" @click="showUploadDialog = true">
-              <el-icon><Upload /></el-icon><span class="btn-text">上传</span>
-            </el-button>
-            <el-button @click="showContactDialog = true"><el-icon><Service /></el-icon><span class="btn-text">客服</span></el-button>
-            <el-button @click="showTutorialDialog = true"><el-icon><QuestionFilled /></el-icon><span class="btn-text">教程</span></el-button>
-            <el-button @click="openWebsite"><el-icon><Link /></el-icon><span class="btn-text">访问站</span></el-button>
-          </div>
+          <button type="button" class="mac-theme-toggle" @click="cycleThemeMode" :title="`外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色' : '浅色'}`">
+            <el-icon v-if="themeMode === 'system'"><Monitor /></el-icon>
+            <el-icon v-else-if="themeMode === 'dark'"><Moon /></el-icon>
+            <el-icon v-else><Sunny /></el-icon>
+            <span>{{ themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色模式' : '浅色模式' }}</span>
+          </button>
         </aside>
 
         <!-- 右侧文件区 -->
-        <main class="file-panel">
-          <div class="file-panel-header">
-            <div class="file-panel-row">
-              <div class="file-panel-nav">
-                <div class="breadcrumb-wrap">
-                  <nav class="breadcrumb">
-                  <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:-2px"><HomeFilled /></el-icon> 根目录</span>
-                  <span v-for="(part, index) in pathParts" :key="index">
-                    <span class="breadcrumb-sep">/</span>
-                    <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
-                  </span>
-                </nav>
-                  <button
-                    type="button"
-                    class="nav-back-btn"
-                    :class="{ 'is-disabled': !currentPath }"
-                    :disabled="!currentPath"
-                    title="返回上级目录"
-                    @click="goBack"
-                  >
-                    <el-icon><ArrowLeft /></el-icon>
-                  </button>
-                </div>
-              </div>
-              <div class="file-actions-bar">
-                <el-radio-group v-model="viewMode" size="small">
-                  <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
-                  <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
-                </el-radio-group>
-                <el-button @click="showMkdirDialog = true" size="small"><el-icon><FolderAdd /></el-icon></el-button>
-                <el-button @click="openNewFileDialog" size="small"><el-icon><Document /></el-icon></el-button>
-                <el-tooltip content="刷新" placement="top">
-                  <el-button @click="loadFiles(false)" :loading="loading" circle size="small"><el-icon><Refresh /></el-icon></el-button>
-                </el-tooltip>
-              </div>
-            </div>
-            <div
-              class="file-panel-toolbar"
-              :class="{ 'is-batch-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
+        <section class="mac-content">
+          <header class="mac-toolbar">
+            <button
+              type="button"
+              class="mac-tool-btn nav-back-btn"
+              :class="{ 'is-disabled': !currentPath }"
+              :disabled="!currentPath"
+              title="返回上级目录"
+              @click="goBack"
             >
-              <div class="file-search-bar" :class="{ 'is-active': searchKeyword.trim() }">
-                <el-input
-                  v-model="searchKeyword"
-                  :placeholder="searchSubdirs ? '搜索当前目录及子文件夹…' : '搜索当前目录…'"
-                  clearable
-                  size="small"
-                  class="file-search-input"
-                >
-                  <template #prefix>
-                    <el-icon><Search /></el-icon>
-                  </template>
-                </el-input>
+              <el-icon><ArrowLeft /></el-icon>
+            </button>
+            <div class="mac-toolbar-title" :title="currentPath || '全部文件'">
+              {{ pathParts.length ? pathParts[pathParts.length - 1] : '全部文件' }}
+            </div>
+            <div class="mac-toolbar-spacer"></div>
+            <div class="mac-search" :class="{ 'is-active': searchKeyword.trim() }">
+              <el-input
+                v-model="searchKeyword"
+                :placeholder="searchSubdirs ? '搜索当前目录及子文件夹…' : '搜索当前目录…'"
+                clearable
+                size="small"
+                class="file-search-input"
+              >
+                <template #prefix>
+                  <el-icon><Search /></el-icon>
+                </template>
+              </el-input>
+              <el-tooltip content="包含子文件夹" placement="top">
                 <label class="file-search-option">
                   <el-switch v-model="searchSubdirs" size="small" />
-                  <span>包含子文件夹</span>
+                  <span>子目录</span>
                 </label>
+              </el-tooltip>
+            </div>
+            <el-dropdown v-if="viewMode === 'grid'" trigger="click" popper-class="loft-file-dropdown" @command="handleSortCommand">
+              <button type="button" class="mac-tool-btn" title="排序方式">
+                <el-icon><Sort /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="name" :class="{ 'is-active-sort': sortBy === 'name' }">
+                    <el-icon><SortUp v-if="sortBy === 'name' && sortOrder === 'asc'" /><SortDown v-else-if="sortBy === 'name'" /><Sort v-else /></el-icon>按名称
+                  </el-dropdown-item>
+                  <el-dropdown-item command="size" :class="{ 'is-active-sort': sortBy === 'size' }">
+                    <el-icon><SortUp v-if="sortBy === 'size' && sortOrder === 'asc'" /><SortDown v-else-if="sortBy === 'size'" /><Sort v-else /></el-icon>按大小
+                  </el-dropdown-item>
+                  <el-dropdown-item command="date" :class="{ 'is-active-sort': sortBy === 'date' }">
+                    <el-icon><SortUp v-if="sortBy === 'date' && sortOrder === 'asc'" /><SortDown v-else-if="sortBy === 'date'" /><Sort v-else /></el-icon>按修改时间
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-radio-group v-model="viewMode" size="small" class="mac-view-switch">
+              <el-radio-button value="list"><el-icon><List /></el-icon></el-radio-button>
+              <el-radio-button value="grid"><el-icon><Grid /></el-icon></el-radio-button>
+            </el-radio-group>
+            <div class="mac-tool-group">
+              <el-tooltip content="新建文件夹" placement="top">
+                <el-button @click="showMkdirDialog = true" size="small" circle><el-icon><FolderAdd /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="新建文件" placement="top">
+                <el-button @click="openNewFileDialog" size="small" circle><el-icon><Document /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="刷新" placement="top">
+                <el-button @click="loadFiles(false)" :loading="loading" circle size="small"><el-icon><Refresh /></el-icon></el-button>
+              </el-tooltip>
+            </div>
+            <el-tooltip content="退出登录" placement="top">
+              <el-button @click="logout" size="small" circle class="mac-logout-btn"><el-icon><SwitchButton /></el-icon></el-button>
+            </el-tooltip>
+          </header>
+
+          <div class="mac-pathbar">
+            <nav class="breadcrumb">
+              <span class="breadcrumb-item" @click="navigateTo('')"><el-icon style="vertical-align:-2px"><HomeFilled /></el-icon> 根目录</span>
+              <span v-for="(part, index) in pathParts" :key="index">
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-item" @click="navigateTo(pathParts.slice(0, index + 1).join('/'))">{{ part }}</span>
+              </span>
+            </nav>
+            <p v-if="searchTruncated" class="file-search-notice">匹配结果过多，仅显示前 2000 条</p>
+          </div>
+
+          <!-- 续费提醒 -->
+          <div v-if="showRenewAlert" class="renew-banner" :class="{ 'is-expired': isExpired }">
+            <el-icon class="renew-banner-icon"><WarningFilled v-if="isExpired" /><Clock v-else /></el-icon>
+            <div class="renew-banner-body">
+              <div class="renew-banner-title">{{ isExpired ? '服务已过期' : '服务即将到期' }}</div>
+              <div class="renew-banner-text">
+                <template v-if="isExpired">请尽快联系客服续费，避免影响使用。</template>
+                <template v-else>还剩 <em>{{ remainingDays }}</em> 天 · 到期 {{ formatExpireDate(expireAt) }}</template>
               </div>
-              <p v-if="searchTruncated" class="file-search-notice">匹配结果过多，仅显示前 2000 条</p>
-              <div
-                class="batch-operations"
-                :class="{ 'is-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
-              >
+            </div>
+            <el-button type="primary" @click="showContactDialog = true">立即续费</el-button>
+          </div>
+
+          <div
+            v-if="files.length > 0 || clipboard.files.length > 0"
+            class="mac-batchbar"
+            :class="{ 'is-batch-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
+          >
+            <div
+              class="batch-operations"
+              :class="{ 'is-active': selectedFiles.length > 0 || clipboard.files.length > 0 }"
+            >
               <template v-if="files.length > 0">
                 <el-button size="small" class="batch-select-btn" @click="selectAll" v-if="selectedFiles.length < files.length">全选</el-button>
                 <el-button size="small" class="batch-select-btn" @click="clearSelection" v-else>取消全选</el-button>
@@ -194,6 +238,7 @@
                   <template v-if="selectedFiles.length > 0">
                     <el-button type="primary" size="small" @click="copyFiles">复制</el-button>
                     <el-button type="warning" size="small" @click="cutFiles">剪切</el-button>
+                    <el-button size="small" @click="openMoveDialogSelected">移动到...</el-button>
                     <el-button type="success" size="small" @click="compressFiles">压缩</el-button>
                     <el-button size="small" :disabled="selectedDirectories.length === 0" @click="liftSelectedFolders">
                       <el-icon style="margin-right:4px"><Top /></el-icon>提取到上级
@@ -215,7 +260,6 @@
                 </div>
               </template>
             </div>
-            </div>
           </div>
 
           <div
@@ -231,10 +275,41 @@
           >
           <!-- 列表视图 -->
           <template v-if="viewMode === 'list'">
+            <div v-if="files.length > 0" class="file-list-head">
+              <div class="file-checkbox"></div>
+              <div class="file-icon"></div>
+              <div class="file-sort-col file-sort-name" @click="toggleSort('name')">
+                <span>名称</span>
+                <el-icon v-if="sortBy === 'name'"><SortUp v-if="sortOrder === 'asc'" /><SortDown v-else /></el-icon>
+              </div>
+              <div class="file-sort-col file-size-col" @click="toggleSort('size')">
+                <span>大小</span>
+                <el-icon v-if="sortBy === 'size'"><SortUp v-if="sortOrder === 'asc'" /><SortDown v-else /></el-icon>
+              </div>
+              <div class="file-sort-col file-date-col" @click="toggleSort('date')">
+                <span>修改时间</span>
+                <el-icon v-if="sortBy === 'date'"><SortUp v-if="sortOrder === 'asc'" /><SortDown v-else /></el-icon>
+              </div>
+              <div class="file-actions-head"></div>
+            </div>
             <div v-for="file in files" :key="fileKey(file)" class="file-item"
-                 :class="{ selected: isSelected(file), 'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible }"
+                 :data-file-key="fileKey(file)"
+                 draggable="true"
+                 :class="{
+                   selected: isSelected(file),
+                   'is-focused': activeFileKey === fileKey(file),
+                   'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible,
+                   'drop-target': dragOverFolderKey === fileKey(file),
+                   'is-dragging': draggingFileKey === fileKey(file)
+                 }"
                  @click="handleFileClick($event, file)"
-                 @contextmenu.capture.prevent="showContextMenu($event, file)">
+                 @contextmenu.capture.prevent="showContextMenu($event, file)"
+                 @dragstart="handleFileDragStart($event, file)"
+                 @dragend="handleFileDragEnd"
+                 @dragenter="handleFolderDragEnter($event, file)"
+                 @dragover="handleFolderDragOver($event, file)"
+                 @dragleave="handleFolderDragLeave($event, file)"
+                 @drop="handleFolderDrop($event, file)">
               <div class="file-checkbox" @click.stop>
                 <el-checkbox :model-value="isSelected(file)" @change="toggleSelect(file)" />
               </div>
@@ -298,6 +373,9 @@
                       <el-dropdown-item @click="cutSingleFile(file)">
                         <el-icon><Scissor /></el-icon>剪切
                       </el-dropdown-item>
+                      <el-dropdown-item @click="openMoveDialogSingle(file)">
+                        <el-icon><FolderOpened /></el-icon>移动到...
+                      </el-dropdown-item>
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
@@ -318,9 +396,23 @@
           <template v-else>
             <div class="file-grid">
               <div v-for="file in files" :key="fileKey(file)" class="grid-item"
-                   :class="{ selected: isSelected(file), 'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible }"
+                   :data-file-key="fileKey(file)"
+                   draggable="true"
+                   :class="{
+                     selected: isSelected(file),
+                     'is-focused': activeFileKey === fileKey(file),
+                     'ctx-target': contextMenu.file && fileKey(contextMenu.file) === fileKey(file) && contextMenu.visible,
+                     'drop-target': dragOverFolderKey === fileKey(file),
+                     'is-dragging': draggingFileKey === fileKey(file)
+                   }"
                    @click="handleGridClick($event, file)"
-                   @contextmenu.capture.prevent="showContextMenu($event, file)">
+                   @contextmenu.capture.prevent="showContextMenu($event, file)"
+                   @dragstart="handleFileDragStart($event, file)"
+                   @dragend="handleFileDragEnd"
+                   @dragenter="handleFolderDragEnter($event, file)"
+                   @dragover="handleFolderDragOver($event, file)"
+                   @dragleave="handleFolderDragLeave($event, file)"
+                   @drop="handleFolderDrop($event, file)">
                 <div class="grid-checkbox" @click.stop>
                   <el-checkbox :model-value="isSelected(file)" @change="toggleSelect(file)" />
                 </div>
@@ -366,6 +458,9 @@
                       <el-dropdown-item @click="cutSingleFile(file)">
                         <el-icon><Scissor /></el-icon>剪切
                       </el-dropdown-item>
+                      <el-dropdown-item @click="openMoveDialogSingle(file)">
+                        <el-icon><FolderOpened /></el-icon>移动到...
+                      </el-dropdown-item>
                       <el-dropdown-item @click="openRenameDialog(file)">
                         <el-icon><EditPen /></el-icon>重命名
                       </el-dropdown-item>
@@ -403,24 +498,27 @@
           </div>
           </div>
 
-          <div v-if="totalFiles > 0" class="file-pagination">
-            <el-pagination
-              :current-page="currentPage"
-              :page-size="pageSize"
-              :page-sizes="[10, 20, 50]"
-              :total="totalFiles"
-              :small="isMobile"
-              :pager-count="isMobile ? 5 : 7"
-              :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
-              @size-change="onPageSizeChange"
-              @current-change="onPageChange"
-            />
-          </div>
-        </main>
+          <footer class="mac-statusbar">
+            <span class="mac-status-count">{{ fileCount }} 个文件 · {{ folderCount }} 个文件夹</span>
+            <div v-if="totalFiles > 0" class="file-pagination">
+              <el-pagination
+                :current-page="currentPage"
+                :page-size="pageSize"
+                :page-sizes="[10, 20, 50, 100, 200, 500]"
+                :total="totalFiles"
+                :small="isMobile"
+                :pager-count="isMobile ? 5 : 7"
+                :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
+                @size-change="onPageSizeChange"
+                @current-change="onPageChange"
+              />
+            </div>
+          </footer>
+        </section>
       </div>
 
       <footer class="workspace-footer">
-        文件空间 <span class="version">3.0</span>
+        文件空间 <span class="version">4.0</span>
       </footer>
 
       <!-- 上传对话框 -->
@@ -611,6 +709,44 @@
         </template>
       </el-dialog>
 
+      <!-- 移动到文件夹对话框 -->
+      <el-dialog v-model="showMoveDialog" title="移动到" width="440px" :fullscreen="isMobile" append-to-body class="upload-theme-dialog move-dialog">
+        <p class="move-dialog-summary">
+          将
+          <strong>{{ moveTargets.length === 1 ? moveTargets[0].name : `${moveTargets.length} 个项目` }}</strong>
+          移动到：
+        </p>
+        <div class="move-folder-list" v-loading="loadingFolders">
+          <div
+            class="move-folder-item"
+            :class="{ selected: moveDestination === '' }"
+            @click="moveDestination = ''"
+          >
+            <el-icon><HomeFilled /></el-icon>
+            <span>根目录</span>
+          </div>
+          <div
+            v-for="folder in folderTree"
+            :key="folder.path"
+            class="move-folder-item"
+            :class="{ selected: moveDestination === folder.path, 'is-disabled': isMoveDestInvalid(folder.path) }"
+            :style="{ paddingLeft: `${14 + folder.depth * 18}px` }"
+            @click="!isMoveDestInvalid(folder.path) && (moveDestination = folder.path)"
+          >
+            <el-icon><FolderOpened /></el-icon>
+            <span>{{ folder.name }}</span>
+          </div>
+          <div v-if="!loadingFolders && folderTree.length === 0" class="move-folder-empty">暂无子文件夹</div>
+        </div>
+        <p v-if="moveDestInvalid" class="move-dialog-warn">不能移动到自身或其子文件夹中</p>
+        <template #footer>
+          <el-button @click="showMoveDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmMove" :loading="moving" :disabled="moveDestInvalid">
+            移动到{{ moveDestination ? `「${moveDestination.split('/').pop()}」` : '根目录' }}
+          </el-button>
+        </template>
+      </el-dialog>
+
       <!-- 文件编辑对话框 -->
       <el-dialog v-model="showEditDialog" :title="'编辑文件: ' + editingFile?.name" width="900px" top="5vh" :close-on-click-modal="false" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
         <div v-loading="loadingFile" class="editor-container">
@@ -633,11 +769,43 @@
         </template>
       </el-dialog>
 
-      <!-- 图片预览对话框 -->
-      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile" append-to-body class="upload-theme-dialog">
-        <div style="text-align:center;max-height:80vh;overflow:auto">
-          <img v-if="previewType === 'image'" :src="previewUrl" style="max-width:100%;max-height:75vh" />
+      <!-- 文件预览对话框（支持图片/视频/音频/PDF/Markdown/代码） -->
+      <el-dialog v-model="showPreviewDialog" :title="'预览: ' + previewingFile?.name" width="auto" top="5vh" :fullscreen="isMobile" append-to-body class="upload-theme-dialog preview-dialog">
+        <div class="preview-content">
+          <!-- 图片预览 + 画廊模式 -->
+          <template v-if="previewType === 'image'">
+            <button v-if="galleryImages.length > 1" type="button" class="gallery-nav gallery-prev" :disabled="!galleryHasPrev" @click="galleryPrev" title="上一张 (←)">
+              <el-icon><ArrowLeft /></el-icon>
+            </button>
+            <img :src="previewUrl" class="preview-image" />
+            <button v-if="galleryImages.length > 1" type="button" class="gallery-nav gallery-next" :disabled="!galleryHasNext" @click="galleryNext" title="下一张 (→)">
+              <el-icon><ArrowLeft style="transform:rotate(180deg)" /></el-icon>
+            </button>
+          </template>
+          <!-- 视频预览 -->
+          <video v-else-if="previewType === 'video'" :src="previewUrl" controls autoplay class="preview-video">
+            您的浏览器不支持视频播放
+          </video>
+          <!-- 音频预览 -->
+          <div v-else-if="previewType === 'audio'" class="preview-audio-wrap">
+            <div class="preview-audio-icon">🎵</div>
+            <div class="preview-audio-name">{{ previewingFile?.name }}</div>
+            <audio :src="previewUrl" controls autoplay class="preview-audio"></audio>
+          </div>
+          <!-- PDF 预览 -->
+          <iframe v-else-if="previewType === 'pdf'" :src="previewUrl" class="preview-pdf"></iframe>
+          <!-- Markdown 预览 -->
+          <div v-else-if="previewType === 'markdown'" class="preview-markdown" v-html="markdownHtml"></div>
+          <!-- 代码/文本预览（Quick Look） -->
+          <div v-else-if="previewType === 'code'" class="preview-code" v-html="markdownHtml"></div>
         </div>
+        <!-- 画廊计数器 -->
+        <template v-if="previewType === 'image' && galleryImages.length > 1" #footer>
+          <div class="gallery-footer">
+            <span class="gallery-counter">{{ galleryCounter }}</span>
+            <span class="gallery-hint">← → 切换图片</span>
+          </div>
+        </template>
       </el-dialog>
 
       <!-- 使用教程对话框 -->
@@ -899,6 +1067,10 @@
               <el-icon><Scissor /></el-icon>
               <span>剪切</span>
             </button>
+            <button type="button" class="loft-ctx-item" @click="runCtx(openMoveDialogSingle, contextMenu.file)">
+              <el-icon><FolderOpened /></el-icon>
+              <span>移动到...</span>
+            </button>
 
             <div class="loft-ctx-divider" />
 
@@ -925,14 +1097,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, ArrowLeft, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck, Top, Search } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader } from '@/utils/chunked-upload'
 import { PhpDirectUploader } from '@/utils/php-direct-upload'
 import { API_BASE } from '@/config'
-import '@/styles/upload-theme-v3.css'
+import '@/styles/upload-theme-v4.css'
 
 if (typeof document !== 'undefined') {
   document.body.classList.add('upload-theme-page')
@@ -958,6 +1130,7 @@ const selectedDirectories = computed(() => selectedFiles.value.filter(f => f.typ
 const parentPathLabel = computed(() => currentPath.value || '根目录')
 
 const contextMenu = ref({ visible: false, x: 0, y: 0, file: null })
+const activeFileKey = ref(null)
 const contextMenuStyle = computed(() => ({
   left: `${contextMenu.value.x}px`,
   top: `${contextMenu.value.y}px`
@@ -999,12 +1172,33 @@ const files = ref([])
 const loading = ref(false)
 const viewMode = ref('list')
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(50)
 const totalFiles = ref(0)
 const totalFileCount = ref(0)
 const totalFolderCount = ref(0)
 const searchKeyword = ref('')
 const searchSubdirs = ref(localStorage.getItem('upload_search_subdirs') === 'true')
+const sortBy = ref(localStorage.getItem('upload_sort_by') || 'name')
+const sortOrder = ref(localStorage.getItem('upload_sort_order') || 'asc')
+
+// 深色模式：'system'(跟随系统) | 'light'(强制浅色) | 'dark'(强制深色)，持久化到 localStorage
+const themeMode = ref(localStorage.getItem('upload_theme_mode') || 'system')
+const systemPrefersDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false)
+const isDarkMode = computed(() => themeMode.value === 'dark' || (themeMode.value === 'system' && systemPrefersDark.value))
+let systemThemeMediaQuery = null
+
+const applyThemeClass = () => {
+  document.body.classList.toggle('is-dark-mode', isDarkMode.value)
+}
+
+const cycleThemeMode = () => {
+  const order = ['system', 'light', 'dark']
+  const next = order[(order.indexOf(themeMode.value) + 1) % order.length]
+  themeMode.value = next
+  localStorage.setItem('upload_theme_mode', next)
+}
+
+watch(isDarkMode, applyThemeClass, { immediate: true })
 const searchTruncated = ref(false)
 let searchTimer = null
 let skipSearchWatch = false
@@ -1050,6 +1244,7 @@ const selectAll = () => {
 }
 
 const handleFileClick = (event, file) => {
+  activeFileKey.value = fileKey(file)
   // Ctrl/Cmd + 点击 多选
   if (event.ctrlKey || event.metaKey) {
     toggleSelect(file)
@@ -1067,6 +1262,7 @@ const handleFileClick = (event, file) => {
 }
 
 const handleGridClick = (event, file) => {
+  activeFileKey.value = fileKey(file)
   // Ctrl/Cmd + 点击 多选
   if (event.ctrlKey || event.metaKey) {
     toggleSelect(file)
@@ -1396,6 +1592,24 @@ const showPreviewDialog = ref(false)
 const previewingFile = ref(null)
 const previewUrl = ref('')
 const previewType = ref('')
+const markdownHtml = ref('')  // Markdown 渲染后的 HTML
+
+// 图片画廊模式（同目录图片切换）
+const galleryImages = computed(() => {
+  if (!files.value || files.value.length === 0) return []
+  return files.value.filter(f => f.type === 'file' && imageExts.includes(f.name.split('.').pop().toLowerCase()))
+})
+const currentGalleryIndex = computed(() => {
+  if (!previewingFile.value || previewType.value !== 'image') return -1
+  const key = fileKey(previewingFile.value)
+  return galleryImages.value.findIndex(f => fileKey(f) === key)
+})
+const galleryHasPrev = computed(() => currentGalleryIndex.value > 0)
+const galleryHasNext = computed(() => currentGalleryIndex.value >= 0 && currentGalleryIndex.value < galleryImages.value.length - 1)
+const galleryCounter = computed(() => {
+  if (currentGalleryIndex.value < 0 || galleryImages.value.length === 0) return ''
+  return `${currentGalleryIndex.value + 1} / ${galleryImages.value.length}`
+})
 
 // 可编辑的文件类型
 const editableExts = ['txt', 'html', 'htm', 'css', 'js', 'json', 'xml', 'md', 'php', 'py', 'sh', 'sql', 'vue', 'jsx', 'ts', 'tsx', 'yaml', 'yml', 'conf', 'ini', 'log', 'htaccess']
@@ -1404,11 +1618,27 @@ const isEditableFile = (name) => {
   return editableExts.includes(ext)
 }
 
-// 可预览的文件类型（图片）
-const previewableExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp']
+// 可预览的文件类型
+const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp']
+const videoExts = ['mp4', 'webm', 'mov', 'ogg', 'ogv']
+const audioExts = ['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac']
+const pdfExts = ['pdf']
+const markdownExts = ['md', 'markdown']
+const previewableExts = [...imageExts, ...videoExts, ...audioExts, ...pdfExts, ...markdownExts]
+
 const isPreviewableFile = (name) => {
   const ext = name.split('.').pop().toLowerCase()
   return previewableExts.includes(ext)
+}
+
+const getPreviewType = (name) => {
+  const ext = name.split('.').pop().toLowerCase()
+  if (imageExts.includes(ext)) return 'image'
+  if (videoExts.includes(ext)) return 'video'
+  if (audioExts.includes(ext)) return 'audio'
+  if (pdfExts.includes(ext)) return 'pdf'
+  if (markdownExts.includes(ext)) return 'markdown'
+  return 'unknown'
 }
 
 // 文件模板
@@ -1635,6 +1865,18 @@ const showContactDialog = ref(false)
 const showRenameDialog = ref(false)
 const renamingFile = ref(null)
 const renaming = ref(false)
+
+// 移动到文件夹
+const showMoveDialog = ref(false)
+const moveTargets = ref([]) // [{ name, type, path }]
+const moveDestination = ref('') // 目标相对路径，'' 表示根目录
+const allFolders = ref([]) // 全空间目录树（相对路径列表）
+const loadingFolders = ref(false)
+const moving = ref(false)
+
+// 拖拽移动（列表内文件/文件夹拖到某个文件夹行上）
+const draggingFileKey = ref(null) // 正在被拖拽的文件 key
+const dragOverFolderKey = ref(null) // 当前悬停的目标文件夹 key
 const uploadQueue = ref([])
 const uploading = ref(false)
 const autoStartUpload = ref(localStorage.getItem('upload_auto_start') !== 'false')
@@ -1850,7 +2092,9 @@ const loadFiles = async (skipUsage = false) => {
       page: currentPage.value,
       pageSize: pageSize.value,
       keyword: searchKeyword.value.trim(),
-      search_subdirs: searchSubdirs.value
+      search_subdirs: searchSubdirs.value,
+      sort_by: sortBy.value,
+      sort_order: sortOrder.value
     })]
 
     if (!skipUsage) {
@@ -1897,6 +2141,22 @@ const onPageSizeChange = (size) => {
   loadFiles(true)
 }
 
+const toggleSort = (field) => {
+  if (sortBy.value === field) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortBy.value = field
+    sortOrder.value = 'asc'
+  }
+  localStorage.setItem('upload_sort_by', sortBy.value)
+  localStorage.setItem('upload_sort_order', sortOrder.value)
+  currentPage.value = 1
+  selectedFiles.value = []
+  loadFiles(true)
+}
+
+const handleSortCommand = (field) => toggleSort(field)
+
 const resetSearch = () => {
   skipSearchWatch = true
   searchKeyword.value = ''
@@ -1929,8 +2189,8 @@ watch(searchSubdirs, (val) => {
   loadFiles(true)
 })
 
-const navigateTo = (path) => { currentPath.value = path; currentPage.value = 1; selectedFiles.value = []; resetSearch(); loadFiles(true) }
-const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); currentPage.value = 1; selectedFiles.value = []; resetSearch(); loadFiles(true) }
+const navigateTo = (path) => { currentPath.value = path; currentPage.value = 1; selectedFiles.value = []; activeFileKey.value = null; resetSearch(); loadFiles(true) }
+const goBack = () => { const parts = currentPath.value.split('/').filter(p => p); parts.pop(); currentPath.value = parts.join('/'); currentPage.value = 1; selectedFiles.value = []; activeFileKey.value = null; resetSearch(); loadFiles(true) }
 
 const handleFileSelect = (e) => { checkAndAddFiles(e.target.files, false); e.target.value = '' }
 const handleFolderSelect = (e) => { checkAndAddFiles(e.target.files, true); e.target.value = '' }
@@ -2177,18 +2437,23 @@ const isLeavingViewport = (e) => {
 }
 
 // 文件列表区域拖拽处理
+// 注意：站内拖拽移动（拖文件到某个文件夹行）不携带 Files 类型，
+// 靠 hasFileDrag() 与本地文件拖拽（上传）区分，避免误触发上传弹窗。
 const handleFileDragOver = (e) => {
+  if (!hasFileDrag(e)) return
   e.preventDefault()
   isFileDragOver.value = true
 }
 
 const handleFileDragLeave = (e) => {
+  if (!hasFileDrag(e)) return
   if (e.target.classList.contains('file-list')) {
     isFileDragOver.value = false
   }
 }
 
 const handleFileListDrop = async (e) => {
+  if (!hasFileDrag(e)) return
   e.preventDefault()
   e.stopPropagation()
   isFileDragOver.value = false
@@ -2672,21 +2937,141 @@ const saveFile = async () => {
   }
 }
 
-// 预览图片
+// 预览文件（支持图片/视频/音频/PDF/Markdown）
 const previewFile = async (file) => {
   if (!isPreviewableFile(file.name)) return
   previewingFile.value = file
-  previewType.value = 'image'
+  const type = getPreviewType(file.name)
+  previewType.value = type
   const filePath = fileRelPath(file)
-  // 通过接口获取图片base64
-  try {
-    const res = await api('/read-binary', { path: filePath })
-    const ext = file.name.split('.').pop().toLowerCase()
-    const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp' }
-    previewUrl.value = `data:${mimeTypes[ext] || 'image/png'};base64,${res.content}`
+  
+  if (type === 'image') {
+    // 图片：通过接口获取 base64
+    try {
+      const res = await api('/read-binary', { path: filePath })
+      const ext = file.name.split('.').pop().toLowerCase()
+      const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp' }
+      previewUrl.value = `data:${mimeTypes[ext] || 'image/png'};base64,${res.content}`
+      showPreviewDialog.value = true
+    } catch (e) {
+      ElMessage.error('预览失败: ' + e.message)
+    }
+  } else if (type === 'video' || type === 'audio' || type === 'pdf') {
+    // 视频/音频/PDF：直接用站点URL访问
+    previewUrl.value = `${siteUrl.value}/${filePath}`
     showPreviewDialog.value = true
-  } catch (e) {
-    ElMessage.error('预览失败: ' + e.message)
+  } else if (type === 'markdown') {
+    // Markdown：读取内容后前端渲染
+    try {
+      const res = await api('/read', { path: filePath })
+      markdownHtml.value = renderMarkdown(res.content || '')
+      showPreviewDialog.value = true
+    } catch (e) {
+      ElMessage.error('预览失败: ' + e.message)
+    }
+  }
+}
+
+// 画廊模式：切换到上一张/下一张图片
+const galleryPrev = () => {
+  if (!galleryHasPrev.value) return
+  const prevFile = galleryImages.value[currentGalleryIndex.value - 1]
+  if (prevFile) previewFile(prevFile)
+}
+
+const galleryNext = () => {
+  if (!galleryHasNext.value) return
+  const nextFile = galleryImages.value[currentGalleryIndex.value + 1]
+  if (nextFile) previewFile(nextFile)
+}
+
+// 预览对话框内的键盘监听（左右箭头切换图片）
+const handlePreviewKeydown = (e) => {
+  if (!showPreviewDialog.value || previewType.value !== 'image') return
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    galleryPrev()
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault()
+    galleryNext()
+  }
+}
+
+// 简易 Markdown 渲染（无依赖，支持基本语法）
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  let html = text
+    // 转义 HTML
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // 代码块 ```
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="md-code-block"><code>$2</code></pre>')
+    // 行内代码
+    .replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>')
+    // 标题
+    .replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
+    .replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+    .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
+    .replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+    .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
+    .replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+    // 粗体和斜体
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // 链接和图片
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="md-img" />')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // 水平线
+    .replace(/^---+$/gm, '<hr />')
+    // 无序列表
+    .replace(/^[\*\-]\s+(.+)$/gm, '<li>$1</li>')
+    // 有序列表
+    .replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
+    // 引用块
+    .replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>')
+    // 段落（双换行）
+    .replace(/\n\n+/g, '</p><p>')
+    // 单换行转 <br>
+    .replace(/\n/g, '<br />')
+  // 包裹连续的 <li> 为 <ul>
+  html = html.replace(/(<li>[\s\S]*?<\/li>)(?=\s*<li>|$)/g, (m) => m)
+  html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>')
+  // 合并连续 blockquote
+  html = html.replace(/<\/blockquote><br \/><blockquote>/g, '<br />')
+  return `<div class="md-body"><p>${html}</p></div>`
+}
+
+// Quick Look：空格键快速预览（支持所有可预览+可编辑文件）
+const quickLookFile = async (file) => {
+  if (!file || file.type !== 'file') return
+  
+  const name = file.name
+  // 支持预览的文件类型：图片/视频/音频/PDF/Markdown + 代码/文本文件
+  if (isPreviewableFile(name)) {
+    // 复用现有预览逻辑
+    previewFile(file)
+  } else if (isEditableFile(name)) {
+    // 代码/文本文件：Quick Look 用只读方式显示（复用预览对话框，渲染为代码块）
+    previewingFile.value = file
+    previewType.value = 'code'
+    const filePath = fileRelPath(file)
+    try {
+      const res = await api('/read', { path: filePath })
+      // 将代码内容转为 HTML 展示（简单转义+保留空格换行）
+      const escaped = (res.content || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+      markdownHtml.value = `<pre class="ql-code-block"><code>${escaped}</code></pre>`
+      showPreviewDialog.value = true
+    } catch (e) {
+      ElMessage.error('预览失败: ' + e.message)
+    }
+  } else {
+    // 其他文件：提示无法预览
+    ElMessage.info('该文件类型暂不支持预览')
   }
 }
 
@@ -2800,6 +3185,177 @@ const cutSingleFile = (file) => {
   ElMessage.success(`已剪切 "${file.name}" 到剪贴板`)
 }
 
+// 移动到文件夹：目录树构建为 {path, name, depth}[] 便于渲染缩进列表
+const folderTree = computed(() => {
+  return allFolders.value.map(rel => {
+    const depth = rel.split('/').length - 1
+    const name = rel.split('/').pop()
+    return { path: rel, name, depth }
+  })
+})
+
+const loadAllFolders = async () => {
+  loadingFolders.value = true
+  try {
+    const res = await api('/folders')
+    allFolders.value = res.folders || []
+  } catch (e) {
+    ElMessage.error('加载目录失败: ' + e.message)
+    allFolders.value = []
+  } finally {
+    loadingFolders.value = false
+  }
+}
+
+const openMoveDialog = async (targetFiles) => {
+  const list = Array.isArray(targetFiles) ? targetFiles : [targetFiles]
+  if (list.length === 0) return
+  moveTargets.value = list.map(f => ({
+    name: f.name,
+    type: f.type,
+    path: fileRelPath(f)
+  }))
+  moveDestination.value = currentPath.value
+  showMoveDialog.value = true
+  await loadAllFolders()
+}
+
+const openMoveDialogSingle = (file) => openMoveDialog(file)
+const openMoveDialogSelected = () => openMoveDialog(selectedFiles.value)
+
+// 目标目录不能是自身或自身的子目录（会导致移动失败或数据丢失）
+const isMoveDestInvalid = (destPath) => {
+  return moveTargets.value.some(t => {
+    if (t.type !== 'directory') return false
+    if (destPath === t.path) return true
+    return destPath.startsWith(t.path + '/')
+  })
+}
+
+const moveDestInvalid = computed(() => isMoveDestInvalid(moveDestination.value))
+
+// 执行移动的核心逻辑：供"移动到..."对话框与拖拽移动共用
+const moveItemsTo = async (items, destPath) => {
+  let success = 0, failed = 0
+  for (const item of items) {
+    const targetPath = destPath ? `${destPath}/${item.name}` : item.name
+    if (targetPath === item.path) continue // 目标与来源相同，跳过
+    try {
+      await api('/cut', { source_path: item.path, target_path: targetPath })
+      success++
+    } catch (e) {
+      console.error('移动失败:', item.path, e)
+      failed++
+    }
+  }
+  return { success, failed }
+}
+
+const confirmMove = async () => {
+  if (moveTargets.value.length === 0) return
+  if (moveDestInvalid.value) {
+    ElMessage.warning('不能移动到自身或其子文件夹中')
+    return
+  }
+  moving.value = true
+  try {
+    const { success, failed } = await moveItemsTo(moveTargets.value, moveDestination.value)
+    if (failed === 0) {
+      ElMessage.success(`成功移动 ${success} 个项目`)
+    } else {
+      ElMessage.warning(`移动完成: 成功 ${success} 个, 失败 ${failed} 个`)
+    }
+    showMoveDialog.value = false
+    clearSelection()
+    loadFiles()
+  } catch (e) {
+    ElMessage.error('移动失败: ' + e.message)
+  } finally {
+    moving.value = false
+  }
+}
+
+// ─── 拖拽移动：列表/网格内拖文件到某个文件夹行上完成移动 ───
+// 与页面级"拖入本地文件上传"的拖拽（dataTransfer 携带 Files 类型）互斥：
+// 站内拖拽不带 Files 类型，靠 draggingFileKey 判断来源。
+const handleFileDragStart = (e, file) => {
+  // 已勾选多个时，拖拽其中任意一个即整体移动已选中项；否则只移动被拖拽的单项
+  const isPartOfSelection = isSelected(file) && selectedFiles.value.length > 1
+  if (!isPartOfSelection) {
+    selectedFiles.value = [file]
+  }
+  draggingFileKey.value = fileKey(file)
+  e.dataTransfer.effectAllowed = 'move'
+  // 避免触发浏览器默认的"拖拽生成文件"行为，同时不携带 Files 类型
+  e.dataTransfer.setData('text/plain', file.name)
+}
+
+const handleFileDragEnd = () => {
+  draggingFileKey.value = null
+  dragOverFolderKey.value = null
+}
+
+const canDropOnFolder = (folder) => {
+  if (!draggingFileKey.value) return false
+  if (folder.type !== 'directory') return false
+  const destPath = fileRelPath(folder)
+  // 目标不能是被拖拽项自身，也不能是被拖拽文件夹的子目录（防止数据丢失）
+  return !selectedFiles.value.some(f => {
+    if (fileKey(f) === fileKey(folder)) return true
+    if (f.type !== 'directory') return false
+    const srcPath = fileRelPath(f)
+    return destPath === srcPath || destPath.startsWith(srcPath + '/')
+  })
+}
+
+const handleFolderDragEnter = (e, folder) => {
+  if (!canDropOnFolder(folder)) return
+  e.preventDefault()
+  dragOverFolderKey.value = fileKey(folder)
+}
+
+const handleFolderDragOver = (e, folder) => {
+  if (!canDropOnFolder(folder)) return
+  e.preventDefault()
+}
+
+const handleFolderDragLeave = (e, folder) => {
+  if (dragOverFolderKey.value === fileKey(folder)) {
+    dragOverFolderKey.value = null
+  }
+}
+
+const handleFolderDrop = async (e, folder) => {
+  e.preventDefault()
+  e.stopPropagation()
+  dragOverFolderKey.value = null
+  if (!canDropOnFolder(folder)) {
+    draggingFileKey.value = null
+    return
+  }
+  const items = (selectedFiles.value.length > 0 ? selectedFiles.value : [])
+    .map(f => ({ name: f.name, type: f.type, path: fileRelPath(f) }))
+  draggingFileKey.value = null
+  if (items.length === 0) return
+
+  const destPath = fileRelPath(folder)
+  const loadingMsg = ElMessage({ message: `正在移动到「${folder.name}」...`, type: 'info', duration: 0 })
+  try {
+    const { success, failed } = await moveItemsTo(items, destPath)
+    loadingMsg.close()
+    if (failed === 0) {
+      ElMessage.success(`已移动 ${success} 个项目到「${folder.name}」`)
+    } else {
+      ElMessage.warning(`移动完成: 成功 ${success} 个, 失败 ${failed} 个`)
+    }
+    clearSelection()
+    loadFiles()
+  } catch (err) {
+    loadingMsg.close()
+    ElMessage.error('移动失败: ' + err.message)
+  }
+}
+
 const formatSize = (bytes) => {
   if (!bytes || bytes === 0) return '0 B'
   if (bytes < 1024) return bytes + ' B'
@@ -2872,6 +3428,14 @@ onMounted(() => {
   document.addEventListener('mousedown', onContextMenuDismiss)
   document.addEventListener('scroll', hideContextMenu, true)
   document.addEventListener('keydown', onContextMenuKeydown)
+  document.addEventListener('keydown', handleGlobalKeydown)
+  document.addEventListener('keydown', handlePreviewKeydown)
+
+  systemThemeMediaQuery = window.matchMedia?.('(prefers-color-scheme: dark)')
+  if (systemThemeMediaQuery) {
+    systemPrefersDark.value = systemThemeMediaQuery.matches
+    systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange)
+  }
 })
 
 watch([authorized, showUploadDialog], updatePageDragEvents, { immediate: true })
@@ -2884,18 +3448,146 @@ onUnmounted(() => {
   document.removeEventListener('mousedown', onContextMenuDismiss)
   document.removeEventListener('scroll', hideContextMenu, true)
   document.removeEventListener('keydown', onContextMenuKeydown)
+  document.removeEventListener('keydown', handleGlobalKeydown)
+  document.removeEventListener('keydown', handlePreviewKeydown)
+  systemThemeMediaQuery?.removeEventListener('change', handleSystemThemeChange)
+  document.body.classList.remove('is-dark-mode')
   unbindPageDragEvents()
   if (uploadStatsInterval.value) clearInterval(uploadStatsInterval.value)
   if (searchTimer) clearTimeout(searchTimer)
 })
 
+const handleSystemThemeChange = (e) => {
+  systemPrefersDark.value = e.matches
+}
+
 const handleResize = () => {
   windowWidth.value = window.innerWidth
+}
+
+// 是否有任意对话框/编辑器打开——打开时快捷键完全让位，避免冲突
+const isAnyDialogOpen = () => (
+  showUploadDialog.value ||
+  showMkdirDialog.value ||
+  showNewFileDialog.value ||
+  showRenameDialog.value ||
+  showMoveDialog.value ||
+  showEditDialog.value ||
+  showPreviewDialog.value ||
+  showTutorialDialog.value ||
+  showContactDialog.value ||
+  showExpiryAlertDialog.value
+)
+
+const isTypingTarget = (el) => {
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
+const scrollActiveIntoView = () => {
+  nextTick(() => {
+    if (!activeFileKey.value) return
+    const el = document.querySelector(`[data-file-key="${window.CSS?.escape ? CSS.escape(activeFileKey.value) : activeFileKey.value}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+const moveActiveFile = (delta) => {
+  if (files.value.length === 0) return
+  const currentIndex = files.value.findIndex(f => fileKey(f) === activeFileKey.value)
+  let nextIndex
+  if (currentIndex === -1) {
+    nextIndex = delta > 0 ? 0 : files.value.length - 1
+  } else {
+    nextIndex = Math.min(files.value.length - 1, Math.max(0, currentIndex + delta))
+  }
+  const nextFile = files.value[nextIndex]
+  activeFileKey.value = fileKey(nextFile)
+  selectedFiles.value = [nextFile]
+  scrollActiveIntoView()
+}
+
+const openActiveFile = (file) => {
+  if (!file) return
+  if (file.type === 'directory') {
+    enterFolder(file)
+    return
+  }
+  if (isEditableFile(file.name)) {
+    openFile(file)
+  } else if (isPreviewableFile(file.name)) {
+    previewFile(file)
+  } else {
+    openFileUrl(file)
+  }
+}
+
+const handleGlobalKeydown = (e) => {
+  // 输入框、文本域、对话框打开时完全让位，不拦截任何按键
+  if (isTypingTarget(e.target) || isAnyDialogOpen() || contextMenu.value.visible) return
+  if (!authorized.value) return
+
+  const isSelectAll = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a'
+
+  if (isSelectAll) {
+    e.preventDefault()
+    if (files.value.length > 0) selectAll()
+    return
+  }
+
+  switch (e.key) {
+    case 'Delete':
+    case 'Backspace': {
+      if (selectedFiles.value.length > 0) {
+        e.preventDefault()
+        deleteSelected()
+      }
+      break
+    }
+    case 'ArrowDown':
+    case 'ArrowRight': {
+      e.preventDefault()
+      moveActiveFile(1)
+      break
+    }
+    case 'ArrowUp':
+    case 'ArrowLeft': {
+      e.preventDefault()
+      moveActiveFile(-1)
+      break
+    }
+    case 'Enter': {
+      const active = files.value.find(f => fileKey(f) === activeFileKey.value) || selectedFiles.value[0]
+      if (active) {
+        e.preventDefault()
+        openActiveFile(active)
+      }
+      break
+    }
+    case 'Escape': {
+      if (selectedFiles.value.length > 0 || activeFileKey.value) {
+        e.preventDefault()
+        clearSelection()
+        activeFileKey.value = null
+      }
+      break
+    }
+    case ' ': {
+      // Quick Look：空格键触发预览（仿 macOS Finder）
+      const active = files.value.find(f => fileKey(f) === activeFileKey.value) || selectedFiles.value[0]
+      if (active && active.type === 'file') {
+        e.preventDefault()
+        quickLookFile(active)
+      }
+      break
+    }
+  }
 }
 </script>
 
 <style scoped>
-/* Layout-only — Canvas Loft visuals in upload-theme-v3.css */
+/* Layout-only — Liquid Glass visuals in upload-theme-v4.css */
 
 .page-drag-overlay {
   position: fixed;
