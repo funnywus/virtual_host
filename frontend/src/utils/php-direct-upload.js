@@ -169,11 +169,13 @@ export class PhpDirectUploader {
     formData.append('expires', this.expires);
     formData.append('uploadId', this.uploadId);
     formData.append('total_chunks', this.totalChunks);
-    formData.append('filename', this.file.name);
-    formData.append('path', this.path);
+    // 显式传 UTF-8 文件名（避免仅依赖 multipart Content-Disposition 时的编码问题）
+    const filename = (this.file.name || 'file').split(/[/\\]/).pop();
+    formData.append('filename', filename);
+    formData.append('path', this.path || '');
 
     const data = await this._postForm(formData, 'merge', 0);
-    return data || { success: true, filename: this.file.name, size: this.file.size };
+    return data || { success: true, filename, size: this.file.size };
   }
 
   async start() {

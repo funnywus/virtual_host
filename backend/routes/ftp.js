@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const SshFtpService = require('../services/ssh-ftp');
+const { randomAuthCode, resolveAuthCode } = require('../services/ftp-auth');
 
 const router = express.Router();
 
@@ -18,11 +19,6 @@ function generatePassword(length = 12) {
   return password;
 }
 
-// 生成授权码 (域名MD5完整32位小写)
-function generateAuthCode(domain) {
-  return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
-}
-
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -34,32 +30,52 @@ function generateUsername(subdomain, domain) {
   return `${base}_${suffix}`.substring(0, 16).replace(/[^a-zA-Z0-9_]/g, '');
 }
 
+function buildFtpWhere(userId, keyword) {
+  const where = [];
+  const params = [];
+  if (userId) {
+    where.push('d.user_id = ?');
+    params.push(userId);
+  }
+  if (keyword) {
+    const like = `%${keyword}%`;
+    const fullDomainExpr = `CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END`;
+    where.push(`(
+      f.username LIKE ? OR f.home_dir LIKE ? OR f.auth_code LIKE ?
+      OR d.domain LIKE ? OR s.subdomain LIKE ?
+      OR sv.name LIKE ? OR sv.ip LIKE ?
+      OR ${fullDomainExpr} LIKE ?
+    )`);
+    params.push(like, like, like, like, like, like, like, like);
+  }
+  return {
+    clause: where.length ? ` WHERE ${where.join(' AND ')}` : '',
+    params
+  };
+}
+
 // 获取FTP账号列表
 router.get('/', async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 10, 1), 100);
     const offset = (page - 1) * pageSize;
+    const keyword = String(req.query.keyword || '').trim();
     
     const userId = req.user.role === 'admin' ? null : req.user.id;
+    const { clause, params: whereParams } = buildFtpWhere(userId, keyword);
     
-    // 获取总数
-    let countSql = `
+    const countResult = await db.get(`
       SELECT COUNT(*) as total
       FROM ftp_accounts f
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
-    `;
-    
-    if (userId) {
-      countSql += ' WHERE d.user_id = ?';
-    }
-    
-    const countResult = await db.get(countSql, userId ? [userId] : []);
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      ${clause}
+    `, whereParams);
     const total = countResult?.total || 0;
     
-    // 获取分页数据
-    let sql = `
+    const accounts = await db.all(`
       SELECT f.*, s.subdomain, d.domain as main_domain, sv.name as server_name, sv.ip as server_ip,
              sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
@@ -67,20 +83,17 @@ router.get('/', async (req, res) => {
       LEFT JOIN subdomains s ON f.subdomain_id = s.id
       LEFT JOIN domains d ON s.domain_id = d.id
       LEFT JOIN servers sv ON s.server_id = sv.id
-    `;
+      ${clause}
+      ORDER BY f.created_at DESC LIMIT ? OFFSET ?
+    `, [...whereParams, pageSize, offset]);
     
-    if (userId) {
-      sql += ' WHERE d.user_id = ?';
-    }
-    
-    sql += ' ORDER BY f.created_at DESC LIMIT ? OFFSET ?';
-    
-    const params = userId ? [userId, pageSize, offset] : [pageSize, offset];
-    const accounts = await db.all(sql, params);
-    
-    // 列表接口只返回数据库信息，空间统计由单独接口异步获取，避免每行 SSH 阻塞列表响应。
+    // 列表返回库内授权码；缺省时回退域名 MD5（兼容旧数据），并回写库
     for (const acc of accounts) {
-      acc.auth_code = generateAuthCode(acc.full_domain);
+      const code = resolveAuthCode(acc);
+      if (!acc.auth_code && code) {
+        await db.run('UPDATE ftp_accounts SET auth_code = ? WHERE id = ?', [code, acc.id]);
+      }
+      acc.auth_code = code;
       acc.used_size = null;
     }
     
@@ -88,7 +101,8 @@ router.get('/', async (req, res) => {
       list: accounts, 
       total, 
       page, 
-      pageSize
+      pageSize,
+      keyword
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -145,7 +159,8 @@ router.get('/:id/usage', async (req, res) => {
 // 为子域名创建FTP账号
 router.post('/', async (req, res) => {
   try {
-    const { subdomain_id, username, password, port, home_dir } = req.body;
+    const { subdomain_id, username, password, port, home_dir, max_upload_size } = req.body;
+    const ftpMaxUploadSize = Number(max_upload_size) > 0 ? Math.floor(Number(max_upload_size)) : 524288000;
     
     // 获取子域名和服务器信息
     const subdomain = await db.get(`
@@ -207,8 +222,8 @@ router.post('/', async (req, res) => {
     }
     
     const result = await db.run(
-      'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, sync_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [subdomain_id, ftpUsername, ftpPassword, port || 21, ftpHomeDir, generateAuthCode(fullDomain), 'active', syncStatus, syncMessage]
+      'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, sync_message, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [subdomain_id, ftpUsername, ftpPassword, port || 21, ftpHomeDir, randomAuthCode(), 'active', syncStatus, syncMessage, ftpMaxUploadSize]
     );
     
     const newFtp = await db.get('SELECT auth_code FROM ftp_accounts WHERE id = ?', [result.lastID]);
@@ -304,26 +319,18 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// 重置授权码 (实际上授权码是域名MD5，不需要重置，这里只是返回当前值)
+// 重置授权码（随机生成，旧码立即失效）
 router.post('/:id/reset-auth-code', async (req, res) => {
   try {
-    // 获取域名信息
-    const ftp = await db.get(`
-      SELECT f.*, s.subdomain, d.domain as main_domain,
-             CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
-      FROM ftp_accounts f
-      LEFT JOIN subdomains s ON f.subdomain_id = s.id
-      LEFT JOIN domains d ON s.domain_id = d.id
-      WHERE f.id = ?
-    `, [req.params.id]);
+    const ftp = await db.get('SELECT id FROM ftp_accounts WHERE id = ?', [req.params.id]);
     
     if (!ftp) {
       return res.status(404).json({ error: 'FTP account not found' });
     }
     
-    // 授权码是域名MD5，固定不变
-    const authCode = generateAuthCode(ftp.full_domain);
-    res.json({ auth_code: authCode, message: '授权码为域名MD5，固定不变' });
+    const authCode = randomAuthCode();
+    await db.run('UPDATE ftp_accounts SET auth_code = ? WHERE id = ?', [authCode, req.params.id]);
+    res.json({ auth_code: authCode, message: '授权码已重置，旧授权码立即失效' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

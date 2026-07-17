@@ -1,0 +1,13 @@
+{
+  "ssl_auto_renew": true,
+  "ssl_renew_before_days": 30,
+  "ssl_check_hour": 3,
+  "last_ssl_check_at": "2026-07-17 11:42:35",
+  "last_ssl_renew_at": "2026-07-17 11:42:35",
+  "last_ssl_renew_summary": {
+    "at": "2026-07-17 11:42:35",
+    "candidates": 0,
+    "renewed": 0,
+    "failed": 0
+  }
+}

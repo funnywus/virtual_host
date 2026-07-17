@@ -41,25 +41,40 @@ function verifyToken($token, $expires) {
     return hash_equals($expect, $token);
 }
 
-// ===== 安全清理文件名（去掉路径分隔与危险字符）=====
+// ===== 安全清理文件名（防穿越/控制字符；保留中文等 Unicode）=====
 function safeName($name) {
-    $name = basename((string)$name);
-    $name = preg_replace('/[^\w.\-\x{4e00}-\x{9fa5} ()（）\[\]]+/u', '_', $name);
+    $name = str_replace(["\0", '\\'], ['', '/'], (string)$name);
+    $name = basename($name);
+    // 只去掉控制字符，保留中文、日韩、标点等合法 Unicode 文件名
+    $cleaned = preg_replace('/[\x00-\x1F\x7F]/u', '', $name);
+    $name = ($cleaned === null) ? preg_replace('/[[:cntrl:]]/', '', $name) : $cleaned;
+    $name = trim((string)$name);
     if ($name === '' || $name === '.' || $name === '..') {
         $name = 'file_' . time();
+    }
+    // 避免异常超长文件名
+    if (function_exists('mb_strlen') && mb_strlen($name, 'UTF-8') > 200) {
+        $ext = pathinfo($name, PATHINFO_EXTENSION);
+        $base = pathinfo($name, PATHINFO_FILENAME);
+        $base = mb_substr($base, 0, 180, 'UTF-8');
+        $name = $ext !== '' ? ($base . '.' . $ext) : $base;
     }
     return $name;
 }
 
 // ===== 安全解析相对子目录（禁止穿越到网站根目录之外）=====
 function safeSubDir($relPath) {
-    $relPath = str_replace('\\', '/', (string)$relPath);
+    $relPath = str_replace(["\0", '\\'], ['', '/'], (string)$relPath);
     $parts = [];
     foreach (explode('/', $relPath) as $seg) {
         $seg = trim($seg);
         if ($seg === '' || $seg === '.') continue;
         if ($seg === '..') return false; // 禁止上跳
-        $parts[] = preg_replace('/[^\w.\-\x{4e00}-\x{9fa5} ()（）\[\]]+/u', '_', $seg);
+        $cleaned = preg_replace('/[\x00-\x1F\x7F]/u', '', $seg);
+        $seg = ($cleaned === null) ? preg_replace('/[[:cntrl:]]/', '', $seg) : $cleaned;
+        $seg = trim((string)$seg);
+        if ($seg === '' || $seg === '.' || $seg === '..') continue;
+        $parts[] = $seg;
     }
     return implode('/', $parts);
 }

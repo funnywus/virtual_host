@@ -9,8 +9,31 @@ const WorkerPool = require('../utils/worker-pool');
 const sshPool = require('../utils/ssh-connection-pool');
 const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath, normalizeRelPath } = require('../services/upload-system-files');
 const pathPosix = require('path').posix;
+const { domainAuthCode, matchAuthCode } = require('../services/ftp-auth');
 
 const router = express.Router();
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/** 清理远程文件名：去掉路径穿越与控制字符，保留中文等 Unicode */
+function sanitizeRemoteFilename(name) {
+  let base = String(name || '').replace(/\\/g, '/');
+  base = pathPosix.basename(base);
+  base = base.replace(/[\x00-\x1f\x7f]/g, '').trim();
+  if (!base || base === '.' || base === '..') {
+    base = `file_${Date.now()}`;
+  }
+  return base;
+}
+
+function remoteAbs(homeDir, ...parts) {
+  const cleaned = parts
+    .filter(p => p != null && p !== '')
+    .map(p => String(p).replace(/\\/g, '/').replace(/^\/+/, ''));
+  return pathPosix.join(homeDir, ...cleaned);
+}
 
 // 创建工作线程池（用于文件操作）
 const fileOperationPool = new WorkerPool(
@@ -24,9 +47,9 @@ const upload = multer({
   limits: { fileSize: 1024 * 1024 * 1024 } // 1GB 限制
 });
 
-// 计算域名的授权码 (MD5完整32位小写)
+// 计算域名的授权码（兼容旧数据回退）
 function getDomainAuthCode(domain) {
-  return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
+  return domainAuthCode(domain);
 }
 
 // PHP 直传 token：HMAC-SHA256(expires, UPLOAD_SIGN_SECRET)，与 upload.php 验签一致
@@ -35,7 +58,7 @@ function generateDirectUploadToken(expires) {
   return crypto.createHmac('sha256', secret).update(String(expires)).digest('hex');
 }
 
-// 根据授权码查找 FTP 账号（auth 校验时可包含已停用账号以便返回明确提示）
+// 根据授权码查找 FTP 账号（优先库内 auth_code，兼容历史域名 MD5）
 async function findFtpByAuthCode(auth_code, { includeDisabled = false } = {}) {
   const statusClause = includeDisabled
     ? ''
@@ -54,11 +77,10 @@ async function findFtpByAuthCode(auth_code, { includeDisabled = false } = {}) {
     WHERE f.status = 'active'${statusClause}
   `);
 
-  const inputCode = auth_code.toLowerCase();
-  return ftpAccounts.find(f => f.full_domain && getDomainAuthCode(f.full_domain) === inputCode);
+  return ftpAccounts.find(f => matchAuthCode(f, auth_code));
 }
 
-// 通过授权码验证 (授权码 = 域名的MD5)
+// 通过授权码验证
 router.post('/auth', async (req, res) => {
   try {
     const { auth_code } = req.body;
@@ -410,7 +432,7 @@ router.post('/list', async (req, res) => {
     }
     
     // 确保路径在home_dir内
-    const targetPath = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
+    const targetPath = dirPath ? remoteAbs(ftp.home_dir, dirPath) : ftp.home_dir;
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
@@ -423,7 +445,7 @@ router.post('/list', async (req, res) => {
       password: ftp.ssh_pass
     };
     
-    const result = await sshPool.exec(config, `ls -la "${targetPath}" 2>/dev/null | tail -n +2`);
+    const result = await sshPool.exec(config, `ls -la -- ${shellQuote(targetPath)} 2>/dev/null | tail -n +2`);
     const dirFiles = result.success ? parseLsOutput(result.output, dirPath || '') : [];
     const file_count = dirFiles.filter(f => f.type === 'file').length;
     const folder_count = dirFiles.filter(f => f.type === 'directory').length;
@@ -561,7 +583,7 @@ router.post('/upload', async (req, res) => {
     }
     
     // 确保路径在home_dir内
-    const targetDir = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
+    const targetDir = dirPath ? pathPosix.join(ftp.home_dir, dirPath) : ftp.home_dir;
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
@@ -569,10 +591,10 @@ router.post('/upload', async (req, res) => {
       return res.status(403).json({ error: '不可上传到系统目录' });
     }
     
-    const targetFile = path.join(targetDir, filename);
+    const targetFile = pathPosix.join(targetDir, sanitizeRemoteFilename(filename));
     
     // 先创建目录（如果不存在）
-    await sshService.exec(`mkdir -p "${targetDir}"`);
+    await sshService.exec(`mkdir -p -- ${shellQuote(targetDir)}`);
     
     // 使用SFTP上传文件（支持大文件）
     try {
@@ -581,12 +603,11 @@ router.post('/upload', async (req, res) => {
       return res.status(500).json({ error: '上传失败: ' + uploadErr.message });
     }
     
-    // 设置权限 755 和所有者 www
-    await sshService.exec(`chmod 755 "${targetFile}"`);
-    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www "${targetFile}" 2>/dev/null`);
-    // 同时设置目录权限
-    await sshService.exec(`chmod 755 "${targetDir}"`);
-    await sshService.exec(`chown www:www "${targetDir}" 2>/dev/null || chown www "${targetDir}" 2>/dev/null`);
+    // 设置权限 755 和所有者 www（shellQuote 保证中文路径安全）
+    await sshService.exec(`chmod 755 -- ${shellQuote(targetFile)}`);
+    await sshService.exec(`chown www:www -- ${shellQuote(targetFile)} 2>/dev/null || chown www -- ${shellQuote(targetFile)} 2>/dev/null`);
+    await sshService.exec(`chmod 755 -- ${shellQuote(targetDir)}`);
+    await sshService.exec(`chown www:www -- ${shellQuote(targetDir)} 2>/dev/null || chown www -- ${shellQuote(targetDir)} 2>/dev/null`);
     
     res.json({ success: true, message: '上传成功' });
   } catch (err) {
@@ -638,18 +659,23 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
     }
     
     // 确保路径在home_dir内
-    const targetDir = dirPath ? path.join(ftp.home_dir, dirPath) : ftp.home_dir;
+    const targetDir = dirPath ? pathPosix.join(ftp.home_dir, dirPath) : ftp.home_dir;
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     if (dirPath && isProtectedPath(dirPath)) {
       return res.status(403).json({ error: '不可上传到系统目录' });
     }
-    
-    const targetFile = path.join(targetDir, filename);
+
+    // filename 字段优先；否则解码 multer 可能误解析为 latin1 的 originalname
+    let uploadName = filename;
+    if (!uploadName && file.originalname) {
+      uploadName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    }
+    const targetFile = pathPosix.join(targetDir, sanitizeRemoteFilename(uploadName || file.originalname));
     
     // 先创建目录（如果不存在）
-    await sshService.exec(`mkdir -p "${targetDir}"`);
+    await sshService.exec(`mkdir -p -- ${shellQuote(targetDir)}`);
     
     // 使用SFTP上传文件（支持大文件）
     try {
@@ -659,11 +685,10 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
     }
     
     // 设置权限 644 和所有者 www
-    await sshService.exec(`chmod 644 "${targetFile}"`);
-    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www "${targetFile}" 2>/dev/null`);
-    // 同时设置目录权限
-    await sshService.exec(`chmod 755 "${targetDir}"`);
-    await sshService.exec(`chown www:www "${targetDir}" 2>/dev/null || chown www "${targetDir}" 2>/dev/null`);
+    await sshService.exec(`chmod 644 -- ${shellQuote(targetFile)}`);
+    await sshService.exec(`chown www:www -- ${shellQuote(targetFile)} 2>/dev/null || chown www -- ${shellQuote(targetFile)} 2>/dev/null`);
+    await sshService.exec(`chmod 755 -- ${shellQuote(targetDir)}`);
+    await sshService.exec(`chown www:www -- ${shellQuote(targetDir)} 2>/dev/null || chown www -- ${shellQuote(targetDir)} 2>/dev/null`);
     
     res.json({ success: true, message: '上传成功' });
   } catch (err) {
@@ -689,21 +714,22 @@ router.post('/mkdir', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetDir = dirPath ? path.join(ftp.home_dir, dirPath, name) : path.join(ftp.home_dir, name);
+    const safeName = sanitizeRemoteFilename(name);
+    const targetDir = remoteAbs(ftp.home_dir, dirPath, safeName);
     if (!targetDir.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
-    const relDir = dirPath ? (dirPath + (name ? '/' + name : '')) : name;
+    const relDir = dirPath ? (dirPath + (safeName ? '/' + safeName : '')) : safeName;
     if (isProtectedPath(relDir) || (dirPath && isProtectedPath(dirPath))) {
       return res.status(403).json({ error: '不可在系统目录下创建' });
     }
     
-    const result = await sshService.exec(`mkdir -p "${targetDir}"`);
+    const result = await sshService.exec(`mkdir -p -- ${shellQuote(targetDir)}`);
     
     // 设置权限 755 和所有者 www
     if (result.success) {
-      await sshService.exec(`chmod 755 "${targetDir}"`);
-      await sshService.exec(`chown www:www "${targetDir}" 2>/dev/null || chown www "${targetDir}" 2>/dev/null`);
+      await sshService.exec(`chmod 755 -- ${shellQuote(targetDir)}`);
+      await sshService.exec(`chown www:www -- ${shellQuote(targetDir)} 2>/dev/null || chown www -- ${shellQuote(targetDir)} 2>/dev/null`);
     }
     
     res.json({ success: result.success, message: result.success ? '创建成功' : '创建失败' });
@@ -730,22 +756,23 @@ router.post('/create-file', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetFile = dirPath ? path.join(ftp.home_dir, dirPath, name) : path.join(ftp.home_dir, name);
+    const safeName = sanitizeRemoteFilename(name);
+    const targetFile = remoteAbs(ftp.home_dir, dirPath, safeName);
     if (!targetFile.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
-    const relFile = dirPath ? `${dirPath}/${name}` : name;
+    const relFile = dirPath ? `${dirPath}/${safeName}` : safeName;
     if (isProtectedPath(relFile) || (dirPath && isProtectedPath(dirPath))) {
       return res.status(403).json({ error: '不可在系统目录下创建文件' });
     }
     
     // 使用 cat 写入文件内容，转义特殊字符
     const escapedContent = (content || '').replace(/'/g, "'\\''");
-    const result = await sshService.exec(`cat > "${targetFile}" << 'EOFCONTENT'\n${escapedContent}\nEOFCONTENT`);
+    const result = await sshService.exec(`cat > ${shellQuote(targetFile)} << 'EOFCONTENT'\n${escapedContent}\nEOFCONTENT`);
     
     // 设置权限 644 和所有者 www
-    await sshService.exec(`chmod 644 "${targetFile}"`);
-    await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www "${targetFile}" 2>/dev/null`);
+    await sshService.exec(`chmod 644 -- ${shellQuote(targetFile)}`);
+    await sshService.exec(`chown www:www -- ${shellQuote(targetFile)} 2>/dev/null || chown www -- ${shellQuote(targetFile)} 2>/dev/null`);
     
     res.json({ success: true, message: '创建成功' });
   } catch (err) {
@@ -781,7 +808,7 @@ router.post('/delete', async (req, res) => {
 
     const targetPaths = [];
     for (const relPath of pathList) {
-      const targetPath = path.join(ftp.home_dir, relPath);
+      const targetPath = remoteAbs(ftp.home_dir, relPath);
       if (!targetPath.startsWith(ftp.home_dir) || targetPath === ftp.home_dir) {
         return res.status(403).json({ error: '无权删除该文件' });
       }
@@ -791,8 +818,8 @@ router.post('/delete', async (req, res) => {
       targetPaths.push(targetPath);
     }
 
-    const quoted = targetPaths.map(p => `"${p.replace(/"/g, '\\"')}"`).join(' ');
-    const result = await sshService.exec(`rm -rf ${quoted}`);
+    const quoted = targetPaths.map(p => shellQuote(p)).join(' ');
+    const result = await sshService.exec(`rm -rf -- ${quoted}`);
 
     res.json({
       success: result.success,
@@ -822,7 +849,7 @@ router.post('/read', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetPath = path.join(ftp.home_dir, filePath);
+    const targetPath = remoteAbs(ftp.home_dir, filePath);
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
@@ -830,7 +857,7 @@ router.post('/read', async (req, res) => {
       return res.status(403).json({ error: '系统文件不可访问' });
     }
     
-    const result = await sshService.exec(`cat "${targetPath}" 2>/dev/null`);
+    const result = await sshService.exec(`cat -- ${shellQuote(targetPath)} 2>/dev/null`);
     
     res.json({ content: result.output || '' });
   } catch (err) {
@@ -856,7 +883,7 @@ router.post('/read-binary', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetPath = path.join(ftp.home_dir, filePath);
+    const targetPath = remoteAbs(ftp.home_dir, filePath);
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
@@ -864,7 +891,7 @@ router.post('/read-binary', async (req, res) => {
       return res.status(403).json({ error: '系统文件不可访问' });
     }
     
-    const result = await sshService.exec(`base64 "${targetPath}" 2>/dev/null | tr -d '\\n'`);
+    const result = await sshService.exec(`base64 -- ${shellQuote(targetPath)} 2>/dev/null | tr -d '\\n'`);
     
     res.json({ content: result.output || '' });
   } catch (err) {
@@ -890,7 +917,7 @@ router.post('/write', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetPath = path.join(ftp.home_dir, filePath);
+    const targetPath = remoteAbs(ftp.home_dir, filePath);
     if (!targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
@@ -900,11 +927,11 @@ router.post('/write', async (req, res) => {
     
     // 将内容转为base64后写入，避免特殊字符问题
     const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-    const result = await sshService.exec(`echo "${base64Content}" | base64 -d > "${targetPath}"`);
+    const result = await sshService.exec(`echo ${shellQuote(base64Content)} | base64 -d > ${shellQuote(targetPath)}`);
     
     if (result.success || result.code === 0) {
       // 设置权限
-      await sshService.exec(`chmod 644 "${targetPath}"`);
+      await sshService.exec(`chmod 644 -- ${shellQuote(targetPath)}`);
       res.json({ success: true, message: '保存成功' });
     } else {
       res.status(500).json({ error: '保存失败' });
@@ -932,8 +959,8 @@ router.post('/rename', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const targetOldPath = path.join(ftp.home_dir, oldPath);
-    const targetNewPath = path.join(ftp.home_dir, newPath);
+    const targetOldPath = remoteAbs(ftp.home_dir, oldPath);
+    const targetNewPath = remoteAbs(ftp.home_dir, newPath);
     
     if (!targetOldPath.startsWith(ftp.home_dir) || !targetNewPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
@@ -942,11 +969,130 @@ router.post('/rename', async (req, res) => {
       return res.status(403).json({ error: '系统文件不可修改' });
     }
     
-    const result = await sshService.exec(`mv "${targetOldPath}" "${targetNewPath}"`);
+    const result = await sshService.exec(`mv -- ${shellQuote(targetOldPath)} ${shellQuote(targetNewPath)}`);
     
     res.json({ success: result.success, message: result.success ? '重命名成功' : '重命名失败' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+function contentDisposition(filename) {
+  const ascii = String(filename || 'download')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(filename || 'download');
+  return `attachment; filename="${ascii || 'download'}"; filename*=UTF-8''${encoded}`;
+}
+
+// 打包下载到浏览器：单文件直传；多文件/目录先在远端 zip 再流式返回
+router.post('/download', async (req, res) => {
+  let tmpZip = null;
+  let sshService = null;
+  try {
+    const { auth_code, paths } = req.body;
+    const pathList = Array.isArray(paths) ? paths.filter(Boolean) : [];
+    if (!pathList.length) {
+      return res.status(400).json({ error: '未指定下载路径' });
+    }
+    if (pathList.length > 200) {
+      return res.status(400).json({ error: '一次最多下载 200 个路径' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    for (const rel of pathList) {
+      const abs = remoteAbs(ftp.home_dir, rel);
+      if (!abs.startsWith(ftp.home_dir) || abs === ftp.home_dir) {
+        return res.status(403).json({ error: '无权下载该路径' });
+      }
+      if (isProtectedPath(rel)) {
+        return res.status(403).json({ error: '系统文件不可下载' });
+      }
+    }
+
+    sshService = new SshFtpService({
+      ip: ftp.ip,
+      port: ftp.ssh_port,
+      username: ftp.ssh_user,
+      password: ftp.ssh_pass
+    });
+
+    // 单文件且是普通文件：直接流式下载
+    if (pathList.length === 1) {
+      const abs = remoteAbs(ftp.home_dir, pathList[0]);
+      const typeCheck = await sshService.exec(
+        `if [ -d ${shellQuote(abs)} ]; then echo dir; elif [ -f ${shellQuote(abs)} ]; then echo file; else echo missing; fi`
+      );
+      const kind = (typeCheck.output || '').trim();
+      if (kind === 'missing') {
+        return res.status(404).json({ error: '文件不存在' });
+      }
+      if (kind === 'file') {
+        const name = pathPosix.basename(pathList[0]);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', contentDisposition(name));
+        req.setTimeout(0);
+        res.setTimeout(0);
+        await sshService.streamRemoteFile(abs, res);
+        return;
+      }
+      // 目录走 zip
+    }
+
+    // 多选或目录：远端 zip
+    tmpZip = `/tmp/vhost_dl_${crypto.randomBytes(8).toString('hex')}.zip`;
+    const relArgs = pathList.map(p => shellQuote(String(p).replace(/^\/+/, ''))).join(' ');
+    const zipCmd = `cd ${shellQuote(ftp.home_dir)} && zip -r -q ${shellQuote(tmpZip)} ${relArgs}`;
+    const zipResult = await sshService.exec(zipCmd, 600000);
+    if (!zipResult.success) {
+      await sshService.exec(`rm -f -- ${shellQuote(tmpZip)}`).catch(() => {});
+      return res.status(500).json({ error: '打包失败: ' + (zipResult.output || '未知错误') });
+    }
+
+    const sizeCheck = await sshService.exec(`stat -c%s ${shellQuote(tmpZip)} 2>/dev/null || wc -c < ${shellQuote(tmpZip)}`);
+    const zipSize = parseInt(String(sizeCheck.output || '').trim(), 10) || 0;
+    const maxZip = 1024 * 1024 * 1024; // 1GB
+    if (zipSize > maxZip) {
+      await sshService.exec(`rm -f -- ${shellQuote(tmpZip)}`);
+      return res.status(400).json({ error: '打包后超过 1GB，请缩小选择范围' });
+    }
+
+    let downloadName = 'files.zip';
+    if (pathList.length === 1) {
+      downloadName = `${pathPosix.basename(pathList[0])}.zip`;
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', contentDisposition(downloadName));
+    if (zipSize > 0) res.setHeader('Content-Length', String(zipSize));
+    req.setTimeout(0);
+    res.setTimeout(0);
+
+    res.on('close', () => {
+      if (tmpZip && sshService) {
+        sshService.exec(`rm -f -- ${shellQuote(tmpZip)}`).catch(() => {});
+        tmpZip = null;
+      }
+    });
+
+    await sshService.streamRemoteFile(tmpZip, res);
+    if (tmpZip) {
+      await sshService.exec(`rm -f -- ${shellQuote(tmpZip)}`).catch(() => {});
+      tmpZip = null;
+    }
+  } catch (err) {
+    if (tmpZip && sshService) {
+      await sshService.exec(`rm -f -- ${shellQuote(tmpZip)}`).catch(() => {});
+    }
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || '下载失败' });
+    } else {
+      res.end();
+    }
   }
 });
 
@@ -1124,8 +1270,8 @@ router.post('/cut', async (req, res) => {
       password: ftp.ssh_pass
     });
     
-    const sourcePath = path.join(ftp.home_dir, source_path);
-    const targetPath = path.join(ftp.home_dir, target_path);
+    const sourcePath = remoteAbs(ftp.home_dir, source_path);
+    const targetPath = remoteAbs(ftp.home_dir, target_path);
     
     if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
@@ -1135,7 +1281,7 @@ router.post('/cut', async (req, res) => {
     }
     
     // 使用 mv 移动
-    const result = await sshService.exec(`mv "${sourcePath}" "${targetPath}"`);
+    const result = await sshService.exec(`mv -- ${shellQuote(sourcePath)} ${shellQuote(targetPath)}`);
     
     if (result.success || result.code === 0) {
       res.json({ success: true, message: '移动成功' });

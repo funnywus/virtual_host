@@ -400,6 +400,56 @@ EOF'`);
       });
     });
   }
+
+  /**
+   * 将远端文件流式 pipe 到可写流（如 HTTP response）
+   */
+  streamRemoteFile(remotePath, writable) {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
+      let settled = false;
+
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        try { conn.end(); } catch (_) { /* ignore */ }
+        if (err) reject(err);
+        else resolve();
+      };
+
+      conn.on('ready', () => {
+        conn.sftp((err, sftp) => {
+          if (err) return finish(err);
+          const rs = sftp.createReadStream(remotePath);
+          rs.on('error', (e) => finish(e));
+          writable.on('error', (e) => {
+            try { rs.destroy(); } catch (_) { /* ignore */ }
+            finish(e);
+          });
+          writable.on('close', () => {
+            if (!settled) {
+              try { rs.destroy(); } catch (_) { /* ignore */ }
+              finish();
+            }
+          });
+          rs.on('end', () => finish());
+          rs.pipe(writable);
+        });
+      });
+
+      conn.on('error', (err) => finish(err));
+
+      conn.connect({
+        host: this.server.ip,
+        port: this.server.port || 22,
+        username: this.server.username,
+        password: this.server.password,
+        readyTimeout: 30000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 360
+      });
+    });
+  }
 }
 
 module.exports = SshFtpService;

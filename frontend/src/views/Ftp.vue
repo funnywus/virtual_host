@@ -3,12 +3,21 @@
     <div class="card-title">
       <span>FTP账号列表</span>
       <div>
-        <el-input v-model="searchKeyword" placeholder="搜索域名/用户名" clearable style="width:180px;margin-right:10px" size="small" />
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索域名/用户名/授权码"
+          clearable
+          style="width:200px;margin-right:10px"
+          size="small"
+          @clear="onSearch"
+          @keyup.enter="onSearch"
+        />
+        <el-button size="small" @click="onSearch">搜索</el-button>
         <el-button size="small" @click="loadData" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
         <el-button type="primary" size="small" @click="openDialog()">添加FTP账号</el-button>
       </div>
     </div>
-    <el-table :data="filteredFtpAccounts" stripe>
+    <el-table :data="dataStore.ftpAccounts" stripe v-loading="loading">
       <el-table-column prop="full_domain" label="关联域名" min-width="160">
         <template #default="{ row }"><span class="full-domain">{{ row.full_domain }}</span></template>
       </el-table-column>
@@ -84,6 +93,8 @@
               <el-dropdown-menu>
                 <el-dropdown-item @click="openDialog(row)">编辑</el-dropdown-item>
                 <el-dropdown-item @click="resetPassword(row.id)">重置密码</el-dropdown-item>
+                <el-dropdown-item @click="resetAuthCode(row)">重置授权码</el-dropdown-item>
+                <el-dropdown-item @click="copyUploadLink(row)">复制上传链接</el-dropdown-item>
                 <el-dropdown-item divided @click="handleDelete(row.id)" style="color:#f56c6c">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -106,7 +117,7 @@
     </div>
     
     <el-alert type="info" :closable="false" style="margin-top:15px">
-      <p>客户上传地址: <a :href="uploadUrl" target="_blank" style="color:#409eff">{{ uploadUrl }}</a></p>
+      <p>客户上传入口: <a :href="uploadUrl" target="_blank" style="color:#409eff">{{ uploadUrl }}</a>（携带授权码：<code>{{ uploadUrl }}?code=授权码</code>）</p>
     </el-alert>
 
     <AppDialog v-model="dialogVisible" :title="form.id ? '编辑FTP账号' : '添加FTP账号'" width="500px" :loading="saving" @confirm="handleSave">
@@ -126,7 +137,7 @@
               <el-option label="MB" value="MB" />
               <el-option label="GB" value="GB" />
             </el-select>
-            <span style="color:#909399;font-size:12px">默认 200 MB</span>
+            <span style="color:#909399;font-size:12px">默认 500 MB</span>
           </div>
         </el-form-item>
       </el-form>
@@ -135,7 +146,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
@@ -151,11 +162,11 @@ const availableSubdomains = ref([])
 const searchKeyword = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
-const form = reactive({ id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 209715200, upload_size_value: 200, upload_size_unit: 'MB' })
+const form = reactive({ id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 524288000, upload_size_value: 500, upload_size_unit: 'MB' })
 
 // 计算实际字节数
 function calcMaxUploadSize() {
-  const value = form.upload_size_value || 200
+  const value = form.upload_size_value || 500
   if (form.upload_size_unit === 'GB') {
     return value * 1024 * 1024 * 1024
   }
@@ -164,35 +175,39 @@ function calcMaxUploadSize() {
 
 // 从字节数解析为值和单位
 function parseUploadSize(bytes) {
-  if (!bytes) return { value: 200, unit: 'MB' }
+  if (!bytes) return { value: 500, unit: 'MB' }
   const gb = bytes / (1024 * 1024 * 1024)
   if (gb >= 1 && gb === Math.floor(gb)) {
     return { value: gb, unit: 'GB' }
   }
   return { value: Math.round(bytes / (1024 * 1024)), unit: 'MB' }
 }
-const uploadUrl = computed(() => window.location.origin + '/upload')
-
-const filteredFtpAccounts = computed(() => {
-  if (!searchKeyword.value) return dataStore.ftpAccounts
-  const kw = searchKeyword.value.toLowerCase()
-  return dataStore.ftpAccounts.filter(f => 
-    f.full_domain?.toLowerCase().includes(kw) ||
-    f.username?.toLowerCase().includes(kw) ||
-    f.server_name?.toLowerCase().includes(kw)
-  )
-})
+const uploadUrl = computed(() => window.location.origin + '/')
 
 onMounted(() => loadData())
+
+let searchTimer = null
+watch(searchKeyword, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1
+    loadData()
+  }, 350)
+})
 
 async function loadData() {
   loading.value = true
   try {
-    await dataStore.loadFtpAccounts(currentPage.value, pageSize.value)
+    await dataStore.loadFtpAccounts(currentPage.value, pageSize.value, searchKeyword.value.trim())
     loadUsageForCurrentPage()
   } finally {
     loading.value = false
   }
+}
+
+function onSearch() {
+  currentPage.value = 1
+  loadData()
 }
 
 async function loadUsageForCurrentPage() {
@@ -238,13 +253,13 @@ async function openDialog(row = null) {
       subdomain_id: row.subdomain_id, 
       username: row.username, 
       home_dir: row.home_dir, 
-      max_upload_size: row.max_upload_size || 209715200,
+      max_upload_size: row.max_upload_size || 524288000,
       upload_size_value: parsed.value,
       upload_size_unit: parsed.unit
     })
   } else {
     availableSubdomains.value = await api.get('/ftp/available-subdomains')
-    Object.assign(form, { id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 209715200, upload_size_value: 200, upload_size_unit: 'MB' })
+    Object.assign(form, { id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 524288000, upload_size_value: 500, upload_size_unit: 'MB' })
   }
   dialogVisible.value = true
 }
@@ -282,6 +297,31 @@ async function resetPassword(id) {
   const res = await api.post(`/ftp/${id}/reset-password`)
   ElMessage.success(`新密码: ${res.password}`)
   loadData()
+}
+
+async function resetAuthCode(row) {
+  await ElMessageBox.confirm(
+    '重置后旧授权码立即失效，客户需使用新授权码登录上传页。确定继续？',
+    '重置授权码',
+    { type: 'warning' }
+  )
+  const res = await api.post(`/ftp/${row.id}/reset-auth-code`)
+  row.auth_code = res.auth_code
+  ElMessageBox.alert(`新授权码：\n${res.auth_code}`, '授权码已重置', {
+    confirmButtonText: '复制并关闭',
+    callback: () => copyText(res.auth_code)
+  })
+  loadData()
+}
+
+function copyUploadLink(row) {
+  if (!row.auth_code) {
+    ElMessage.error('暂无授权码')
+    return
+  }
+  const link = `${window.location.origin}/?code=${row.auth_code}`
+  copyText(link)
+  ElMessage.success('上传链接已复制')
 }
 
 // 计算使用百分比

@@ -154,6 +154,22 @@
                 </label>
               </el-tooltip>
             </div>
+            <el-dropdown trigger="click" popper-class="loft-file-dropdown" @command="setTypeFilter">
+              <button type="button" class="mac-tool-btn" :title="'类型筛选：' + typeFilterLabel">
+                <el-icon><Filter /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="all" :class="{ 'is-active-sort': typeFilter === 'all' }">全部类型</el-dropdown-item>
+                  <el-dropdown-item command="image" :class="{ 'is-active-sort': typeFilter === 'image' }">图片</el-dropdown-item>
+                  <el-dropdown-item command="video" :class="{ 'is-active-sort': typeFilter === 'video' }">视频</el-dropdown-item>
+                  <el-dropdown-item command="audio" :class="{ 'is-active-sort': typeFilter === 'audio' }">音频</el-dropdown-item>
+                  <el-dropdown-item command="doc" :class="{ 'is-active-sort': typeFilter === 'doc' }">文档</el-dropdown-item>
+                  <el-dropdown-item command="archive" :class="{ 'is-active-sort': typeFilter === 'archive' }">压缩包</el-dropdown-item>
+                  <el-dropdown-item command="code" :class="{ 'is-active-sort': typeFilter === 'code' }">代码</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-dropdown v-if="viewMode === 'grid'" trigger="click" popper-class="loft-file-dropdown" @command="handleSortCommand">
               <button type="button" class="mac-tool-btn" title="排序方式">
                 <el-icon><Sort /></el-icon>
@@ -240,6 +256,7 @@
                     <el-button type="warning" size="small" @click="cutFiles">剪切</el-button>
                     <el-button size="small" @click="openMoveDialogSelected">移动到...</el-button>
                     <el-button type="success" size="small" @click="compressFiles">压缩</el-button>
+                    <el-button size="small" :loading="downloading" @click="downloadSelected">下载</el-button>
                     <el-button size="small" :disabled="selectedDirectories.length === 0" @click="liftSelectedFolders">
                       <el-icon style="margin-right:4px"><Top /></el-icon>提取到上级
                     </el-button>
@@ -266,7 +283,7 @@
             class="file-list"
             :class="{
               'drag-over': isFileDragOver,
-              'empty-list': files.length === 0
+              'empty-list': displayFiles.length === 0
             }"
             v-loading="loading"
             @dragover.prevent="handleFileDragOver"
@@ -275,7 +292,7 @@
           >
           <!-- 列表视图 -->
           <template v-if="viewMode === 'list'">
-            <div v-if="files.length > 0" class="file-list-head">
+            <div v-if="displayFiles.length > 0" class="file-list-head">
               <div class="file-checkbox"></div>
               <div class="file-icon"></div>
               <div class="file-sort-col file-sort-name" @click="toggleSort('name')">
@@ -292,7 +309,7 @@
               </div>
               <div class="file-actions-head"></div>
             </div>
-            <div v-for="file in files" :key="fileKey(file)" class="file-item"
+            <div v-for="file in displayFiles" :key="fileKey(file)" class="file-item"
                  :data-file-key="fileKey(file)"
                  draggable="true"
                  :class="{
@@ -364,6 +381,9 @@
                           <el-icon><Delete /></el-icon>清空文件夹
                         </el-dropdown-item>
                       </template>
+                      <el-dropdown-item @click="downloadSingleFile(file)">
+                        <el-icon><Download /></el-icon>下载
+                      </el-dropdown-item>
                       <el-dropdown-item @click="compressSingleFile(file)">
                         <el-icon><Files /></el-icon>压缩
                       </el-dropdown-item>
@@ -395,7 +415,7 @@
           <!-- 网格视图 -->
           <template v-else>
             <div class="file-grid">
-              <div v-for="file in files" :key="fileKey(file)" class="grid-item"
+              <div v-for="file in displayFiles" :key="fileKey(file)" class="grid-item"
                    :data-file-key="fileKey(file)"
                    draggable="true"
                    :class="{
@@ -449,6 +469,9 @@
                           <el-icon><Delete /></el-icon>清空文件夹
                         </el-dropdown-item>
                       </template>
+                      <el-dropdown-item @click="downloadSingleFile(file)">
+                        <el-icon><Download /></el-icon>下载
+                      </el-dropdown-item>
                       <el-dropdown-item @click="compressSingleFile(file)">
                         <el-icon><Files /></el-icon>压缩
                       </el-dropdown-item>
@@ -495,6 +518,14 @@
                 <el-button @click="showMkdirDialog = true">新建文件夹</el-button>
               </div>
             </template>
+          </div>
+          <div v-else-if="!loading && displayFiles.length === 0" class="empty-tip">
+            <div class="empty-icon">🔎</div>
+            <p style="font-size:16px;margin-bottom:10px">没有「{{ typeFilterLabel }}」类型的文件</p>
+            <p class="empty-hint">当前目录有 {{ files.length }} 项，已被类型筛选隐藏</p>
+            <div class="quick-actions">
+              <el-button @click="setTypeFilter('all')">清除筛选</el-button>
+            </div>
           </div>
           </div>
 
@@ -1055,6 +1086,10 @@
 
             <div class="loft-ctx-divider" />
 
+            <button type="button" class="loft-ctx-item" @click="runCtx(downloadSingleFile, contextMenu.file)">
+              <el-icon><Download /></el-icon>
+              <span>下载</span>
+            </button>
             <button type="button" class="loft-ctx-item" @click="runCtx(compressSingleFile, contextMenu.file)">
               <el-icon><Files /></el-icon>
               <span>压缩</span>
@@ -1099,7 +1134,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, ArrowLeft, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck, Top, Search } from '@element-plus/icons-vue'
+import { Key, Link, HomeFilled, Upload, FolderAdd, Refresh, Delete, Close, Edit, View, ArrowDown, ArrowLeft, Document, Folder, QuestionFilled, Service, DocumentCopy, InfoFilled, Star, Promotion, EditPen, List, Grid, MoreFilled, FolderOpened, Scissor, Files, WarningFilled, Clock, CircleCheck, Top, Search, Filter, Download, Sort, SortUp, SortDown, SwitchButton } from '@element-plus/icons-vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { ChunkedUploader } from '@/utils/chunked-upload'
 import { PhpDirectUploader } from '@/utils/php-direct-upload'
@@ -1170,6 +1205,7 @@ const onContextMenuKeydown = (e) => {
 const currentPath = ref('')
 const files = ref([])
 const loading = ref(false)
+const downloading = ref(false)
 const viewMode = ref('list')
 const currentPage = ref(1)
 const pageSize = ref(50)
@@ -1180,7 +1216,45 @@ const searchKeyword = ref('')
 const searchSubdirs = ref(localStorage.getItem('upload_search_subdirs') === 'true')
 const sortBy = ref(localStorage.getItem('upload_sort_by') || 'name')
 const sortOrder = ref(localStorage.getItem('upload_sort_order') || 'asc')
+const typeFilter = ref(localStorage.getItem('upload_type_filter') || 'all')
 
+const TYPE_FILTER_EXTS = {
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'heic'],
+  video: ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v'],
+  audio: ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'],
+  doc: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'rtf'],
+  archive: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz'],
+  code: ['js', 'ts', 'jsx', 'tsx', 'vue', 'php', 'py', 'html', 'css', 'scss', 'json', 'sql', 'xml', 'yml', 'yaml', 'sh', 'go', 'java', 'c', 'cpp', 'h']
+}
+
+const TYPE_FILTER_LABELS = {
+  all: '全部类型',
+  image: '图片',
+  video: '视频',
+  audio: '音频',
+  doc: '文档',
+  archive: '压缩包',
+  code: '代码'
+}
+
+const typeFilterLabel = computed(() => TYPE_FILTER_LABELS[typeFilter.value] || '全部类型')
+
+const displayFiles = computed(() => {
+  if (typeFilter.value === 'all') return files.value
+  const exts = TYPE_FILTER_EXTS[typeFilter.value] || []
+  return files.value.filter((f) => {
+    if (f.type === 'directory') return false
+    const ext = (f.name.split('.').pop() || '').toLowerCase()
+    if (typeFilter.value === 'archive' && f.name.toLowerCase().endsWith('.tar.gz')) return true
+    return exts.includes(ext)
+  })
+})
+
+const setTypeFilter = (cmd) => {
+  typeFilter.value = cmd
+  localStorage.setItem('upload_type_filter', cmd)
+  selectedFiles.value = []
+}
 // 深色模式：'system'(跟随系统) | 'light'(强制浅色) | 'dark'(强制深色)，持久化到 localStorage
 const themeMode = ref(localStorage.getItem('upload_theme_mode') || 'system')
 const systemPrefersDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false)
@@ -1205,6 +1279,16 @@ let skipSearchWatch = false
 
 const fileKey = (file) => file.rel_path || file.name
 const fileRelPath = (file) => file.rel_path ?? (currentPath.value ? `${currentPath.value}/${file.name}` : file.name)
+/** 将相对路径编码为可在浏览器中打开的 URL 路径（支持中文文件名） */
+const encodeFileUrlPath = (relPath) => String(relPath || '')
+  .split('/')
+  .filter(Boolean)
+  .map((seg) => encodeURIComponent(seg))
+  .join('/')
+const fileSiteUrl = (file) => {
+  const encoded = encodeFileUrlPath(fileRelPath(file))
+  return encoded ? `${siteUrl.value}/${encoded}` : siteUrl.value
+}
 const fileParentHint = (file) => {
   const rel = fileRelPath(file)
   const idx = rel.lastIndexOf('/')
@@ -1239,8 +1323,8 @@ const clearSelection = () => {
 }
 
 const selectAll = () => {
-  selectedFiles.value = [...files.value]
-  ElMessage.success(`已选中 ${files.value.length} 个项目`)
+  selectedFiles.value = [...displayFiles.value]
+  ElMessage.success(`已选中 ${displayFiles.value.length} 个项目`)
 }
 
 const handleFileClick = (event, file) => {
@@ -1530,6 +1614,64 @@ const emptyFolder = async (file) => {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+// 下载选中项（打包为 zip 或单文件直传）
+const downloadPaths = async (paths, fallbackName = 'files.zip') => {
+  if (!paths?.length) return
+  downloading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/upload/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_code: authCode.value, paths })
+    })
+    if (!res.ok) {
+      let msg = `下载失败 (${res.status})`
+      try {
+        const data = await res.json()
+        msg = data.error || msg
+      } catch (_) { /* ignore */ }
+      throw new Error(msg)
+    }
+    const blob = await res.blob()
+    let filename = fallbackName
+    const disposition = res.headers.get('Content-Disposition') || ''
+    const utfMatch = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)
+    const plainMatch = disposition.match(/filename\s*=\s*"?([^";]+)"?/i)
+    if (utfMatch) {
+      try { filename = decodeURIComponent(utfMatch[1]) } catch (_) { filename = utfMatch[1] }
+    } else if (plainMatch) {
+      filename = plainMatch[1]
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    ElMessage.success('开始下载')
+  } catch (e) {
+    ElMessage.error(e.message || '下载失败')
+  } finally {
+    downloading.value = false
+  }
+}
+
+const downloadSelected = async () => {
+  if (selectedFiles.value.length === 0) return
+  const paths = selectedFiles.value.map((f) => fileRelPath(f))
+  const name = paths.length === 1
+    ? (selectedFiles.value[0].type === 'directory' ? `${selectedFiles.value[0].name}.zip` : selectedFiles.value[0].name)
+    : 'files.zip'
+  await downloadPaths(paths, name)
+}
+
+const downloadSingleFile = async (file) => {
+  const name = file.type === 'directory' ? `${file.name}.zip` : file.name
+  await downloadPaths([fileRelPath(file)], name)
 }
 
 // 压缩文件
@@ -2067,7 +2209,7 @@ const loadDirectUploadConfig = async () => {
 const logout = () => { authorized.value = false; authCode.value = ''; localStorage.removeItem('upload_auth_code') }
 const openWebsite = () => window.open(siteUrl.value, '_blank')
 const openFileUrl = (file) => {
-  window.open(`${siteUrl.value}/${fileRelPath(file)}`, '_blank')
+  window.open(fileSiteUrl(file), '_blank')
 }
 const copyWechat = () => {
   navigator.clipboard.writeText('feiyu3305')
@@ -2957,8 +3099,8 @@ const previewFile = async (file) => {
       ElMessage.error('预览失败: ' + e.message)
     }
   } else if (type === 'video' || type === 'audio' || type === 'pdf') {
-    // 视频/音频/PDF：直接用站点URL访问
-    previewUrl.value = `${siteUrl.value}/${filePath}`
+    // 视频/音频/PDF：直接用站点URL访问（中文路径需 percent-encode）
+    previewUrl.value = `${siteUrl.value}/${encodeFileUrlPath(filePath)}`
     showPreviewDialog.value = true
   } else if (type === 'markdown') {
     // Markdown：读取内容后前端渲染

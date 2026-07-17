@@ -37,7 +37,7 @@ export class ChunkedUploader {
         body: JSON.stringify({
           auth_code: this.authCode,
           path: this.path,
-          filename: this.file.name,
+          filename: (this.file.name || 'file').split(/[/\\]/).pop(),
           total_chunks: this.totalChunks,
           file_size: this.file.size
         })

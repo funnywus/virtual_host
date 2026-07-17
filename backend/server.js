@@ -17,8 +17,6 @@ const uploadChunkedRoutes = require('./routes/upload-chunked');
 const sslRoutes = require('./routes/ssl');
 const tagsRoutes = require('./routes/tags');
 const systemRoutes = require('./routes/system');
-const SshFtpService = require('./services/ssh-ftp');
-const sslCert = require('./services/ssl-cert');
 const WebSocketSFTPProxy = require('./services/ws-sftp-proxy');
 const { initSslLogWebSocket } = require('./services/ssl-log-ws');
 
@@ -174,59 +172,13 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// SSL证书状态检查函数
+// SSL 证书检查 + 自动续期
 async function checkAllSslStatus() {
-  console.log('[SSL Check] 开始检查所有域名证书状态...');
+  console.log('[SSL Check] 开始检查证书状态并执行自动续期...');
   try {
-    const domains = await db.all('SELECT * FROM domains WHERE ssl_status = ?', ['active']);
-    
-    for (const domain of domains) {
-      try {
-        // 获取服务器
-        let server = await db.get(`
-          SELECT sv.* FROM subdomains s
-          LEFT JOIN servers sv ON s.server_id = sv.id
-          WHERE s.domain_id = ? AND sv.id IS NOT NULL
-          LIMIT 1
-        `, [domain.id]);
-        
-        if (!server) {
-          server = await db.get('SELECT * FROM servers LIMIT 1');
-        }
-        
-        if (!server) continue;
-        
-        const sshService = new SshFtpService({
-          ip: server.ip,
-          port: server.port,
-          username: server.username,
-          password: server.password
-        });
-        
-        const checkCmd = sslCert.getCheckCommand(domain.domain);
-        const result = await sshService.exec(checkCmd);
-        
-        if (result.output?.includes('CERT_EXISTS=true')) {
-          const afterMatch = result.output.match(/notAfter=(.+)/);
-          if (afterMatch) {
-            // 解析 openssl 日期格式为标准格式
-            let expiresAt = afterMatch[1].trim();
-            try {
-              const d = new Date(expiresAt);
-              if (!isNaN(d.getTime())) {
-                expiresAt = formatTime(d);
-              }
-            } catch (e) {}
-            await db.run('UPDATE domains SET ssl_expires = ? WHERE id = ?', [expiresAt, domain.id]);
-            console.log(`[SSL Check] ${domain.domain} 证书有效期: ${expiresAt}`);
-          }
-        }
-      } catch (err) {
-        console.error(`[SSL Check] ${domain.domain} 检查失败:`, err.message);
-      }
-    }
-    
-    console.log('[SSL Check] 证书状态检查完成');
+    const { checkAndAutoRenew } = require('./services/ssl-auto-renew');
+    const result = await checkAndAutoRenew();
+    console.log(`[SSL Check] ${result.message}`);
   } catch (err) {
     console.error('[SSL Check] 检查失败:', err.message);
   }
@@ -238,12 +190,11 @@ async function checkExpiredSubdomains() {
   try {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     
-    // 获取所有已过期但未停用的子域名
+    // 获取所有已过期但未停用的子域名（禁用 Nginx，不动 DNS）
     const expiredSubs = await db.all(`
-      SELECT s.*, d.domain as main_domain, ac.access_key, ac.secret_key, ac.platform 
+      SELECT s.id, s.subdomain, d.domain as main_domain
       FROM subdomains s 
       LEFT JOIN domains d ON s.domain_id = d.id 
-      LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id 
       WHERE s.expire_at IS NOT NULL AND s.expire_at < ? AND s.use_status != 'disabled'
     `, [now]);
 
@@ -252,55 +203,24 @@ async function checkExpiredSubdomains() {
       return;
     }
 
-    const AliyunDns = require('./services/aliyun-dns');
-    const TencentDns = require('./services/tencent-dns');
+    const lifecycle = require('./services/subdomain-lifecycle');
 
     for (const sub of expiredSubs) {
       try {
-        // 删除DNS记录
-        if (sub.aliyun_record_id && sub.access_key && sub.secret_key) {
-          let dns;
-          if (sub.platform === 'tencent') {
-            dns = new TencentDns(sub.access_key, sub.secret_key);
-            await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
-          } else {
-            dns = new AliyunDns(sub.access_key, sub.secret_key);
-            await dns.deleteRecord(sub.aliyun_record_id);
-          }
-        }
-        
-        await db.run('UPDATE subdomains SET use_status = ?, aliyun_record_id = NULL, status = ? WHERE id = ?', 
-          ['disabled', 'disabled', sub.id]);
-        console.log(`[Expire Check] 已停用过期子域名: ${sub.subdomain}.${sub.main_domain}`);
+        const result = await lifecycle.disableSubdomain(sub.id);
+        console.log(`[Expire Check] 已停用 ${sub.subdomain}.${sub.main_domain}: ${result.message}`);
       } catch (err) {
         console.error(`[Expire Check] 停用 ${sub.subdomain}.${sub.main_domain} 失败:`, err.message);
       }
     }
 
-    console.log(`[Expire Check] 已处理 ${expiredSubs.length} 个过期子域名`);
+    console.log(`[Expire Check] 已处理 ${expiredSubs.length} 个过期子域名（Nginx 禁用，DNS 未改动）`);
   } catch (err) {
     console.error('[Expire Check] 检查失败:', err.message);
   }
 }
 
-// 每天凌晨3点检查证书状态
-function scheduleSslCheck() {
-  const now = new Date();
-  const next3am = new Date(now);
-  next3am.setHours(3, 0, 0, 0);
-  if (next3am <= now) {
-    next3am.setDate(next3am.getDate() + 1);
-  }
-  
-  const delay = next3am - now;
-  console.log(`[SSL Check] 下次检查时间: ${next3am.toLocaleString()}`);
-  
-  setTimeout(() => {
-    checkAllSslStatus();
-    // 之后每24小时检查一次
-    setInterval(checkAllSslStatus, 24 * 60 * 60 * 1000);
-  }, delay);
-}
+const { initSslSchedule } = require('./services/ssl-schedule');
 
 // 前端路由
 app.get('*', (req, res) => {
@@ -324,8 +244,8 @@ initSslLogWebSocket(server);
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket SFTP Proxy available at ws://localhost:${PORT}/ws-upload`);
-  // 启动SSL证书定时检查
-  scheduleSslCheck();
+  // 启动 SSL 证书定时检查（支持设置变更后热更新）
+  initSslSchedule(checkAllSslStatus);
   // 启动时也检查一次
   setTimeout(checkAllSslStatus, 5000);
   // 每小时检查一次过期子域名

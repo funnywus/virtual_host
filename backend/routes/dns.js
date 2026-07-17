@@ -71,10 +71,7 @@ function generatePassword(length = 12) {
   return password;
 }
 
-// 生成授权码 (域名MD5完整32位小写)
-function generateAuthCode(domain) {
-  return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
-}
+const { randomAuthCode, resolveAuthCode } = require('../services/ftp-auth');
 
 // 生成FTP用户名
 function generateUsername(subdomain, domain) {
@@ -320,9 +317,18 @@ router.get('/generate-subdomain', async (req, res) => {
 });
 
 // 批量生成子域名
+const DEFAULT_FTP_MAX_UPLOAD_SIZE = 524288000; // 500MB
+
+function resolveMaxUploadSize(value) {
+  const size = Number(value);
+  if (Number.isFinite(size) && size > 0) return Math.floor(size);
+  return DEFAULT_FTP_MAX_UPLOAD_SIZE;
+}
+
 router.post('/batch-create', async (req, res) => {
   try {
-    const { domain_id, server_id, count, record_type, ttl, auto_ftp, auto_nginx, nginx_type, prefix = 'ly', suffix = '', subdomain_length = 8, duration_days = 31 } = req.body;
+    const { domain_id, server_id, count, record_type, ttl, auto_ftp, auto_nginx, nginx_type, prefix = 'ly', suffix = '', subdomain_length = 8, duration_days = 31, max_upload_size } = req.body;
+    const ftpMaxUploadSize = resolveMaxUploadSize(max_upload_size);
     
     if (!domain_id || !count || count < 1 || count > 100) {
       return res.status(400).json({ error: '请选择域名并输入有效数量(1-100)' });
@@ -375,14 +381,14 @@ router.post('/batch-create', async (req, res) => {
         if (auto_ftp !== false && server) {
           const ftpUsername = generateUsername(subdomain, domain.domain);
           const ftpPassword = generatePassword();
-          const ftpAuthCode = generateAuthCode(fullDomain);
+          const ftpAuthCode = randomAuthCode();
           
           await db.run(
-            'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending']
+            'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
           );
           
-          ftpInfo = { username: ftpUsername, password: ftpPassword, auth_code: ftpAuthCode, home_dir: ftpHomeDir };
+          ftpInfo = { username: ftpUsername, password: ftpPassword, auth_code: ftpAuthCode, home_dir: ftpHomeDir, max_upload_size: ftpMaxUploadSize };
 
           // 同步FTP到服务器
           if (sshService) {
@@ -525,19 +531,24 @@ router.get('/subdomains', async (req, res) => {
         s.record_value LIKE ? OR
         sv.name LIKE ? OR
         sv.ip LIKE ? OR
-        s.remark LIKE ?
+        s.remark LIKE ? OR
+        f.auth_code LIKE ?
       )`);
-      params.push(likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword);
+      params.push(likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword, likeKeyword);
     }
     
     const whereSql = whereParts.length ? ` WHERE ${whereParts.join(' AND ')}` : '';
+    const fromSql = `
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      LEFT JOIN ftp_accounts f ON f.subdomain_id = s.id
+    `;
     
     // 获取总数
     const countSql = `
       SELECT COUNT(*) as total
-      FROM subdomains s
-      LEFT JOIN domains d ON s.domain_id = d.id
-      LEFT JOIN servers sv ON s.server_id = sv.id
+      ${fromSql}
       ${whereSql}
     `;
     const countResult = await db.get(countSql, params);
@@ -547,16 +558,19 @@ router.get('/subdomains', async (req, res) => {
     const sql = `
       SELECT s.*, d.domain as main_domain, sv.name as server_name, sv.ip as server_ip,
              f.auth_code as ftp_auth_code
-      FROM subdomains s 
-      LEFT JOIN domains d ON s.domain_id = d.id 
-      LEFT JOIN servers sv ON s.server_id = sv.id
-      LEFT JOIN ftp_accounts f ON f.subdomain_id = s.id
+      ${fromSql}
       ${whereSql}
       ORDER BY s.created_at DESC
       LIMIT ? OFFSET ?
     `;
     
     const subdomains = await db.all(sql, [...params, parseInt(pageSize), offset]);
+    for (const s of subdomains) {
+      if (s.ftp_auth_code != null) {
+        const fullDomain = s.subdomain === '@' ? s.main_domain : `${s.subdomain}.${s.main_domain}`;
+        s.ftp_auth_code = resolveAuthCode({ auth_code: s.ftp_auth_code, full_domain: fullDomain });
+      }
+    }
     res.json({ list: subdomains, total, page: parseInt(page), pageSize: parseInt(pageSize) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -587,15 +601,17 @@ router.get('/subdomains/:id/ftp-info', async (req, res) => {
       return res.json({ has_ftp: false, full_domain: `${sub.subdomain}.${sub.main_domain}` });
     }
 
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+
     res.json({
       has_ftp: true,
-      full_domain: `${sub.subdomain}.${sub.main_domain}`,
+      full_domain: fullDomain,
       server_ip: sub.server_ip,
       username: ftp.username,
       password: ftp.password,
       port: ftp.port,
       home_dir: ftp.home_dir,
-      auth_code: ftp.auth_code,
+      auth_code: resolveAuthCode({ ...ftp, full_domain: fullDomain }),
       status: ftp.status,
       sync_status: ftp.sync_status,
       sync_message: ftp.sync_message
@@ -605,54 +621,35 @@ router.get('/subdomains/:id/ftp-info', async (req, res) => {
   }
 });
 
-// 更新子域名使用状态
+// 更新子域名使用状态（停用/启用走 Nginx，不动 DNS）
 router.put('/subdomains/:id/status', async (req, res) => {
   try {
     const { use_status, duration_months } = req.body;
-    const sub = await db.get(`
-      SELECT s.*, d.domain as main_domain, ac.access_key, ac.secret_key, ac.platform 
-      FROM subdomains s 
-      LEFT JOIN domains d ON s.domain_id = d.id 
-      LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id 
-      WHERE s.id = ?
-    `, [req.params.id]);
+    const sub = await db.get('SELECT * FROM subdomains WHERE id = ?', [req.params.id]);
     
     if (!sub) {
       return res.status(404).json({ error: 'Subdomain not found' });
     }
 
-    // 如果是停用，删除DNS记录
+    const lifecycle = require('../services/subdomain-lifecycle');
+    let resultMessage = 'Status updated';
+
+    // 停用：禁用 Nginx，保留 DNS，即时生效
     if (use_status === 'disabled') {
-      if (sub.aliyun_record_id && sub.access_key && sub.secret_key) {
-        const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
-        try {
-          if (sub.platform === 'tencent') {
-            await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
-          } else {
-            await dns.deleteRecord(sub.aliyun_record_id);
-          }
-        } catch (e) {
-          console.error('Delete DNS error:', e);
-        }
-      }
-      await db.run('UPDATE subdomains SET use_status = ?, aliyun_record_id = NULL, status = ? WHERE id = ?', 
-        [use_status, 'disabled', req.params.id]);
-    } 
-    // 如果是启用（从停用恢复），重新添加DNS记录
+      const result = await lifecycle.disableSubdomain(req.params.id);
+      resultMessage = result.message;
+    }
+    // 从停用恢复：恢复 Nginx，DNS 原样保留
     else if ((use_status === 'unused' || use_status === 'used') && sub.use_status === 'disabled') {
-      if (sub.access_key && sub.secret_key && sub.record_value) {
-        const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
-        try {
-          const recordId = await dns.addRecord(sub.main_domain, sub.subdomain, sub.record_value, sub.record_type || 'A', sub.ttl || 600);
-          await db.run('UPDATE subdomains SET use_status = ?, aliyun_record_id = ?, status = ? WHERE id = ?', 
-            [use_status, recordId, 'active', req.params.id]);
-        } catch (e) {
-          console.error('Add DNS error:', e);
-          await db.run('UPDATE subdomains SET use_status = ?, status = ? WHERE id = ?', 
-            [use_status, 'dns_error', req.params.id]);
-        }
-      } else {
-        await db.run('UPDATE subdomains SET use_status = ? WHERE id = ?', [use_status, req.params.id]);
+      const result = await lifecycle.enableSubdomain(req.params.id, use_status);
+      resultMessage = result.message;
+
+      // 已过期仍手动启用时，临时顺延 7 天，避免小时任务立刻再次停用
+      if (sub.expire_at && new Date(sub.expire_at) < new Date()) {
+        const extendTo = new Date();
+        extendTo.setDate(extendTo.getDate() + 7);
+        await db.run('UPDATE subdomains SET expire_at = ? WHERE id = ?', [formatTime(extendTo), req.params.id]);
+        resultMessage += '；到期已过，已临时顺延 7 天，请尽快续费';
       }
     } else {
       await db.run('UPDATE subdomains SET use_status = ? WHERE id = ?', [use_status, req.params.id]);
@@ -667,7 +664,7 @@ router.put('/subdomains/:id/status', async (req, res) => {
         [duration_months, expireStr, req.params.id]);
     }
 
-    res.json({ message: 'Status updated' });
+    res.json({ message: resultMessage });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -708,11 +705,21 @@ router.post('/subdomains/:id/renew', async (req, res) => {
     baseDate.setMonth(baseDate.getMonth() + durationMonths);
     const expireStr = baseDate.toISOString().slice(0, 19).replace('T', ' ');
 
-    await db.run('UPDATE subdomains SET expire_at = ?, use_status = CASE WHEN use_status = ? THEN ? ELSE use_status END WHERE id = ?', 
-      [expireStr, 'disabled', 'unused', req.params.id]);
+    const wasDisabled = sub.use_status === 'disabled';
+    await db.run('UPDATE subdomains SET expire_at = ? WHERE id = ?', [expireStr, req.params.id]);
+
+    // 续费且原为停用时：恢复 Nginx（DNS 本身未删除，无需重建）
+    let enableMessage = '';
+    if (durationMonths > 0 && wasDisabled) {
+      const lifecycle = require('../services/subdomain-lifecycle');
+      const enableResult = await lifecycle.enableSubdomain(req.params.id, 'unused');
+      enableMessage = enableResult.message;
+    }
 
     res.json({
-      message: durationMonths > 0 ? '续费成功' : '扣减成功',
+      message: durationMonths > 0
+        ? (wasDisabled ? `续费成功，${enableMessage}` : '续费成功')
+        : '扣减成功',
       expire_at: expireStr,
       duration_months: durationMonths
     });
@@ -721,40 +728,29 @@ router.post('/subdomains/:id/renew', async (req, res) => {
   }
 });
 
-// 检查并处理过期子域名（定时任务调用）
+// 检查并处理过期子域名（定时任务调用）—— 禁用 Nginx，不动 DNS
 router.post('/subdomains/check-expire', async (req, res) => {
   try {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     
-    // 获取所有已过期但未停用的子域名
     const expiredSubs = await db.all(`
-      SELECT s.*, d.domain as main_domain, ac.access_key, ac.secret_key, ac.platform 
+      SELECT s.id
       FROM subdomains s 
-      LEFT JOIN domains d ON s.domain_id = d.id 
-      LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id 
       WHERE s.expire_at IS NOT NULL AND s.expire_at < ? AND s.use_status != 'disabled'
     `, [now]);
 
+    const lifecycle = require('../services/subdomain-lifecycle');
     let disabled = 0;
     for (const sub of expiredSubs) {
-      // 删除DNS记录
-      if (sub.aliyun_record_id && sub.access_key && sub.secret_key) {
-        const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
-        try {
-          if (sub.platform === 'tencent') {
-            await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
-          } else {
-            await dns.deleteRecord(sub.aliyun_record_id);
-          }
-        } catch (e) {}
+      try {
+        await lifecycle.disableSubdomain(sub.id);
+        disabled++;
+      } catch (e) {
+        console.error(`[Expire Check] 停用子域名 ${sub.id} 失败:`, e.message);
       }
-      
-      await db.run('UPDATE subdomains SET use_status = ?, aliyun_record_id = NULL, status = ? WHERE id = ?', 
-        ['disabled', 'disabled', sub.id]);
-      disabled++;
     }
 
-    res.json({ message: `已处理 ${disabled} 个过期子域名`, disabled });
+    res.json({ message: `已处理 ${disabled} 个过期子域名（Nginx 禁用，DNS 未改动）`, disabled });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1087,7 +1083,8 @@ router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
 // 添加子域名并解析DNS
 router.post('/subdomains', async (req, res) => {
   try {
-    const { domain_id, subdomain, server_id, record_type, record_value, ttl, auto_ftp, auto_nginx, nginx_type, duration_days = 31, remark } = req.body;
+    const { domain_id, subdomain, server_id, record_type, record_value, ttl, auto_ftp, auto_nginx, nginx_type, duration_days = 31, remark, max_upload_size } = req.body;
+    const ftpMaxUploadSize = resolveMaxUploadSize(max_upload_size);
     
     // 获取主域名及其阿里云配置
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [domain_id]);
@@ -1125,15 +1122,15 @@ router.post('/subdomains', async (req, res) => {
     if (auto_ftp !== false && server) {
       const ftpUsername = generateUsername(subdomain, domain.domain);
       const ftpPassword = generatePassword();
-      const ftpAuthCode = generateAuthCode(fullDomain);
+      const ftpAuthCode = randomAuthCode();
       
       // 保存FTP账号
       await db.run(
-        'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending']
+        'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
       );
       
-      ftpInfo = { username: ftpUsername, password: ftpPassword, home_dir: ftpHomeDir, auth_code: ftpAuthCode };
+      ftpInfo = { username: ftpUsername, password: ftpPassword, home_dir: ftpHomeDir, auth_code: ftpAuthCode, max_upload_size: ftpMaxUploadSize };
 
       // 同步FTP到服务器
       try {

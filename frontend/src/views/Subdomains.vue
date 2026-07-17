@@ -30,7 +30,7 @@
       <div class="filter-bar">
         <el-input
           v-model="searchKeyword"
-          placeholder="搜索域名、记录值、服务器..."
+          placeholder="搜索域名、授权码、记录值、服务器..."
           clearable
           class="filter-search"
           size="small"
@@ -153,7 +153,7 @@
     </div>
 
     <!-- 添加/编辑对话框 -->
-    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑子域名' : '添加子域名'" width="550px" :loading="saving" @confirm="handleSave">
+    <AppDialog v-model="dialogVisible" :title="form.id ? '编辑子域名' : '添加子域名'" width="620px" :loading="saving" @confirm="handleSave">
       <el-form :model="form" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="form.domain_id" placeholder="选择主域名" style="width:100%" :disabled="!!form.id">
@@ -219,6 +219,23 @@
         <el-form-item label="自动创建FTP" v-if="!form.id">
           <el-switch v-model="form.auto_ftp" />
         </el-form-item>
+        <el-form-item label="FTP空间" v-if="!form.id && form.auto_ftp">
+          <div class="ftp-space-picker">
+            <el-radio-group v-model="form.ftp_space_preset" size="small">
+              <el-radio-button v-for="opt in FTP_SPACE_PRESETS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </el-radio-button>
+            </el-radio-group>
+            <div v-if="form.ftp_space_preset === 'custom'" class="ftp-space-custom">
+              <el-input-number v-model="form.ftp_space_custom_value" :min="1" :max="10240" style="width:120px" />
+              <el-select v-model="form.ftp_space_custom_unit" style="width:80px">
+                <el-option label="MB" value="MB" />
+                <el-option label="GB" value="GB" />
+              </el-select>
+            </div>
+            <div class="ftp-space-hint">默认 500MB，上传总容量上限</div>
+          </div>
+        </el-form-item>
         <el-form-item label="自动配置Nginx" v-if="!form.id">
           <el-switch v-model="form.auto_nginx" />
           <el-select v-model="form.nginx_type" style="width:120px;margin-left:10px" v-if="form.auto_nginx">
@@ -230,7 +247,7 @@
     </AppDialog>
 
     <!-- 批量生成对话框 -->
-    <el-dialog v-model="batchDialogVisible" title="批量生成子域名" width="600px" append-to-body>
+    <el-dialog v-model="batchDialogVisible" title="批量生成子域名" width="640px" append-to-body>
       <el-form :model="batchForm" label-width="110px">
         <el-form-item label="主域名">
           <el-select v-model="batchForm.domain_id" placeholder="选择主域名" style="width:100%">
@@ -293,6 +310,23 @@
         </el-form-item>
         <el-form-item label="自动创建FTP">
           <el-switch v-model="batchForm.auto_ftp" />
+        </el-form-item>
+        <el-form-item label="FTP空间" v-if="batchForm.auto_ftp">
+          <div class="ftp-space-picker">
+            <el-radio-group v-model="batchForm.ftp_space_preset" size="small">
+              <el-radio-button v-for="opt in FTP_SPACE_PRESETS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </el-radio-button>
+            </el-radio-group>
+            <div v-if="batchForm.ftp_space_preset === 'custom'" class="ftp-space-custom">
+              <el-input-number v-model="batchForm.ftp_space_custom_value" :min="1" :max="10240" style="width:120px" />
+              <el-select v-model="batchForm.ftp_space_custom_unit" style="width:80px">
+                <el-option label="MB" value="MB" />
+                <el-option label="GB" value="GB" />
+              </el-select>
+            </div>
+            <div class="ftp-space-hint">默认 500MB，上传总容量上限</div>
+          </div>
         </el-form-item>
         <el-form-item label="自动配置Nginx">
           <el-switch v-model="batchForm.auto_nginx" />
@@ -885,7 +919,7 @@ const statusForm = reactive({
 const statusOptions = [
   { value: 'unused', label: '未使用', desc: '尚未分配或空闲', type: 'info' },
   { value: 'used', label: '已使用', desc: '正在对外提供服务', type: 'success' },
-  { value: 'disabled', label: '已停用', desc: '停用后无法访问', type: 'danger' }
+  { value: 'disabled', label: '已停用', desc: 'Nginx 禁用，DNS 保留，可快速恢复', type: 'danger' }
 ]
 
 const renewForm = reactive({
@@ -1085,16 +1119,16 @@ async function handleRenewAdjust(duration) {
 }
 
 async function handleDisable(row) {
-  await ElMessageBox.confirm('停用将删除DNS解析记录，确定？', '提示')
-  await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'disabled' })
-  ElMessage.success('已停用')
+  await ElMessageBox.confirm('停用将立即禁用 Nginx 访问（DNS 解析保留，恢复更快），确定？', '提示')
+  const res = await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'disabled' })
+  ElMessage.success(res.message || '已停用')
   loadData()
 }
 
 async function handleEnable(row) {
-  // 启用时恢复为"已使用"状态
-  await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'used' })
-  ElMessage.success('已启用')
+  // 启用时恢复 Nginx，DNS 未删除故可立即访问
+  const res = await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'used' })
+  ElMessage.success(res.message || '已启用')
   loadData()
 }
 
@@ -1204,7 +1238,10 @@ async function handleRemarkSave() {
 async function batchSetStatus(status) {
   if (selectedRows.value.length === 0) return
   const statusText = { used: '已使用', unused: '未使用', disabled: '停用' }
-  await ElMessageBox.confirm(`确定将 ${selectedRows.value.length} 个子域名设为${statusText[status]}？`, '批量操作')
+  const hint = status === 'disabled'
+    ? `确定停用 ${selectedRows.value.length} 个子域名？将立即禁用 Nginx（DNS 保留）。`
+    : `确定将 ${selectedRows.value.length} 个子域名设为${statusText[status]}？`
+  await ElMessageBox.confirm(hint, '批量操作')
   
   let success = 0, failed = 0
   for (const row of selectedRows.value) {
@@ -1399,10 +1436,33 @@ async function confirmDelete() {
   }
 }
 
+const FTP_SPACE_PRESETS = [
+  { label: '50MB', value: '50' },
+  { label: '100MB', value: '100' },
+  { label: '200MB', value: '200' },
+  { label: '300MB', value: '300' },
+  { label: '500MB', value: '500' },
+  { label: '1GB', value: '1024' },
+  { label: '自定义', value: 'custom' }
+]
+
+function calcFtpMaxUploadSize(source) {
+  if (source.ftp_space_preset === 'custom') {
+    const value = Number(source.ftp_space_custom_value) || 500
+    if (source.ftp_space_custom_unit === 'GB') {
+      return Math.round(value * 1024 * 1024 * 1024)
+    }
+    return Math.round(value * 1024 * 1024)
+  }
+  const mb = parseInt(source.ftp_space_preset, 10) || 500
+  return mb * 1024 * 1024
+}
+
 const form = reactive({
   id: null, domain_id: '', subdomain: '', server_id: null,
   record_type: 'A', record_value: '', ttl: 600, remark: '',
   auto_ftp: true, auto_nginx: true, nginx_type: 'https',
+  ftp_space_preset: '500', ftp_space_custom_value: 500, ftp_space_custom_unit: 'MB',
   prefix: 'ly', suffix: '', subdomain_length: 8,
   duration_value: 1, duration_unit: 'month'
 })
@@ -1410,6 +1470,7 @@ const form = reactive({
 const batchForm = reactive({
   domain_id: '', server_id: '', count: 10,
   auto_ftp: true, auto_nginx: true, nginx_type: 'https',
+  ftp_space_preset: '500', ftp_space_custom_value: 500, ftp_space_custom_unit: 'MB',
   prefix: 'ly', suffix: '', subdomain_length: 8,
   duration_value: 1, duration_unit: 'month'
 })
@@ -1537,6 +1598,7 @@ async function openDialog(row = null) {
       id: null, domain_id: domainId, subdomain: '',
       server_id: defaultServer?.id || null, record_type: 'A', record_value: defaultServer?.ip || '', ttl: 600, remark: '',
       auto_ftp: true, auto_nginx: true, nginx_type: 'https',
+      ftp_space_preset: '500', ftp_space_custom_value: 500, ftp_space_custom_unit: 'MB',
       prefix: 'ly', suffix: '', subdomain_length: 8,
       duration_value: 1, duration_unit: 'month'
     })
@@ -1557,6 +1619,9 @@ function openBatchDialog() {
   batchForm.auto_ftp = true
   batchForm.auto_nginx = true
   batchForm.nginx_type = 'https'
+  batchForm.ftp_space_preset = '500'
+  batchForm.ftp_space_custom_value = 500
+  batchForm.ftp_space_custom_unit = 'MB'
   batchForm.prefix = 'ly'
   batchForm.suffix = ''
   batchForm.subdomain_length = 8
@@ -1595,7 +1660,11 @@ function onServerChange() {
 async function handleSave() {
   saving.value = true
   try {
-    const data = { ...form, duration_days: calcDurationDays(form.duration_value, form.duration_unit) }
+    const data = {
+      ...form,
+      duration_days: calcDurationDays(form.duration_value, form.duration_unit),
+      max_upload_size: calcFtpMaxUploadSize(form)
+    }
     if (form.id) {
       await api.put(`/dns/subdomains/${form.id}`, data)
       ElMessage.success('保存成功')
@@ -1618,7 +1687,11 @@ async function handleBatchCreate() {
   batchCreating.value = true
   batchResults.value = []
   try {
-    const data = { ...batchForm, duration_days: calcDurationDays(batchForm.duration_value, batchForm.duration_unit) }
+    const data = {
+      ...batchForm,
+      duration_days: calcDurationDays(batchForm.duration_value, batchForm.duration_unit),
+      max_upload_size: calcFtpMaxUploadSize(batchForm)
+    }
     const res = await api.post('/dns/batch-create', data)
     batchResults.value = res.results
     ElMessage.success(`生成完成: 成功${res.success}个, 失败${res.failed}个`)
@@ -2170,6 +2243,31 @@ async function handleRateLimitSave() {
 
 .more-actions {
   margin-top: 0;
+}
+
+.ftp-space-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.ftp-space-picker :deep(.el-radio-group) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.ftp-space-custom {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.ftp-space-hint {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .status-dialog-body {

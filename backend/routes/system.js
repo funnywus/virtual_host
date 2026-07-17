@@ -300,23 +300,289 @@ router.delete('/backup/:filename', async (req, res) => {
 // 获取系统信息
 router.get('/info', async (req, res) => {
   try {
+    const diagnostics = require('../services/system-diagnostics');
     const dbType = process.env.DB_TYPE || 'sqlite';
     const uptime = process.uptime();
+    const mem = process.memoryUsage();
+    const pkg = require('../package.json');
     
-    // 格式化运行时间
     const days = Math.floor(uptime / 86400);
     const hours = Math.floor((uptime % 86400) / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
     const uptimeStr = `${days}天 ${hours}小时 ${minutes}分钟`;
+    const temp = await diagnostics.getDirSize(diagnostics.TEMP_CHUNKS_DIR);
     
     res.json({
+      version: pkg.version || '2.0.0',
       nodeVersion: process.version,
+      platform: `${process.platform} ${process.arch}`,
       dbType: dbType === 'mysql' ? 'MySQL' : 'SQLite',
-      uptime: uptimeStr
+      uptime: uptimeStr,
+      uptimeSeconds: Math.floor(uptime),
+      memory: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal
+      },
+      temp: {
+        sessions: temp.sessions,
+        files: temp.files,
+        bytes: temp.bytes
+      },
+      port: process.env.PORT || 3000,
+      pid: process.pid
     });
   } catch (err) {
     console.error('获取系统信息失败:', err);
     res.status(500).json({ error: '获取系统信息失败' });
+  }
+});
+
+// ========== 运维检测 ==========
+
+router.get('/stats', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    res.json(await diagnostics.getStats());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/expire', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    const result = await diagnostics.runExpireCheck();
+    res.json({
+      success: true,
+      message: result.total === 0
+        ? '没有需要停用的过期子域名'
+        : `已处理 ${result.disabled} 个过期子域名（Nginx 禁用，DNS 未改动）`,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/servers', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    res.json({ success: true, ...(await diagnostics.checkServers()) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/dns', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    res.json({ success: true, ...(await diagnostics.checkDnsPlatforms()) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/sites', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    const limit = Math.min(parseInt(req.body?.limit || 200, 10) || 200, 500);
+    res.json({ success: true, ...(await diagnostics.checkSiteHealth({ limit })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function getNextSslCheckAt(hour = 3, from = new Date()) {
+  const next = new Date(from);
+  next.setHours(Number(hour) || 3, 0, 0, 0);
+  if (next <= from) next.setDate(next.getDate() + 1);
+  const pad = n => String(n).padStart(2, '0');
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())} ${pad(next.getHours())}:${pad(next.getMinutes())}:${pad(next.getSeconds())}`;
+}
+
+function buildSslRenewalSummary(domains, settings = {}) {
+  const now = Date.now();
+  const beforeDays = settings.ssl_renew_before_days || 30;
+  const checkHour = settings.ssl_check_hour ?? 3;
+  const hourLabel = `${String(checkHour).padStart(2, '0')}:00`;
+  const summary = {
+    total: domains.length,
+    active: 0,
+    none: 0,
+    failed: 0,
+    expiring_soon: 0,
+    expired: 0,
+    renew_window: 0,
+    auto_renew: !!settings.ssl_auto_renew,
+    renew_before_days: beforeDays,
+    schedule: {
+      check_time: `每天 ${hourLabel}`,
+      check_hour: checkHour,
+      next_check_at: getNextSslCheckAt(checkHour),
+      auto_renew: !!settings.ssl_auto_renew,
+      renew_before_days: beforeDays,
+      last_ssl_check_at: settings.last_ssl_check_at || null,
+      last_ssl_renew_at: settings.last_ssl_renew_at || null,
+      last_ssl_renew_summary: settings.last_ssl_renew_summary || null,
+      note: settings.ssl_auto_renew
+        ? `已开启自动续期：到期前 ${beforeDays} 天自动续期`
+        : '自动续期已关闭，仅做到期时间巡检'
+    },
+    rows: []
+  };
+
+  for (const d of domains) {
+    const status = d.ssl_status || 'none';
+    if (status === 'active') summary.active += 1;
+    else if (status === 'failed' || status === 'error') summary.failed += 1;
+    else summary.none += 1;
+
+    let note = status === 'active' ? '正常' : (status === 'none' ? '未申请' : status);
+    let remaining_days = null;
+    let urgency = 'none'; // none | ok | soon | critical | expired
+
+    if (d.ssl_expires) {
+      const exp = new Date(d.ssl_expires).getTime();
+      if (!Number.isNaN(exp)) {
+        remaining_days = Math.ceil((exp - now) / 86400000);
+        if (remaining_days < 0) {
+          summary.expired += 1;
+          note = '证书已过期，需立即续期';
+          urgency = 'expired';
+        } else if (remaining_days <= 7) {
+          summary.expiring_soon += 1;
+          summary.renew_window += 1;
+          note = `${remaining_days} 天内到期，请尽快续期`;
+          urgency = 'critical';
+        } else if (remaining_days <= 15) {
+          summary.expiring_soon += 1;
+          summary.renew_window += 1;
+          note = `${remaining_days} 天内到期`;
+          urgency = 'soon';
+        } else if (remaining_days <= beforeDays) {
+          summary.renew_window += 1;
+          note = `${remaining_days} 天后到期，将自动续期`;
+          urgency = 'soon';
+        } else {
+          note = `剩余 ${remaining_days} 天`;
+          urgency = 'ok';
+        }
+      }
+    }
+
+    summary.rows.push({
+      id: d.id,
+      domain: d.domain,
+      ssl_status: status,
+      ssl_type: d.ssl_type || '-',
+      ssl_expires: d.ssl_expires || '',
+      remaining_days,
+      urgency,
+      note
+    });
+  }
+
+  // 到期近的排前面
+  summary.rows.sort((a, b) => {
+    const av = a.remaining_days === null ? 99999 : a.remaining_days;
+    const bv = b.remaining_days === null ? 99999 : b.remaining_days;
+    return av - bv;
+  });
+
+  return summary;
+}
+
+router.get('/ssl-renewals', async (req, res) => {
+  try {
+    const db = require('../db/database');
+    const { getSettings } = require('../services/system-settings');
+    const settings = await getSettings();
+    const domains = await db.all(`
+      SELECT id, domain, ssl_status, ssl_type, ssl_expires
+      FROM domains
+      ORDER BY id DESC
+    `);
+    res.json({ success: true, ...buildSslRenewalSummary(domains, settings), settings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/ssl', async (req, res) => {
+  try {
+    const db = require('../db/database');
+    const { getSettings } = require('../services/system-settings');
+    const settings = await getSettings();
+    const domains = await db.all(`
+      SELECT id, domain, ssl_status, ssl_type, ssl_expires
+      FROM domains
+      ORDER BY id DESC
+    `);
+    res.json({ success: true, ...buildSslRenewalSummary(domains, settings), settings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/settings', async (req, res) => {
+  try {
+    const { getSettings } = require('../services/system-settings');
+    res.json({ success: true, settings: await getSettings() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/settings', async (req, res) => {
+  try {
+    const { saveSettings } = require('../services/system-settings');
+    const body = req.body || {};
+    const settings = await saveSettings(body);
+
+    let schedule = null;
+    if (Object.prototype.hasOwnProperty.call(body, 'ssl_check_hour')) {
+      const { rescheduleSslCheck } = require('../services/ssl-schedule');
+      schedule = await rescheduleSslCheck();
+    }
+
+    res.json({
+      success: true,
+      settings,
+      schedule,
+      message: schedule?.message || '设置已保存'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/ssl-auto-renew/run', async (req, res) => {
+  try {
+    const { checkAndAutoRenew } = require('../services/ssl-auto-renew');
+    const result = await checkAndAutoRenew({ force: !!req.body?.force });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/diagnose/full', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    const result = await diagnostics.runFullDiagnose();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/cleanup-temp', async (req, res) => {
+  try {
+    const diagnostics = require('../services/system-diagnostics');
+    res.json({ success: true, ...(await diagnostics.cleanupTemp()) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

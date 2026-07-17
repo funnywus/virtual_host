@@ -5,8 +5,24 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
+const { matchAuthCode } = require('../services/ftp-auth');
 
 const router = express.Router();
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/** 清理远程文件名：去掉路径穿越与控制字符，保留中文等 Unicode */
+function sanitizeRemoteFilename(name) {
+  let base = String(name || '').replace(/\\/g, '/');
+  base = path.posix.basename(base);
+  base = base.replace(/[\x00-\x1f\x7f]/g, '').trim();
+  if (!base || base === '.' || base === '..') {
+    base = `file_${Date.now()}`;
+  }
+  return base;
+}
 
 // 分片上传相关接口取消超时限制（大文件合并 + SFTP 上传可能耗时很久）
 // setTimeout(0) 表示永久不超时，覆盖全局 30 分钟限制
@@ -56,12 +72,7 @@ function getAvailableDiskSpace() {
   }
 }
 
-// 计算域名的授权码
-function getDomainAuthCode(domain) {
-  return crypto.createHash('md5').update(domain).digest('hex').toLowerCase();
-}
-
-// 根据授权码查找FTP账号
+// 根据授权码查找FTP账号（优先库内 auth_code）
 async function findFtpByAuthCode(auth_code) {
   const ftpAccounts = await db.all(`
     SELECT f.*, s.subdomain, d.domain as main_domain,
@@ -74,16 +85,16 @@ async function findFtpByAuthCode(auth_code) {
     WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
   `);
   
-  const inputCode = auth_code.toLowerCase();
-  return ftpAccounts.find(f => getDomainAuthCode(f.full_domain) === inputCode);
+  return ftpAccounts.find(f => matchAuthCode(f, auth_code));
 }
 
 // 初始化分片上传
 router.post('/init-chunk', async (req, res) => {
   try {
     const { auth_code, path: dirPath, filename, total_chunks, file_size } = req.body;
+    const safeFilename = sanitizeRemoteFilename(filename);
     
-    console.log(`[初始化上传] filename: ${filename}, total_chunks: ${total_chunks}, file_size: ${file_size}`);
+    console.log(`[初始化上传] filename: ${safeFilename}, total_chunks: ${total_chunks}, file_size: ${file_size}`);
     
     const ftp = await findFtpByAuthCode(auth_code);
     if (!ftp || !ftp.ip) {
@@ -110,7 +121,7 @@ router.post('/init-chunk', async (req, res) => {
       uploadId,
       auth_code,
       dirPath,
-      filename,
+      filename: safeFilename,
       total_chunks: parseInt(total_chunks),
       file_size: parseInt(file_size),
       uploaded_chunks: [],
@@ -366,9 +377,9 @@ async function processMergeAndUpload(taskId, chunkDir, uploadInfo) {
   const targetDir = uploadInfo.dirPath
     ? path.posix.join(uploadInfo.ftp_info.home_dir, uploadInfo.dirPath)
     : uploadInfo.ftp_info.home_dir;
-  const targetFile = path.posix.join(targetDir, uploadInfo.filename);
+  const targetFile = path.posix.join(targetDir, sanitizeRemoteFilename(uploadInfo.filename));
 
-  await sshService.exec(`mkdir -p "${targetDir}"`);
+  await sshService.exec(`mkdir -p -- ${shellQuote(targetDir)}`);
 
   const fileStats = fs.statSync(mergedPath);
   const totalSize = fileStats.size;
@@ -384,9 +395,9 @@ async function processMergeAndUpload(taskId, chunkDir, uploadInfo) {
   });
   console.log(`[合并分片] 上传完成 taskId: ${taskId}`);
 
-  // 设置权限
-  await sshService.exec(`chmod 644 "${targetFile}"`);
-  await sshService.exec(`chown www:www "${targetFile}" 2>/dev/null || chown www-data:www-data "${targetFile}" 2>/dev/null`);
+  // 设置权限（shellQuote 保证中文路径不被 shell 拆开）
+  await sshService.exec(`chmod 644 -- ${shellQuote(targetFile)}`);
+  await sshService.exec(`chown www:www -- ${shellQuote(targetFile)} 2>/dev/null || chown www-data:www-data -- ${shellQuote(targetFile)} 2>/dev/null`);
 
   // 清理临时文件
   fs.rmSync(chunkDir, { recursive: true, force: true });
