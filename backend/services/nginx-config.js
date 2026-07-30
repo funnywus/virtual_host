@@ -54,6 +54,10 @@ const httpTemplate = (domain, rootPath, rateLimitOpts = {}) => {
     access_log /www/wwwlogs/${domain}.log;
     error_log /www/wwwlogs/${domain}.error.log;
 ${rateLimitConf}
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
     # 禁止访问隐藏文件
     location ~ /\\. {
         deny all;
@@ -113,6 +117,10 @@ server {
     access_log /www/wwwlogs/${domain}.log;
     error_log /www/wwwlogs/${domain}.error.log;
 ${rateLimitConf}
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
     # 禁止访问隐藏文件
     location ~ /\\. {
         deny all;

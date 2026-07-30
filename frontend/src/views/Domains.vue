@@ -153,9 +153,13 @@
         </div>
         <el-form :model="batchSslForm" label-width="90px" style="margin-top:15px">
           <el-form-item label="证书类型">
-            <el-select v-model="batchSslForm.cert_type" style="width:220px">
-              <el-option label="Let's Encrypt" value="letsencrypt" />
-              <el-option label="ZeroSSL" value="zerossl" />
+            <el-select v-model="batchSslForm.cert_type" style="width:280px">
+              <el-option
+                v-for="(info, key) in batchCertTypes"
+                :key="key"
+                :label="`${info.name} - ${info.desc}`"
+                :value="key"
+              />
             </el-select>
           </el-form-item>
         </el-form>
@@ -269,12 +273,18 @@
               <el-icon><Search /></el-icon>
             </template>
           </el-input>
-          <el-button size="small" @click="loadDnsRecords" :loading="loadingDnsRecords"><el-icon><Refresh /></el-icon> 刷新</el-button>
+          <el-button type="primary" size="small" @click="loadDnsRecords(true)" :loading="loadingDnsRecords">获取最新DNS</el-button>
           <el-button type="primary" size="small" @click="openAddDnsRecordDialog">添加记录</el-button>
         </div>
       </div>
       <el-table :data="paginatedDnsRecords" stripe v-loading="loadingDnsRecords" max-height="500">
         <el-table-column prop="name" label="主机记录" width="120" />
+        <el-table-column label="完整域名" min-width="220">
+          <template #default="{ row }">
+            <span>{{ getDnsFullDomain(row.name) }}</span>
+            <el-button type="primary" link size="small" @click="copyDnsFullDomain(row)">复制</el-button>
+          </template>
+        </el-table-column>
         <el-table-column prop="type" label="类型" width="80" />
         <el-table-column prop="value" label="记录值" min-width="180" show-overflow-tooltip />
         <el-table-column label="服务器" width="120">
@@ -291,8 +301,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" size="small" @click="openEditDnsRecordDialog(row)">修改</el-button>
             <el-button v-if="row.status === 'active'" type="warning" size="small" @click="toggleDnsRecordStatus(row, 'DISABLE')">停用</el-button>
             <el-button v-else type="success" size="small" @click="toggleDnsRecordStatus(row, 'ENABLE')">启用</el-button>
             <el-button type="danger" size="small" @click="deleteDnsRecord(row)">删除</el-button>
@@ -311,8 +322,15 @@
       </div>
     </el-dialog>
 
-    <!-- 添加DNS记录对话框 -->
-    <AppDialog v-model="addDnsRecordDialogVisible" title="添加DNS记录" width="450px" :loading="addingDnsRecord" confirm-text="添加" @confirm="addDnsRecord">
+    <!-- 添加/修改DNS记录对话框 -->
+    <AppDialog
+      v-model="dnsRecordDialogVisible"
+      :title="editingDnsRecordId ? '修改DNS记录' : '添加DNS记录'"
+      width="450px"
+      :loading="savingDnsRecord"
+      :confirm-text="editingDnsRecordId ? '保存' : '添加'"
+      @confirm="saveDnsRecord"
+    >
       <el-form :model="dnsRecordForm" label-width="100px">
         <el-form-item label="主机记录">
           <el-input v-model="dnsRecordForm.name" placeholder="例如: www, @, *" />
@@ -410,7 +428,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, ArrowDown, Search, Plus, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
-import { formatSslDays, getSslDaysType } from '@/utils'
+import { formatSslDays, getSslDaysType, copyText } from '@/utils'
 import { getDomainFilterableTags, serverHasAnyTag } from '@/utils/server-tag-filter'
 import api from '@/api'
 import SslDialog from '@/components/SslDialog.vue'
@@ -421,12 +439,13 @@ const dataStore = useDataStore()
 const dialogVisible = ref(false)
 const sslDialogVisible = ref(false)
 const dnsRecordsDialogVisible = ref(false)
-const addDnsRecordDialogVisible = ref(false)
+const dnsRecordDialogVisible = ref(false)
 const saving = ref(false)
 const loading = ref(false)
 const refreshingSsl = ref(false)
 const loadingDnsRecords = ref(false)
-const addingDnsRecord = ref(false)
+const savingDnsRecord = ref(false)
+const editingDnsRecordId = ref(null)
 const currentDomain = ref(null)
 const searchKeyword = ref('')
 const filterTag = ref('')
@@ -436,6 +455,7 @@ const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [
 const selectedDomains = ref([])
 const batchSslDialogVisible = ref(false)
 const batchSslForm = reactive({ cert_type: 'letsencrypt' })
+const batchCertTypes = ref({})
 
 // 多任务管理
 const batchSslTasks = ref([]) // 所有批量任务列表
@@ -554,11 +574,14 @@ const filteredDomains = computed(() => {
 
 const batchTargetDomains = computed(() => selectedDomains.value.length > 0 ? selectedDomains.value : filteredDomains.value)
 
-onMounted(() => {
+onMounted(async () => {
   loadData()
   dataStore.loadAliyunConfigs()
   dataStore.loadServerTags()
   dataStore.loadServers()
+  try {
+    batchCertTypes.value = await api.get('/ssl/types')
+  } catch (_) {}
 })
 
 onUnmounted(() => {
@@ -1043,6 +1066,17 @@ async function startBatchSsl() {
 }
 
 // DNS记录相关
+function getDnsFullDomain(name) {
+  const domain = currentDomain.value?.domain
+  if (!domain) return ''
+  if (!name || name === '@') return domain
+  return `${name}.${domain}`
+}
+
+function copyDnsFullDomain(row) {
+  copyText(getDnsFullDomain(row.name))
+}
+
 async function openDnsRecordsDialog(row) {
   currentDomain.value = row
   dnsRecords.platform = ''
@@ -1051,13 +1085,16 @@ async function openDnsRecordsDialog(row) {
   await loadDnsRecords()
 }
 
-async function loadDnsRecords() {
+async function loadDnsRecords(showSuccess = false) {
   if (!currentDomain.value) return
   loadingDnsRecords.value = true
   try {
     const res = await api.get(`/dns/domains/${currentDomain.value.id}/dns-records`)
     dnsRecords.platform = res.platform
     dnsRecords.records = res.records
+    if (showSuccess) {
+      ElMessage.success(`已获取最新 DNS，共 ${res.records?.length || 0} 条记录`)
+    }
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
@@ -1066,6 +1103,7 @@ async function loadDnsRecords() {
 }
 
 function openAddDnsRecordDialog() {
+  editingDnsRecordId.value = null
   const defaultServer = getDefaultAvailableServer()
   Object.assign(dnsRecordForm, { 
     name: '', 
@@ -1074,7 +1112,20 @@ function openAddDnsRecordDialog() {
     ttl: 600,
     server_id: defaultServer?.id || null
   })
-  addDnsRecordDialogVisible.value = true
+  dnsRecordDialogVisible.value = true
+}
+
+function openEditDnsRecordDialog(row) {
+  editingDnsRecordId.value = row.id
+  const server = row.type === 'A' ? dataStore.servers.find(s => s.ip === row.value) : null
+  Object.assign(dnsRecordForm, {
+    name: row.name,
+    type: row.type,
+    value: row.value,
+    ttl: row.ttl || 600,
+    server_id: server?.id || null
+  })
+  dnsRecordDialogVisible.value = true
 }
 
 function onDnsServerChange() {
@@ -1095,19 +1146,32 @@ function onDnsTypeChange() {
   }
 }
 
-async function addDnsRecord() {
+async function saveDnsRecord() {
   if (!dnsRecordForm.name || !dnsRecordForm.value) {
     ElMessage.warning('请填写主机记录和记录值')
     return
   }
-  addingDnsRecord.value = true
+  savingDnsRecord.value = true
   try {
-    await api.post(`/dns/domains/${currentDomain.value.id}/dns-records`, dnsRecordForm)
-    ElMessage.success('添加成功')
-    addDnsRecordDialogVisible.value = false
+    const payload = {
+      name: dnsRecordForm.name,
+      type: dnsRecordForm.type,
+      value: dnsRecordForm.value,
+      ttl: dnsRecordForm.ttl
+    }
+    if (editingDnsRecordId.value) {
+      await api.put(`/dns/domains/${currentDomain.value.id}/dns-records/${editingDnsRecordId.value}`, payload)
+      ElMessage.success('修改成功')
+    } else {
+      await api.post(`/dns/domains/${currentDomain.value.id}/dns-records`, payload)
+      ElMessage.success('添加成功')
+    }
+    dnsRecordDialogVisible.value = false
     loadDnsRecords()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
   } finally {
-    addingDnsRecord.value = false
+    savingDnsRecord.value = false
   }
 }
 
@@ -1381,7 +1445,7 @@ function getExpireDaysText(expireAt) {
   padding: 0;
 }
 
-:deep(.is-loading) {
+.batch-ssl-tasks :deep(.el-icon.is-loading) {
   animation: rotating 2s linear infinite;
 }
 

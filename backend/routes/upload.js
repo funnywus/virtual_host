@@ -175,10 +175,11 @@ router.post('/direct-config', async (req, res) => {
     let scriptMessage = '';
     let uploadUrl = UPLOAD_PUBLIC_PATH;
     let phpFix = null;
+    let reachability = null;
 
     if (ftp.ip && ftp.home_dir) {
       const SshFtpService = require('../services/ssh-ftp');
-      const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+      const { deployUploadScript, ensureSitePhpAfterDeploy, probeDirectUploadLocal } = require('../services/deploy-upload-script');
       const sshService = new SshFtpService({
         ip: ftp.ip,
         port: ftp.ssh_port,
@@ -238,6 +239,15 @@ router.post('/direct-config', async (req, res) => {
       } catch (phpErr) {
         console.warn(`[直传] ${ftp.full_domain} PHP 配置补齐异常:`, phpErr.message);
       }
+
+      // 本机探测：区分脚本问题 vs 公网 HTTPS/证书问题
+      try {
+        reachability = await probeDirectUploadLocal(sshService, ftp.full_domain, uploadUrl);
+        console.log(`[直传] ${ftp.full_domain} 本机探测:`, reachability.message);
+      } catch (reachErr) {
+        reachability = { ok: false, message: '本机探测异常: ' + reachErr.message };
+        console.warn(`[直传] ${ftp.full_domain} 本机探测异常:`, reachErr.message);
+      }
     } else {
       scriptStatus = 'no_server';
       scriptMessage = '未绑定服务器或缺少站点目录';
@@ -255,7 +265,8 @@ router.post('/direct-config', async (req, res) => {
       expires,
       script_status: scriptStatus,
       script_message: scriptMessage,
-      php_fix: phpFix
+      php_fix: phpFix,
+      reachability
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

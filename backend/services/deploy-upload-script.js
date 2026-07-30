@@ -321,6 +321,69 @@ async function ensureSitePhpAfterDeploy(sshService, fullDomain, nginxPath) {
   return ensureSitePhpConfig(sshService, confPath);
 }
 
+/**
+ * 在服务器本机探测直传端点（绕过公网 DNS/CDN），区分「脚本问题」和「公网 HTTPS 问题」
+ * @returns {{ https_code: number|null, http_code: number|null, ok: boolean, message: string }}
+ */
+async function probeDirectUploadLocal(sshService, fullDomain, uploadPath = '/_vhost/upload.php') {
+  if (!fullDomain) {
+    return { https_code: null, http_code: null, ok: false, message: '缺少域名' };
+  }
+  const path = uploadPath.startsWith('/') ? uploadPath : `/${uploadPath}`;
+
+  // HTTPS：把域名解析到本机 127.0.0.1，验证证书+nginx+php 本机链路
+  const httpsCmd = [
+    `curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 6`,
+    `--resolve ${fullDomain}:443:127.0.0.1`,
+    `-X GET "https://${fullDomain}${path}?action=status&uploadId=probecheck0"`,
+    `2>/dev/null || echo 000`
+  ].join(' ');
+
+  // HTTP：Host 头访问本机 80，验证 nginx+php（不含证书）
+  const httpCmd = [
+    `curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 6`,
+    `-H ${shellQuote(`Host: ${fullDomain}`)}`,
+    `"http://127.0.0.1${path}?action=status&uploadId=probecheck0"`,
+    `2>/dev/null || echo 000`
+  ].join(' ');
+
+  const [httpsRes, httpRes] = await Promise.all([
+    sshService.exec(httpsCmd, 15000),
+    sshService.exec(httpCmd, 15000)
+  ]);
+
+  const parseCode = (out) => {
+    const m = String(out || '').trim().match(/(\d{3})\s*$/);
+    return m ? parseInt(m[1], 10) : 0;
+  };
+
+  const httpsCode = parseCode(httpsRes.output);
+  const httpCode = parseCode(httpRes.output);
+  const alive = (c) => [200, 400, 401, 403, 405].includes(c);
+
+  let message = '';
+  if (alive(httpsCode)) {
+    message = `本机 HTTPS 正常 (HTTP ${httpsCode})，若浏览器探测失败多半是公网证书/CDN/防火墙问题`;
+  } else if (alive(httpCode)) {
+    message = `本机 HTTP 正常 (HTTP ${httpCode})，但 HTTPS 失败 (${httpsCode || '无响应'})，请检查 SSL 证书与 443`;
+  } else if (httpsCode === 404 || httpCode === 404) {
+    message = `本机可访问但 ${path} 返回 404，请补发直传脚本`;
+  } else if (httpsCode === 502 || httpCode === 502) {
+    message = '本机返回 502，PHP-FPM / sock 可能异常，请补齐 PHP 配置';
+  } else {
+    message = `本机探测失败 (https=${httpsCode || 0}, http=${httpCode || 0})，请检查 nginx 是否监听、站点是否启用`;
+  }
+
+  return {
+    https_code: httpsCode || null,
+    http_code: httpCode || null,
+    ok: alive(httpsCode) || alive(httpCode),
+    message,
+    path,
+    domain: fullDomain
+  };
+}
+
 module.exports = {
   deployUploadScript,
   buildScriptContent,
@@ -328,4 +391,5 @@ module.exports = {
   ensureSitePhpConfig,
   ensureSitePhpAfterDeploy,
   getSiteNginxConfPath,
+  probeDirectUploadLocal,
 };

@@ -93,6 +93,16 @@ class AliyunDns {
     return this.request('DeleteDomainRecord', { RecordId: recordId });
   }
 
+  async updateRecord(recordId, rr, value, type = 'A', ttl = 600) {
+    return this.request('UpdateDomainRecord', {
+      RecordId: recordId,
+      RR: rr,
+      Type: type,
+      Value: value,
+      TTL: ttl
+    });
+  }
+
   async getRecords(domain) {
     return this.request('DescribeDomainRecords', { DomainName: domain });
   }

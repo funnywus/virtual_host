@@ -38,15 +38,19 @@
     <el-form :model="form" label-width="100px">
       <el-form-item label="验证方式">
         <el-radio-group v-model="form.verify_method">
-          <el-radio-button value="dns">DNS验证 (支持通配符)</el-radio-button>
-          <el-radio-button value="http">HTTP验证</el-radio-button>
-          <el-radio-button value="standalone">Standalone</el-radio-button>
+          <el-radio-button value="dns">DNS验证 (通配符)</el-radio-button>
+          <el-radio-button value="http">HTTP验证 (单域名)</el-radio-button>
+          <el-radio-button value="standalone">Standalone (单域名)</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item label="证书类型">
         <el-select v-model="form.cert_type" style="width:100%">
-          <el-option label="Let's Encrypt - 免费证书" value="letsencrypt" />
-          <el-option label="ZeroSSL - 免费证书" value="zerossl" />
+          <el-option
+            v-for="(info, key) in certTypes"
+            :key="key"
+            :label="`${info.name} - ${info.desc}`"
+            :value="key"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="签发服务器">
@@ -62,6 +66,16 @@
       </el-form-item>
     </el-form>
 
+    <el-alert v-if="form.verify_method === 'dns' && !hasDnsConfig" type="error" :closable="false" style="margin-bottom:15px">
+      通配符证书需要配置 DNS 平台（编辑域名选择 DNS 平台配置）
+    </el-alert>
+    <el-alert v-else-if="form.verify_method === 'http'" type="info" :closable="false" style="margin-bottom:15px">
+      HTTP 验证仅申请主域名 {{ domain?.domain }}，需确保 80 端口可访问且网站目录正确。
+    </el-alert>
+    <el-alert v-else-if="form.verify_method === 'standalone'" type="warning" :closable="false" style="margin-bottom:15px">
+      Standalone 模式会临时停止 Nginx 释放 80 端口，仅申请主域名 {{ domain?.domain }}。
+    </el-alert>
+
     <!-- 申请日志 -->
     <div v-if="sslInfo.log" style="margin-bottom:15px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -76,7 +90,7 @@
       <el-button type="success" @click="openPublishDialog" :disabled="!sslInfo.local_cert?.stored">发布证书</el-button>
       <el-button type="info" @click="openApplyBtDialog" :disabled="!sslInfo.local_cert?.stored">应用到宝塔网站</el-button>
       <el-button type="warning" @click="renewCert" :loading="renewing" :disabled="!sslInfo.exists">续期证书</el-button>
-      <el-button type="primary" @click="issueCert" :loading="issuing">申请证书</el-button>
+      <el-button type="primary" @click="issueCert" :loading="issuing" :disabled="!canIssueCert">申请证书</el-button>
     </template>
 
     <!-- 证书内容对话框 -->
@@ -262,9 +276,16 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'refresh'])
 
 const servers = ref([])
+const certTypes = ref({})
 const defaultServer = computed(() => servers.value.find(s => s.is_default) || servers.value[0])
+const hasDnsConfig = ref(false)
 const sslInfo = reactive({ exists: false, status: '', issuer: '', not_before: '', not_after: '', paths: null, san: '', log: '', local_cert: null })
 const form = reactive({ verify_method: 'dns', cert_type: 'letsencrypt', webroot: '' })
+const canIssueCert = computed(() => {
+  if (!defaultServer.value) return false
+  if (form.verify_method === 'dns') return hasDnsConfig.value
+  return true
+})
 const publishForm = reactive({ server_id: '', target_dir: '' })
 
 const showCertInfo = ref(false)
@@ -382,7 +403,12 @@ watch(() => props.modelValue, async (val) => {
 })
 
 onMounted(async () => {
-  servers.value = await api.get('/ssl/servers')
+  const [serverList, types] = await Promise.all([
+    api.get('/ssl/servers'),
+    api.get('/ssl/types')
+  ])
+  servers.value = serverList
+  certTypes.value = types
 })
 
 onUnmounted(() => {
@@ -414,6 +440,7 @@ async function refreshStatus() {
     sslInfo.san = res.san || ''
     sslInfo.log = res.ssl_log || ''
     sslInfo.local_cert = res.local_cert || null
+    hasDnsConfig.value = !!res.has_dns_config
   } finally {
     refreshing.value = false
   }

@@ -80,18 +80,29 @@ router.post('/preview', async (req, res) => {
   }
 });
 
-// 保存Nginx配置到数据库
-router.post('/save', async (req, res) => {
+// 保存Nginx配置到数据库（支持 /save/:id 与 body.subdomain_id）
+async function saveNginxConfig(req, res) {
   try {
-    const { subdomain_id, config } = req.body;
-    
+    const subdomain_id = req.params.subdomain_id || req.body.subdomain_id;
+    const config = req.body.config;
+
+    if (!subdomain_id) {
+      return res.status(400).json({ error: '缺少 subdomain_id' });
+    }
+    if (config === undefined || config === null) {
+      return res.status(400).json({ error: '缺少 config' });
+    }
+
     await db.run('UPDATE subdomains SET nginx_config = ?, nginx_synced = 0 WHERE id = ?', [config, subdomain_id]);
-    
+
     res.json({ message: 'Config saved' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+
+router.post('/save/:subdomain_id', saveNginxConfig);
+router.post('/save', saveNginxConfig);
 
 // 同步Nginx配置到服务器
 router.post('/sync/:subdomain_id', async (req, res) => {
@@ -112,6 +123,12 @@ router.post('/sync/:subdomain_id', async (req, res) => {
     
     if (!sub.ip) {
       return res.status(400).json({ error: '该域名未关联服务器' });
+    }
+
+    // 同步时可带上最新编辑内容，先落库再下发
+    if (typeof req.body.config === 'string' && req.body.config.length > 0) {
+      sub.nginx_config = req.body.config;
+      await db.run('UPDATE subdomains SET nginx_config = ?, nginx_synced = 0 WHERE id = ?', [req.body.config, req.params.subdomain_id]);
     }
     
     if (!sub.nginx_config) {

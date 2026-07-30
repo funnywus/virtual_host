@@ -2193,13 +2193,22 @@ const loadDirectUploadConfig = async () => {
     }
 
     console.log('[直传] 探测直传端点:', cfg.domain, cfg.upload_url)
-    const uploadPath = await PhpDirectUploader.probe(cfg.domain, 4000, cfg.upload_url)
-    if (uploadPath) {
-      directConfig.value = { ...cfg, upload_url: uploadPath }
+    if (cfg.reachability) {
+      console.log('[直传] 本机探测:', cfg.reachability.message)
+    }
+    const probe = await PhpDirectUploader.probe(cfg.domain, 6000, cfg.upload_url)
+    if (probe.path) {
+      directConfig.value = { ...cfg, upload_url: probe.path }
       directUploadOk.value = true
-      console.log('[直传] PHP 直传可用，路径:', uploadPath)
+      console.log('[直传] PHP 直传可用，路径:', probe.path)
     } else {
-      console.log('[直传] 端点未响应，回退中转上传')
+      const reason = probe.error || '端点未响应'
+      console.warn('[直传] 浏览器探测失败，回退中转上传:', reason)
+      if (cfg.reachability?.ok) {
+        console.warn('[直传] 提示: 服务器本机可达，公网 HTTPS 异常 → 检查该域名 SSL/443/CDN/防火墙')
+      } else if (cfg.reachability?.message) {
+        console.warn('[直传] 提示:', cfg.reachability.message)
+      }
     }
   } catch (e) {
     console.log('[直传] 获取直传配置失败，回退中转上传:', e.message)

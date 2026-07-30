@@ -198,26 +198,64 @@ export class PhpDirectUploader {
     }
   }
 
-  static async probe(domain, timeout = 4000, preferredPath) {
-    // 优先探测指定路径，再回退其他已知路径（避免只配置了 _vhost 但站点仍是旧版时 probe 失败）
+  /**
+   * 探测直传端点是否可达。
+   * 返回 { path, error }：path 有值表示可用；error 描述失败原因（便于区分 SSL/脚本缺失）
+   */
+  static async probe(domain, timeout = 6000, preferredPath) {
     const paths = [...new Set([preferredPath, DEFAULT_UPLOAD_PATH, LEGACY_UPLOAD_PATH].filter(Boolean))];
+    const errors = [];
+
+    // 端点存在的判据：能收到 HTTP 响应即可（403=缺 token 正常；200=放行；404=脚本不在该路径）
+    const aliveStatuses = new Set([200, 400, 401, 403, 405, 415]);
+
     for (const p of paths) {
       const url = `https://${domain}${p}?action=status&uploadId=probecheck0`;
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeout);
-        const res = await fetch(url, { method: 'POST', signal: controller.signal });
-        clearTimeout(timer);
-        if (res.status === 403 || res.status === 200) {
-          console.log('[直传] probe 成功:', p, 'status:', res.status);
-          return p;
+      // 优先 GET（更轻、部分 WAF 对空 POST 更严），失败再试 POST
+      for (const method of ['GET', 'POST']) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeout);
+          const res = await fetch(url, {
+            method,
+            signal: controller.signal,
+            mode: 'cors',
+            cache: 'no-store',
+            credentials: 'omit'
+          });
+          clearTimeout(timer);
+
+          if (aliveStatuses.has(res.status)) {
+            console.log('[直传] probe 成功:', p, method, 'status:', res.status);
+            return { path: p, error: null };
+          }
+          if (res.status === 404) {
+            console.log('[直传] probe 路径不存在:', p, method);
+            errors.push(`${p}: HTTP 404`);
+            break; // 换下一个路径
+          }
+          console.log('[直传] probe 不可用:', p, method, 'status:', res.status);
+          errors.push(`${p}: HTTP ${res.status}`);
+        } catch (e) {
+          const name = e.name === 'AbortError' ? '超时' : (e.message || 'Failed to fetch');
+          console.log('[直传] probe 失败:', p, method, name);
+          errors.push(`${p} ${method}: ${name}`);
+          // GET 网络失败时再试 POST；POST 也失败则换路径
         }
-        console.log('[直传] probe 不可用:', p, 'status:', res.status);
-      } catch (e) {
-        console.log('[直传] probe 失败:', p, e.message);
       }
     }
-    return false;
+
+    const joined = errors.join('; ');
+    let hint = '端点未响应';
+    if (/CONNECTION_RESET|Failed to fetch|NetworkError|Load failed/i.test(joined)) {
+      hint = '站点 HTTPS 连接被重置或不可达（请检查该域名 SSL 证书、443 端口、防火墙/CDN）';
+    } else if (/超时|AbortError/i.test(joined)) {
+      hint = '探测超时（站点响应过慢或被拦截）';
+    } else if (/404/.test(joined)) {
+      hint = 'upload.php 未找到（请补发直传脚本）';
+    }
+
+    return { path: false, error: hint, detail: joined };
   }
 }
 

@@ -184,6 +184,34 @@ router.delete('/domains/:id/dns-records/:recordId', async (req, res) => {
   }
 });
 
+// 修改DNS记录
+router.put('/domains/:id/dns-records/:recordId', async (req, res) => {
+  try {
+    const { name, type, value, ttl } = req.body;
+    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
+
+    if (!domain || !domain.access_key) {
+      return res.status(400).json({ error: '域名未配置DNS平台' });
+    }
+
+    if (!name || !value) {
+      return res.status(400).json({ error: '请填写主机记录和记录值' });
+    }
+
+    const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+
+    if (domain.platform === 'tencent') {
+      await dns.updateRecord(domain.domain, req.params.recordId, name, value, type || 'A', ttl || 600);
+    } else {
+      await dns.updateRecord(req.params.recordId, name, value, type || 'A', ttl || 600);
+    }
+
+    res.json({ success: true, message: '修改成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 修改DNS记录状态（启用/停用）
 router.put('/domains/:id/dns-records/:recordId/status', async (req, res) => {
   try {
