@@ -27,9 +27,22 @@ function matchAuthCode(ftp, input) {
   return resolveAuthCode(ftp) === code;
 }
 
+/** 是否仍为「域名 MD5」弱授权码（可被知悉域名者算出） */
+function isLegacyAuthCode(ftp) {
+  const domain = ftp?.full_domain;
+  if (!domain) return false;
+  const stored = String(ftp?.auth_code || '').trim().toLowerCase();
+  const md5 = domainAuthCode(domain);
+  if (!md5) return false;
+  // 库内为空时 resolve 会回退 MD5，也算弱码
+  if (!stored) return true;
+  return stored === md5;
+}
+
 module.exports = {
   domainAuthCode,
   randomAuthCode,
   resolveAuthCode,
-  matchAuthCode
+  matchAuthCode,
+  isLegacyAuthCode
 };

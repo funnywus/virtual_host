@@ -30,12 +30,13 @@
           <el-icon class="copy-btn" @click="copyText(row.username)"><DocumentCopy /></el-icon>
         </template>
       </el-table-column>
-      <el-table-column prop="auth_code" label="授权码" width="160">
+      <el-table-column prop="auth_code" label="授权码" width="180">
         <template #default="{ row }">
           <el-tooltip :content="row.auth_code" placement="top">
             <span class="auth-code">{{ row.auth_code.substring(0, 8) }}...</span>
           </el-tooltip>
           <el-icon class="copy-btn" @click="copyText(row.auth_code)"><DocumentCopy /></el-icon>
+          <el-tag v-if="row.auth_code_weak" type="danger" size="small" style="margin-left:4px">弱码</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="password" label="密码">

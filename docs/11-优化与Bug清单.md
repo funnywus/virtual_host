@@ -30,7 +30,7 @@
 | B-03 | SSH/FTP/DNS 密钥明文入库 | `servers.password`、`ftp_accounts.password`、`aliyun_config.secret_key` | DB 泄露即全盘沦陷 | 应用层加密（KMS/主密钥）或至少 AES-GCM + 密钥环境变量 |
 | B-04 | 开放注册无开关 | `backend/routes/auth.js` `POST /register` | ~~已修~~：默认关闭；`ALLOW_REGISTER=true` 才开放；平时用 admin `/api/users` | 已落地 |
 | B-05 | `UPLOAD_SIGN_SECRET` 默认硬编码 | `backend/routes/upload.js` | ~~已修~~：启动 `assertRequiredSecrets` fail-fast；禁止弱默认值 | 已落地 |
-| B-06 | 历史授权码=域名 MD5 | `backend/services/ftp-auth.js` | 知道域名即可算出授权码进入文件空间 | 强制迁移为随机 auth_code；登录时检测并提示重置 |
+| B-06 | 历史授权码=域名 MD5 | `backend/services/ftp-auth.js` | ~~已修~~：登录返回 `auth_code_weak`；管理端标「弱码」；`FORCE_LEGACY_AUTH_RESET` 可强制拒绝 | 已落地（存量需管理员点重置） |
 | B-07 | CORS 全开 + 超大 body | `backend/server.js` `cors()` + 500MB JSON | 配合开放接口放大滥用面 | 限制 Origin；上传走 multipart/chunk，缩小 JSON limit |
 
 ### P1 — 功能 / 正确性
@@ -39,8 +39,8 @@
 |----|------|------|------|----------|
 | B-08 | 路径保护可被 `..` 绕过 | `upload-system-files.js` `normalizeRelPath` + `upload.js` `isProtectedPath` | ~~已修~~：`posix.normalize` + 逃逸返回 null；非法路径按受保护拒绝 | 已落地 |
 | B-09 | `home_dir` 前缀校验不严谨 | `upload.js` 多处 `startsWith(ftp.home_dir)` | ~~已修~~：统一 `isPathInsideHome` / `denyOutsideHome`；`remoteAbs` 二次约束 | 已落地 |
-| B-10 | 授权码查找全表扫描 | `upload.js` `findFtpByAuthCode` | 每次上传操作 `SELECT` 全部 active FTP 再在 Node 中 `find` | `WHERE auth_code = ?`；旧 MD5 可预计算落库并建唯一索引 |
-| B-11 | 首次激活存在竞态 | `upload.js` `/auth` | 并发首次登录可能重复写 `activated_at`/`expire_at` | DB 条件更新：`WHERE activated_at IS NULL` 或事务 + 行锁 |
+| B-10 | 授权码查找全表扫描 | `upload.js` `findFtpByAuthCode` | ~~已修~~：等值查询 + `idx_ftp_auth_code`；空值回填后可走索引 | 已落地 |
+| B-11 | 首次激活存在竞态 | `upload.js` `/auth` | ~~已修~~：`WHERE activated_at IS NULL` 条件更新，冲突则回读 | 已落地 |
 | B-12 | 删除服务器对 admin 无效/静默 | `servers.js` `DELETE /:id` | ~~已修~~：`getAccessibleServer`；admin 可删，非所有者 404 | 已落地 |
 | B-13 | 设默认服务器缺所有权校验 | `servers.js` `POST /:id/set-default` | ~~已修~~：先校验可访问，再按所有者清默认并设置 | 已落地 |
 | B-14 | 服务器停用/恢复可能缺租户校验 | `servers.js` status 更新 | ~~已修~~：status/update/SSH 操作均走 `getAccessibleServer` | 已落地 |

@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 const SshFtpService = require('../services/ssh-ftp');
-const { matchAuthCode } = require('../services/ftp-auth');
+const { findFtpByAuthCode } = require('../services/ftp-lookup');
 
 const router = express.Router();
 
@@ -70,22 +70,6 @@ function getAvailableDiskSpace() {
     console.error('获取磁盘空间失败:', err.message);
     return null;
   }
-}
-
-// 根据授权码查找FTP账号（优先库内 auth_code）
-async function findFtpByAuthCode(auth_code) {
-  const ftpAccounts = await db.all(`
-    SELECT f.*, s.subdomain, d.domain as main_domain,
-           CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
-           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
-    FROM ftp_accounts f
-    LEFT JOIN subdomains s ON f.subdomain_id = s.id
-    LEFT JOIN domains d ON s.domain_id = d.id
-    LEFT JOIN servers sv ON s.server_id = sv.id
-    WHERE f.status = 'active' AND (s.use_status IS NULL OR s.use_status != 'disabled')
-  `);
-  
-  return ftpAccounts.find(f => matchAuthCode(f, auth_code));
 }
 
 // 初始化分片上传

@@ -135,6 +135,44 @@ async function migrateDatabase() {
       }
       console.log('[DB Migration] ✓ batch_ssl_jobs 表创建成功');
     }
+
+    // 授权码：回填空值 / 统一小写，并建索引以支持等值查询
+    try {
+      const { domainAuthCode } = require('./services/ftp-auth');
+      const missing = await db.all(`
+        SELECT f.id,
+               CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
+        FROM ftp_accounts f
+        LEFT JOIN subdomains s ON f.subdomain_id = s.id
+        LEFT JOIN domains d ON s.domain_id = d.id
+        WHERE f.auth_code IS NULL OR TRIM(f.auth_code) = ''
+      `);
+      let filled = 0;
+      for (const row of missing || []) {
+        const code = domainAuthCode(row.full_domain);
+        if (!code) continue;
+        await db.run('UPDATE ftp_accounts SET auth_code = ? WHERE id = ?', [code, row.id]);
+        filled += 1;
+      }
+      if (filled > 0) {
+        console.log(`[DB Migration] ✓ 回填 ${filled} 条空授权码（域名 MD5，待管理员重置为随机码）`);
+      }
+
+      await db.run(`UPDATE ftp_accounts SET auth_code = LOWER(auth_code) WHERE auth_code IS NOT NULL AND auth_code != LOWER(auth_code)`);
+
+      // 普通索引即可加速等值查询；避免历史重复 auth_code 导致 UNIQUE 迁移失败
+      if (db.type === 'mysql') {
+        const idx = await db.all(`SHOW INDEX FROM ftp_accounts WHERE Key_name = 'idx_ftp_auth_code'`);
+        if (!idx || idx.length === 0) {
+          await db.run('CREATE INDEX idx_ftp_auth_code ON ftp_accounts (auth_code)');
+          console.log('[DB Migration] ✓ 创建 ftp_accounts.auth_code 索引');
+        }
+      } else {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_ftp_auth_code ON ftp_accounts (auth_code)');
+      }
+    } catch (authMigErr) {
+      console.error('[DB Migration] 授权码索引/回填:', authMigErr.message);
+    }
   } catch (err) {
     console.error('[DB Migration] 错误:', err.message);
   }

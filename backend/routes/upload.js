@@ -9,7 +9,7 @@ const WorkerPool = require('../utils/worker-pool');
 const sshPool = require('../utils/ssh-connection-pool');
 const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath, normalizeRelPath } = require('../services/upload-system-files');
 const pathPosix = require('path').posix;
-const { domainAuthCode } = require('../services/ftp-auth');
+const { domainAuthCode, isLegacyAuthCode } = require('../services/ftp-auth');
 const { findFtpByAuthCode, isPathInsideHome, isStrictlyInsideHome } = require('../services/ftp-lookup');
 const { getUploadSignSecret } = require('../utils/env-check');
 
@@ -101,29 +101,51 @@ router.post('/auth', async (req, res) => {
       });
     }
 
+    const authCodeWeak = isLegacyAuthCode(ftp);
+    const forceLegacyReset = ['1', 'true', 'yes', 'on'].includes(
+      String(process.env.FORCE_LEGACY_AUTH_RESET || '').trim().toLowerCase()
+    );
+    if (authCodeWeak && forceLegacyReset) {
+      return res.status(403).json({
+        error: '当前授权码为历史弱码（可由域名推算），请联系管理员重置后再登录',
+        code: 'auth_code_weak',
+        domain: ftp.full_domain
+      });
+    }
+
     // 首次登录激活：设置激活时间和到期时间（从第二天开始算）
     let expireAt = ftp.expire_at;
     let activatedAt = ftp.activated_at;
-    
+
     if (!activatedAt && ftp.duration_days) {
-      // 首次激活
+      // 首次激活（条件更新，避免并发重复写）
       const now = new Date();
       activatedAt = now.toISOString().slice(0, 19).replace('T', ' ');
-      
-      // 到期时间 = 明天 + duration_days 天
+
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(0, 0, 0, 0);
-      
+
       const expireDate = new Date(tomorrow);
       expireDate.setDate(expireDate.getDate() + ftp.duration_days);
       expireAt = expireDate.toISOString().slice(0, 19).replace('T', ' ');
-      
-      // 更新数据库
-      await db.run(
-        'UPDATE subdomains SET activated_at = ?, expire_at = ?, use_status = ? WHERE id = ?',
+
+      const upd = await db.run(
+        `UPDATE subdomains SET activated_at = ?, expire_at = ?, use_status = ?
+         WHERE id = ? AND activated_at IS NULL`,
         [activatedAt, expireAt, 'used', ftp.subdomain_id]
       );
+      // 若并发下未抢到更新，回读库中已有激活信息
+      if (upd && typeof upd.changes === 'number' && upd.changes === 0) {
+        const fresh = await db.get(
+          'SELECT activated_at, expire_at, use_status FROM subdomains WHERE id = ?',
+          [ftp.subdomain_id]
+        );
+        if (fresh?.activated_at) {
+          activatedAt = fresh.activated_at;
+          expireAt = fresh.expire_at;
+        }
+      }
     }
 
     // 计算剩余天数
@@ -134,7 +156,7 @@ router.post('/auth', async (req, res) => {
       remainingDays = Math.ceil((expire - now) / (1000 * 60 * 60 * 24));
       if (remainingDays < 0) remainingDays = 0;
     }
-    
+
     res.json({
       success: true,
       domain: ftp.full_domain,
@@ -144,7 +166,8 @@ router.post('/auth', async (req, res) => {
       expire_at: expireAt || null,
       activated_at: activatedAt || null,
       remaining_days: remainingDays,
-      use_status: ftp.use_status || 'unused'
+      use_status: ftp.use_status || 'unused',
+      auth_code_weak: authCodeWeak
       // 不再回传 SSH/FTP 凭据；WS 直传改由服务端凭授权码建连
     });
   } catch (err) {

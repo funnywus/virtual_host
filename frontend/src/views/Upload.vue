@@ -51,6 +51,15 @@
         <div class="page-drag-tip">松开鼠标添加文件</div>
       </div>
 
+      <el-alert
+        v-if="authCodeWeak"
+        type="warning"
+        :closable="true"
+        show-icon
+        class="auth-weak-alert"
+        title="当前授权码为历史弱码（可由域名推算），请联系管理员重置为随机授权码"
+        @close="authCodeWeak = false"
+      />
       <div class="mac-window">
         <!-- 侧边栏（Finder 源列表） -->
         <aside class="mac-sidebar">
@@ -1149,6 +1158,7 @@ const authCode = ref(localStorage.getItem('upload_auth_code') || '')
 const authorized = ref(false)
 const verifying = ref(false)
 const authBlocked = ref(null)
+const authCodeWeak = ref(false)
 const blockedDomain = ref('')
 const domain = ref('')
 const homeDir = ref('')
@@ -2127,14 +2137,23 @@ const verifyAuth = async () => {
     maxUploadSize.value = res.max_upload_size || 209715200
     expireAt.value = res.expire_at || null
     remainingDays.value = res.remaining_days
+    authCodeWeak.value = !!res.auth_code_weak
 
     authorized.value = true
     localStorage.setItem('upload_auth_code', authCode.value)
     await loadFiles()
     await loadDirectUploadConfig()
     maybeShowExpiryAlert()
+    if (authCodeWeak.value) {
+      ElMessage.warning('检测到历史弱授权码，请联系管理员重置')
+    }
   } catch (e) {
-    if (e.code === 'disabled' || e.status === 403) {
+    if (e.code === 'auth_code_weak') {
+      authBlocked.value = null
+      authorized.value = false
+      localStorage.removeItem('upload_auth_code')
+      ElMessage.error(e.message || '请联系管理员重置授权码')
+    } else if (e.code === 'disabled' || e.status === 403) {
       authBlocked.value = 'disabled'
       blockedDomain.value = e.data?.domain || ''
       authorized.value = false

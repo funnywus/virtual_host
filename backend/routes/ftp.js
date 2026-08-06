@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const SshFtpService = require('../services/ssh-ftp');
-const { randomAuthCode, resolveAuthCode } = require('../services/ftp-auth');
+const { randomAuthCode, resolveAuthCode, isLegacyAuthCode } = require('../services/ftp-auth');
 
 const router = express.Router();
 
@@ -87,13 +87,16 @@ router.get('/', async (req, res) => {
       ORDER BY f.created_at DESC LIMIT ? OFFSET ?
     `, [...whereParams, pageSize, offset]);
     
-    // 列表返回库内授权码；缺省时回退域名 MD5（兼容旧数据），并回写库
+    // 列表返回授权码；空值补随机码（不再回写可推算的域名 MD5）
     for (const acc of accounts) {
-      const code = resolveAuthCode(acc);
-      if (!acc.auth_code && code) {
+      if (!acc.auth_code) {
+        const code = randomAuthCode();
         await db.run('UPDATE ftp_accounts SET auth_code = ? WHERE id = ?', [code, acc.id]);
+        acc.auth_code = code;
+      } else {
+        acc.auth_code = resolveAuthCode(acc);
       }
-      acc.auth_code = code;
+      acc.auth_code_weak = isLegacyAuthCode(acc);
       acc.used_size = null;
     }
     
