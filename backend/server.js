@@ -33,9 +33,38 @@ const formatTime = (date = new Date()) => {
 
 const app = express();
 
-app.use(cors());
-app.use(bodyParser.json({ limit: '500mb' }));
-app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));
+function buildCorsOptions() {
+  const configured = String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  return {
+    origin(origin, callback) {
+      // 非浏览器 / 同源请求常无 Origin
+      if (!origin) return callback(null, true);
+      if (configured.includes('*')) return callback(null, true);
+      if (configured.length > 0) {
+        return callback(null, configured.includes(origin));
+      }
+      // 未配置时仅放行本机开发 Origin；生产请设置 CORS_ORIGINS
+      const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+      return callback(null, isLocal);
+    },
+    credentials: true
+  };
+}
+
+app.use(cors(buildCorsOptions()));
+
+const defaultJsonLimit = process.env.JSON_BODY_LIMIT || '2mb';
+const uploadJsonLimit = process.env.UPLOAD_JSON_LIMIT || '64mb';
+
+// 上传相关接口允许较大 JSON（历史 base64 直传）；其余 API 收紧默认限制
+app.use('/api/upload', bodyParser.json({ limit: uploadJsonLimit }), bodyParser.urlencoded({ limit: uploadJsonLimit, extended: true }));
+app.use('/api/upload-chunked', bodyParser.json({ limit: '1mb' }), bodyParser.urlencoded({ limit: '1mb', extended: true }));
+app.use(bodyParser.json({ limit: defaultJsonLimit }));
+app.use(bodyParser.urlencoded({ limit: defaultJsonLimit, extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 设置超时时间为 30 分钟（支持大文件上传和合并）

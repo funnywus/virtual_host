@@ -31,7 +31,7 @@
 | B-04 | 开放注册无开关 | `backend/routes/auth.js` `POST /register` | ~~已修~~：默认关闭；`ALLOW_REGISTER=true` 才开放；平时用 admin `/api/users` | 已落地 |
 | B-05 | `UPLOAD_SIGN_SECRET` 默认硬编码 | `backend/routes/upload.js` | ~~已修~~：启动 `assertRequiredSecrets` fail-fast；禁止弱默认值 | 已落地 |
 | B-06 | 历史授权码=域名 MD5 | `backend/services/ftp-auth.js` | ~~已修~~：登录返回 `auth_code_weak`；管理端标「弱码」；`FORCE_LEGACY_AUTH_RESET` 可强制拒绝 | 已落地（存量需管理员点重置） |
-| B-07 | CORS 全开 + 超大 body | `backend/server.js` `cors()` + 500MB JSON | 配合开放接口放大滥用面 | 限制 Origin；上传走 multipart/chunk，缩小 JSON limit |
+| B-07 | CORS 全开 + 超大 body | `backend/server.js` `cors()` + 500MB JSON | ~~已修~~：`CORS_ORIGINS`；默认 JSON 2mb，上传路由 64mb | 已落地 |
 
 ### P1 — 功能 / 正确性
 
@@ -44,7 +44,7 @@
 | B-12 | 删除服务器对 admin 无效/静默 | `servers.js` `DELETE /:id` | ~~已修~~：`getAccessibleServer`；admin 可删，非所有者 404 | 已落地 |
 | B-13 | 设默认服务器缺所有权校验 | `servers.js` `POST /:id/set-default` | ~~已修~~：先校验可访问，再按所有者清默认并设置 | 已落地 |
 | B-14 | 服务器停用/恢复可能缺租户校验 | `servers.js` status 更新 | ~~已修~~：status/update/SSH 操作均走 `getAccessibleServer` | 已落地 |
-| B-15 | 分片上传会话无二次鉴权 | `upload-chunked.js` | `uploadId` 知悉即可续传；`info.json` 含 SSH 密码 | uploadId 绑定 auth 会话；磁盘上的密码加密或改用连接池凭据查询 |
+| B-15 | 分片上传会话无二次鉴权 | `upload-chunked.js` | ~~已修~~：各步骤校验 auth_code HMAC；磁盘不存 SSH 密码，合并时查库建连 | 已落地 |
 | B-16 | MySQL 环境变量与文档不一致 | `database-mysql.js` vs README/docs | 代码只读 `MYSQL_*`，文档常写 `DB_*` | 统一一套，并兼容读取；补 `.env.example` |
 | B-17 | Vite 构建产物路径与部署文档不一致 | `frontend/vite.config.js` `outDir: ./dist` | 文档要求拷到 `backend/public`，易部署错版 | build 直接 `outDir: ../backend/public` 或加 copy 脚本 |
 | B-18 | `JWT_SECRET` 未启动校验 | `auth.js` / `middleware/auth.js` | ~~已修~~：与 B-05 一并在启动期校验 | 已落地 |

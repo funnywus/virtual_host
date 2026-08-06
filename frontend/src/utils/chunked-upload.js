@@ -69,6 +69,7 @@ export class ChunkedUploader {
     const formData = new FormData();
     formData.append('uploadId', this.uploadId);
     formData.append('chunk_index', chunkIndex);
+    formData.append('auth_code', this.authCode || '');
     formData.append('chunk', chunk);
     
     try {
@@ -158,7 +159,7 @@ export class ChunkedUploader {
       const res = await fetch(`${API_BASE}/api/upload-chunked/merge-chunks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId: this.uploadId })
+        body: JSON.stringify({ uploadId: this.uploadId, auth_code: this.authCode })
       });
 
       if (!res.ok) {
@@ -197,7 +198,8 @@ export class ChunkedUploader {
 
       let statusRes;
       try {
-        statusRes = await fetch(`${API_BASE}/api/upload-chunked/merge-status/${taskId}`);
+        const q = this.authCode ? `?auth_code=${encodeURIComponent(this.authCode)}` : '';
+        statusRes = await fetch(`${API_BASE}/api/upload-chunked/merge-status/${taskId}${q}`);
       } catch (e) {
         // 网络抖动，重试
         consecutiveFailures++;
@@ -264,7 +266,7 @@ export class ChunkedUploader {
         await fetch(`${API_BASE}/api/upload-chunked/cancel-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uploadId: this.uploadId })
+          body: JSON.stringify({ uploadId: this.uploadId, auth_code: this.authCode })
         });
       } catch (err) {
         console.error('取消上传失败:', err);
