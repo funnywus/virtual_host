@@ -2,6 +2,7 @@ const express = require('express');
 const net = require('net');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { encryptSecret, decryptServerSecrets } = require('../utils/secret-crypto');
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ async function getAccessibleServer(req, serverId) {
   if (req.user.role !== 'admin' && server.user_id !== req.user.id) {
     return null;
   }
-  return server;
+  return decryptServerSecrets(server);
 }
 
 // 获取服务器列表
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
       ? 'SELECT * FROM servers WHERE user_id = ?' 
       : 'SELECT * FROM servers';
     const servers = await db.all(sql, userId ? [userId] : []);
-    res.json(servers);
+    res.json(servers.map(s => decryptServerSecrets({ ...s })));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -101,7 +102,7 @@ router.post('/', async (req, res) => {
     const serverStatus = status === 'disabled' ? 'disabled' : 'active';
     const result = await db.run(
       'INSERT INTO servers (name, ip, port, username, password, tags, user_id, expire_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, ip, port || 22, username, password, tags || '', req.user.id, expire_at || null, serverStatus]
+      [name, ip, port || 22, username, encryptSecret(password), tags || '', req.user.id, expire_at || null, serverStatus]
     );
     res.json({ id: result.lastID, message: 'Server added' });
   } catch (err) {
@@ -118,13 +119,17 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: '服务器不存在' });
     }
 
-    // 如果密码为空，保留原密码
-    const newPassword = password || server.password;
-
-    await db.run(
-      'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
-      [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
-    );
+    if (password) {
+      await db.run(
+        'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
+        [name, ip, port || 22, username, encryptSecret(password), tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
+      );
+    } else {
+      await db.run(
+        'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
+        [name, ip, port || 22, username, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
+      );
+    }
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });

@@ -275,11 +275,14 @@ const getDefaultServer = async (userId = null) => {
   `, params);
 };
 
+const { decryptSecret, decryptServerSecrets } = require('../utils/secret-crypto');
+
 const getServerById = async (serverId) => {
   if (!serverId) return null;
   const id = parseInt(serverId, 10);
   if (!Number.isInteger(id) || id <= 0) return null;
-  return db.get('SELECT * FROM servers WHERE id = ? AND (status IS NULL OR status != ?)', [id, 'disabled']);
+  const server = await db.get('SELECT * FROM servers WHERE id = ? AND (status IS NULL OR status != ?)', [id, 'disabled']);
+  return server ? decryptServerSecrets(server) : null;
 };
 
 const getSshService = (server) => {
@@ -287,7 +290,7 @@ const getSshService = (server) => {
     ip: server.ip,
     port: server.port,
     username: server.username,
-    password: server.password
+    password: decryptSecret(server.password)
   });
 };
 
@@ -1546,7 +1549,7 @@ router.post('/check-all', async (req, res) => {
           ip: server.ip,
           port: server.port,
           username: server.username,
-          password: server.password
+          password: decryptSecret(server.password)
         });
 
         const checkCmd = sslCert.getCheckCommand(domain.domain);

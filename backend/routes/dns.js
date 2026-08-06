@@ -4,6 +4,7 @@ const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const AliyunDns = require('../services/aliyun-dns');
 const TencentDns = require('../services/tencent-dns');
+const { encryptSecret, decryptSecret, decryptDnsCreds } = require('../utils/secret-crypto');
 
 const router = express.Router();
 
@@ -21,14 +22,16 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
-// 根据平台获取DNS服务实例
+// 根据平台获取DNS服务实例（自动解密库内密文）
 function getDnsService(platform, accessKey, secretKey) {
+  const key = decryptSecret(accessKey);
+  const secret = decryptSecret(secretKey);
   switch (platform) {
     case 'tencent':
-      return new TencentDns(accessKey, secretKey);
+      return new TencentDns(key, secret);
     case 'aliyun':
     default:
-      return new AliyunDns(accessKey, secretKey);
+      return new AliyunDns(key, secret);
   }
 }
 
@@ -384,7 +387,7 @@ router.post('/batch-create', async (req, res) => {
         ip: server.ip,
         port: server.port,
         username: server.username,
-        password: server.password
+        password: decryptSecret(server.password)
       });
     }
 
@@ -413,7 +416,7 @@ router.post('/batch-create', async (req, res) => {
           
           await db.run(
             'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
+            [subdomainId, ftpUsername, encryptSecret(ftpPassword), 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
           );
           
           ftpInfo = { username: ftpUsername, password: ftpPassword, auth_code: ftpAuthCode, home_dir: ftpHomeDir, max_upload_size: ftpMaxUploadSize };
@@ -636,7 +639,7 @@ router.get('/subdomains/:id/ftp-info', async (req, res) => {
       full_domain: fullDomain,
       server_ip: sub.server_ip,
       username: ftp.username,
-      password: ftp.password,
+      password: decryptSecret(ftp.password),
       port: ftp.port,
       home_dir: ftp.home_dir,
       auth_code: resolveAuthCode({ ...ftp, full_domain: fullDomain }),
@@ -826,7 +829,7 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
         ip: first.ip,
         port: first.port,
         username: first.username,
-        password: first.password
+        password: decryptSecret(first.password)
       });
 
       for (const item of items) {
@@ -887,7 +890,7 @@ router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
       ip: sub.server_ip,
       port: sub.server_port,
       username: sub.server_user,
-      password: sub.server_pass
+      password: decryptSecret(sub.server_pass)
     });
 
     const result = await deployUploadScript(sshService, sub.home_dir);
@@ -936,7 +939,7 @@ router.post('/subdomains/:id/fix-php-config', async (req, res) => {
       ip: sub.server_ip,
       port: sub.server_port,
       username: sub.server_user,
-      password: sub.server_pass
+      password: decryptSecret(sub.server_pass)
     });
 
     const phpFix = await ensureSitePhpAfterDeploy(sshService, fullDomain, sub.nginx_path);
@@ -977,7 +980,7 @@ router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
       ip: sub.server_ip,
       port: sub.server_port,
       username: sub.server_user,
-      password: sub.server_pass
+      password: decryptSecret(sub.server_pass)
     });
 
     const tmpDir = sub.home_dir + '/_vhost/.upload_tmp';
@@ -1155,7 +1158,7 @@ router.post('/subdomains', async (req, res) => {
       // 保存FTP账号
       await db.run(
         'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [subdomainId, ftpUsername, ftpPassword, 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
+        [subdomainId, ftpUsername, encryptSecret(ftpPassword), 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
       );
       
       ftpInfo = { username: ftpUsername, password: ftpPassword, home_dir: ftpHomeDir, auth_code: ftpAuthCode, max_upload_size: ftpMaxUploadSize };
@@ -1167,7 +1170,7 @@ router.post('/subdomains', async (req, res) => {
           ip: server.ip,
           port: server.port,
           username: server.username,
-          password: server.password
+          password: decryptSecret(server.password)
         });
         
         const ftpResult = await sshService.createFtpUser(ftpUsername, ftpPassword, ftpHomeDir);
@@ -1208,7 +1211,7 @@ router.post('/subdomains', async (req, res) => {
           ip: server.ip,
           port: server.port,
           username: server.username,
-          password: server.password
+          password: decryptSecret(server.password)
         });
 
         const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
@@ -1333,7 +1336,7 @@ router.put('/subdomains/:id/rate-limit', async (req, res) => {
           ip: sub.ip,
           port: sub.port,
           username: sub.username,
-          password: sub.password
+          password: decryptSecret(sub.password)
         });
 
         const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
@@ -1513,7 +1516,7 @@ async function deleteSubdomainWithResources(subdomainId, options = {}) {
       ip: sub.server_ip,
       port: sub.server_port,
       username: sub.server_user,
-      password: sub.server_pass
+      password: decryptSecret(sub.server_pass)
     });
 
     if (delete_ftp && ftp?.username) {
@@ -1563,7 +1566,7 @@ router.get('/aliyun-configs', async (req, res) => {
       ? 'SELECT id, name, platform, access_key, secret_key, remark, tags, is_default, created_at FROM aliyun_config WHERE user_id = ? ORDER BY is_default DESC, id DESC'
       : 'SELECT ac.id, ac.name, ac.platform, ac.access_key, ac.secret_key, ac.remark, ac.tags, ac.is_default, ac.created_at, u.username FROM aliyun_config ac LEFT JOIN users u ON ac.user_id = u.id ORDER BY ac.is_default DESC, ac.id DESC';
     const configs = await db.all(sql, userId ? [userId] : []);
-    res.json(configs);
+    res.json(configs.map(c => decryptDnsCreds({ ...c })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1575,7 +1578,15 @@ router.post('/aliyun-configs', async (req, res) => {
     const { name, platform, access_key, secret_key, remark, tags } = req.body;
     const result = await db.run(
       'INSERT INTO aliyun_config (user_id, name, platform, access_key, secret_key, remark, tags) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [req.user.id, name, platform || 'aliyun', access_key, secret_key, remark || '', tags || '']
+      [
+        req.user.id,
+        name,
+        platform || 'aliyun',
+        encryptSecret(access_key),
+        encryptSecret(secret_key),
+        remark || '',
+        tags || ''
+      ]
     );
     res.json({ id: result.lastID, message: 'Config added' });
   } catch (err) {
@@ -1590,12 +1601,20 @@ router.put('/aliyun-configs/:id', async (req, res) => {
     if (secret_key) {
       await db.run(
         'UPDATE aliyun_config SET name = ?, platform = ?, access_key = ?, secret_key = ?, remark = ?, tags = ? WHERE id = ?',
-        [name, platform || 'aliyun', access_key, secret_key, remark || '', tags || '', req.params.id]
+        [
+          name,
+          platform || 'aliyun',
+          encryptSecret(access_key),
+          encryptSecret(secret_key),
+          remark || '',
+          tags || '',
+          req.params.id
+        ]
       );
     } else {
       await db.run(
         'UPDATE aliyun_config SET name = ?, platform = ?, access_key = ?, remark = ?, tags = ? WHERE id = ?',
-        [name, platform || 'aliyun', access_key, remark || '', tags || '', req.params.id]
+        [name, platform || 'aliyun', encryptSecret(access_key), remark || '', tags || '', req.params.id]
       );
     }
     res.json({ message: 'Config updated' });
@@ -1637,9 +1656,10 @@ router.post('/aliyun-configs/:id/test', async (req, res) => {
     if (!config) {
       return res.status(404).json({ error: '配置不存在' });
     }
-    
+    decryptDnsCreds(config);
+
     const platform = config.platform || 'aliyun';
-    
+
     try {
       if (platform === 'aliyun') {
         const dns = new AliyunDns(config.access_key, config.secret_key);
@@ -1668,10 +1688,10 @@ router.post('/aliyun-config', async (req, res) => {
     
     if (existing) {
       await db.run('UPDATE aliyun_config SET access_key = ?, secret_key = ? WHERE id = ?',
-        [access_key, secret_key, existing.id]);
+        [encryptSecret(access_key), encryptSecret(secret_key), existing.id]);
     } else {
       await db.run('INSERT INTO aliyun_config (user_id, name, access_key, secret_key) VALUES (?, ?, ?, ?)',
-        [req.user.id, '默认配置', access_key, secret_key]);
+        [req.user.id, '默认配置', encryptSecret(access_key), encryptSecret(secret_key)]);
     }
     
     res.json({ message: 'Config saved' });

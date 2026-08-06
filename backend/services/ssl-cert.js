@@ -49,24 +49,27 @@ function getCertPath(domain) {
 
 // 生成DNS验证环境变量
 function getDnsEnvVars(platform, accessKey, secretKey) {
+  const { decryptSecret } = require('../utils/secret-crypto');
+  const key = decryptSecret(accessKey);
+  const secret = decryptSecret(secretKey);
   const method = VERIFY_METHODS[`dns_${platform}`] || VERIFY_METHODS.dns_aliyun;
-  
+
   switch (platform) {
     case 'aliyun':
-      return `export Ali_Key="${accessKey}"\nexport Ali_Secret="${secretKey}"`;
+      return `export Ali_Key="${key}"\nexport Ali_Secret="${secret}"`;
     case 'tencent':
       // 腾讯云DNS使用 Tencent_SecretId 和 Tencent_SecretKey
-      return `export Tencent_SecretId="${accessKey}"\nexport Tencent_SecretKey="${secretKey}"`;
+      return `export Tencent_SecretId="${key}"\nexport Tencent_SecretKey="${secret}"`;
     case 'dnspod':
-      return `export DP_Id="${accessKey}"\nexport DP_Key="${secretKey}"`;
+      return `export DP_Id="${key}"\nexport DP_Key="${secret}"`;
     case 'cloudflare':
-      return `export CF_Email="${accessKey}"\nexport CF_Key="${secretKey}"`;
+      return `export CF_Email="${key}"\nexport CF_Key="${secret}"`;
     case 'huawei':
-      return `export HUAWEICLOUD_Username="${accessKey}"\nexport HUAWEICLOUD_Password="${secretKey}"`;
+      return `export HUAWEICLOUD_Username="${key}"\nexport HUAWEICLOUD_Password="${secret}"`;
     case 'godaddy':
-      return `export GD_Key="${accessKey}"\nexport GD_Secret="${secretKey}"`;
+      return `export GD_Key="${key}"\nexport GD_Secret="${secret}"`;
     default:
-      return `export Ali_Key="${accessKey}"\nexport Ali_Secret="${secretKey}"`;
+      return `export Ali_Key="${key}"\nexport Ali_Secret="${secret}"`;
   }
 }
 

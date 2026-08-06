@@ -202,6 +202,43 @@ async function migrateDatabase() {
     } catch (authMigErr) {
       console.error('[DB Migration] 授权码索引/回填:', authMigErr.message);
     }
+
+    // 敏感字段明文 → AES-GCM 密文（幂等：已是 enc:v1: 则跳过）
+    try {
+      const { encryptSecret, isEncrypted } = require('./utils/secret-crypto');
+      let migrated = 0;
+
+      const servers = await db.all("SELECT id, password FROM servers WHERE password IS NOT NULL AND password != ''");
+      for (const row of servers || []) {
+        if (isEncrypted(row.password)) continue;
+        await db.run('UPDATE servers SET password = ? WHERE id = ?', [encryptSecret(row.password), row.id]);
+        migrated += 1;
+      }
+
+      const ftps = await db.all("SELECT id, password FROM ftp_accounts WHERE password IS NOT NULL AND password != ''");
+      for (const row of ftps || []) {
+        if (isEncrypted(row.password)) continue;
+        await db.run('UPDATE ftp_accounts SET password = ? WHERE id = ?', [encryptSecret(row.password), row.id]);
+        migrated += 1;
+      }
+
+      const dnsConfigs = await db.all(
+        "SELECT id, access_key, secret_key FROM aliyun_config WHERE (access_key IS NOT NULL AND access_key != '') OR (secret_key IS NOT NULL AND secret_key != '')"
+      );
+      for (const row of dnsConfigs || []) {
+        const access = isEncrypted(row.access_key) ? row.access_key : encryptSecret(row.access_key);
+        const secret = isEncrypted(row.secret_key) ? row.secret_key : encryptSecret(row.secret_key);
+        if (access === row.access_key && secret === row.secret_key) continue;
+        await db.run('UPDATE aliyun_config SET access_key = ?, secret_key = ? WHERE id = ?', [access, secret, row.id]);
+        migrated += 1;
+      }
+
+      if (migrated > 0) {
+        console.log(`[DB Migration] ✓ 加密迁移 ${migrated} 条敏感凭据`);
+      }
+    } catch (secMigErr) {
+      console.error('[DB Migration] 凭据加密:', secMigErr.message);
+    }
   } catch (err) {
     console.error('[DB Migration] 错误:', err.message);
   }

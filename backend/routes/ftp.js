@@ -4,6 +4,7 @@ const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const SshFtpService = require('../services/ssh-ftp');
 const { randomAuthCode, resolveAuthCode, isLegacyAuthCode } = require('../services/ftp-auth');
+const { encryptSecret, decryptFtpSecrets } = require('../utils/secret-crypto');
 
 const router = express.Router();
 
@@ -96,6 +97,7 @@ router.get('/', async (req, res) => {
       } else {
         acc.auth_code = resolveAuthCode(acc);
       }
+      decryptFtpSecrets(acc);
       acc.auth_code_weak = isLegacyAuthCode(acc);
       acc.used_size = null;
     }
@@ -137,6 +139,7 @@ router.get('/:id/usage', async (req, res) => {
     if (!ftp) {
       return res.status(404).json({ error: 'FTP account not found' });
     }
+    decryptFtpSecrets(ftp);
 
     let usedSize = 0;
     if (ftp.server_ip && ftp.home_dir) {
@@ -177,22 +180,23 @@ router.post('/', async (req, res) => {
     if (!subdomain) {
       return res.status(400).json({ error: 'Subdomain not found' });
     }
-    
+    decryptFtpSecrets(subdomain);
+
     // 检查是否已有FTP账号
     const existing = await db.get('SELECT id FROM ftp_accounts WHERE subdomain_id = ?', [subdomain_id]);
     if (existing) {
       return res.status(400).json({ error: '该域名已有FTP账号' });
     }
-    
+
     const ftpUsername = username || generateUsername(subdomain.subdomain, subdomain.main_domain);
     const ftpPassword = password || generatePassword();
     const fullDomain = `${subdomain.subdomain}.${subdomain.main_domain}`;
     const ftpHomeDir = home_dir || `/www/wwwroot/ftp/${fullDomain}`;
-    
+
     // 如果有关联服务器，自动配置FTP
     let syncStatus = 'pending';
     let syncMessage = '';
-    
+
     if (subdomain.server_id && subdomain.ip) {
       try {
         const sshService = new SshFtpService({
@@ -201,7 +205,7 @@ router.post('/', async (req, res) => {
           username: subdomain.ssh_user,
           password: subdomain.ssh_pass
         });
-        
+
         const result = await sshService.createFtpUser(ftpUsername, ftpPassword, ftpHomeDir);
         syncStatus = result.success ? 'synced' : 'error';
         syncMessage = result.message;
@@ -226,7 +230,7 @@ router.post('/', async (req, res) => {
     
     const result = await db.run(
       'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, sync_message, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [subdomain_id, ftpUsername, ftpPassword, port || 21, ftpHomeDir, randomAuthCode(), 'active', syncStatus, syncMessage, ftpMaxUploadSize]
+      [subdomain_id, ftpUsername, encryptSecret(ftpPassword), port || 21, ftpHomeDir, randomAuthCode(), 'active', syncStatus, syncMessage, ftpMaxUploadSize]
     );
     
     const newFtp = await db.get('SELECT auth_code FROM ftp_accounts WHERE id = ?', [result.lastID]);
@@ -261,18 +265,19 @@ router.post('/:id/sync', async (req, res) => {
     if (!ftp) {
       return res.status(404).json({ error: 'FTP account not found' });
     }
-    
+    decryptFtpSecrets(ftp);
+
     if (!ftp.ip) {
       return res.status(400).json({ error: '该域名未关联服务器' });
     }
-    
+
     const sshService = new SshFtpService({
       ip: ftp.ip,
       port: ftp.ssh_port,
       username: ftp.ssh_user,
       password: ftp.ssh_pass
     });
-    
+
     const result = await sshService.createFtpUser(ftp.username, ftp.password, ftp.home_dir);
     
     await db.run(
@@ -310,7 +315,7 @@ router.put('/:id', async (req, res) => {
     
     if (password) {
       sql += ', password = ?, sync_status = ?';
-      params.push(password, 'pending');
+      params.push(encryptSecret(password), 'pending');
     }
     
     sql += ' WHERE id = ?';
@@ -356,11 +361,12 @@ router.post('/:id/reset-password', async (req, res) => {
     if (!ftp) {
       return res.status(404).json({ error: 'FTP account not found' });
     }
-    
+    decryptFtpSecrets(ftp);
+
     // 同步到服务器
     let syncStatus = 'pending';
     let syncMessage = '';
-    
+
     if (ftp.ip) {
       try {
         const sshService = new SshFtpService({
@@ -369,7 +375,7 @@ router.post('/:id/reset-password', async (req, res) => {
           username: ftp.ssh_user,
           password: ftp.ssh_pass
         });
-        
+
         const result = await sshService.changePassword(ftp.username, newPassword);
         syncStatus = result.success ? 'synced' : 'error';
         syncMessage = result.message;
@@ -378,10 +384,10 @@ router.post('/:id/reset-password', async (req, res) => {
         syncMessage = err.message;
       }
     }
-    
+
     await db.run(
       'UPDATE ftp_accounts SET password = ?, sync_status = ?, sync_message = ? WHERE id = ?',
-      [newPassword, syncStatus, syncMessage, req.params.id]
+      [encryptSecret(newPassword), syncStatus, syncMessage, req.params.id]
     );
     
     res.json({ password: newPassword, sync_status: syncStatus, message: 'Password reset' });
@@ -403,13 +409,14 @@ router.delete('/:id', async (req, res) => {
     
     if (ftp && ftp.ip) {
       try {
+        decryptFtpSecrets(ftp);
         const sshService = new SshFtpService({
           ip: ftp.ip,
           port: ftp.ssh_port,
           username: ftp.ssh_user,
           password: ftp.ssh_pass
         });
-        
+
         await sshService.deleteFtpUser(ftp.username);
       } catch (err) {
         console.error('Delete FTP user error:', err);

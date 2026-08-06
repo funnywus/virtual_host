@@ -34,6 +34,7 @@ function requireSecret(name) {
 function assertRequiredSecrets() {
   requireSecret('JWT_SECRET');
   requireSecret('UPLOAD_SIGN_SECRET');
+  requireSecret('DATA_ENCRYPTION_KEY');
 }
 
 function getJwtSecret() {
@@ -44,9 +45,15 @@ function getUploadSignSecret() {
   return requireSecret('UPLOAD_SIGN_SECRET');
 }
 
+function getDataEncryptionKey() {
+  return requireSecret('DATA_ENCRYPTION_KEY');
+}
+
 module.exports = {
   assertRequiredSecrets,
+  requireSecret,
   getJwtSecret,
   getUploadSignSecret,
+  getDataEncryptionKey,
   isWeakSecret
 };

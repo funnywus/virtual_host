@@ -1,4 +1,5 @@
 const express = require('express');
+const { decryptSecret } = require('../utils/secret-crypto');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const SshFtpService = require('../services/ssh-ftp');
@@ -139,7 +140,7 @@ router.post('/sync/:subdomain_id', async (req, res) => {
       ip: sub.ip,
       port: sub.ssh_port,
       username: sub.ssh_user,
-      password: sub.ssh_pass
+      password: decryptSecret(sub.ssh_pass)
     });
     
     const configPath = nginxConfig.getConfigPath(sub.full_domain);
@@ -245,7 +246,7 @@ router.get('/fetch/:subdomain_id', async (req, res) => {
       ip: sub.ip,
       port: sub.ssh_port,
       username: sub.ssh_user,
-      password: sub.ssh_pass
+      password: decryptSecret(sub.ssh_pass)
     });
     
     const configPath = nginxConfig.getConfigPath(sub.full_domain);
@@ -282,7 +283,7 @@ router.delete('/remove/:subdomain_id', async (req, res) => {
       ip: sub.ip,
       port: sub.ssh_port,
       username: sub.ssh_user,
-      password: sub.ssh_pass
+      password: decryptSecret(sub.ssh_pass)
     });
     
     const configPath = nginxConfig.getConfigPath(sub.full_domain);

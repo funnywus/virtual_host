@@ -27,7 +27,7 @@
 |----|------|------|------|----------|
 | B-01 | WebSocket SFTP 代理无鉴权 | `backend/services/ws-sftp-proxy.js` | ~~已修~~：仅接受 `auth_code`，服务端查库建 SSH；拒绝 host/password；写入路径限制在 home | 已落地 |
 | B-02 | `/api/upload/auth` 回传 SSH 明文密码 | `backend/routes/upload.js` | ~~已修~~：`/auth` 不再返回 `ftp_password` / SSH 字段 | 已落地 |
-| B-03 | SSH/FTP/DNS 密钥明文入库 | `servers.password`、`ftp_accounts.password`、`aliyun_config.secret_key` | DB 泄露即全盘沦陷 | 应用层加密（KMS/主密钥）或至少 AES-GCM + 密钥环境变量 |
+| B-03 | SSH/FTP/DNS 密钥明文入库 | `servers.password`、`ftp_accounts.password`、`aliyun_config.secret_key` | ~~已修~~：AES-256-GCM（`DATA_ENCRYPTION_KEY`）；启动惰性迁移明文 | 已落地 |
 | B-04 | 开放注册无开关 | `backend/routes/auth.js` `POST /register` | ~~已修~~：默认关闭；`ALLOW_REGISTER=true` 才开放；平时用 admin `/api/users` | 已落地 |
 | B-05 | `UPLOAD_SIGN_SECRET` 默认硬编码 | `backend/routes/upload.js` | ~~已修~~：启动 `assertRequiredSecrets` fail-fast；禁止弱默认值 | 已落地 |
 | B-06 | 历史授权码=域名 MD5 | `backend/services/ftp-auth.js` | ~~已修~~：登录返回 `auth_code_weak`；管理端标「弱码」；`FORCE_LEGACY_AUTH_RESET` 可强制拒绝 | 已落地（存量需管理员点重置） |
@@ -71,7 +71,7 @@
 | O-02 | WS `/ws-upload` 鉴权 + host 白名单 | ~~已完成~~：禁凭据直连，仅 auth_code + home 路径约束 | — |
 | O-03 | 关闭开放注册 / 后台邀请制 | ~~已完成~~：默认关，`ALLOW_REGISTER` 开关 | — |
 | O-04 | 登录/上传/API 限流（IP + auth_code） | ~~已完成~~：login/register/upload auth/init-chunk 内存限流 | — |
-| O-05 | 敏感字段加密存储 + 审计日志 | 合规与失陷损失可控 | L |
+| O-05 | 敏感字段加密存储 + 审计日志 | ~~部分完成~~：AES-GCM 已落地；审计日志仍待做 | M |
 | O-06 | 管理端 API 统一 ownership 中间件 | 杜绝 IDOR 类缺陷 | M |
 
 ### 3.2 性能
