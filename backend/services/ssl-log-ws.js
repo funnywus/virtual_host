@@ -27,7 +27,8 @@ class SslLogWebSocketService {
       }
 
       try {
-        const user = jwt.verify(token, process.env.JWT_SECRET);
+        const { getJwtSecret } = require('../utils/env-check');
+        const user = jwt.verify(token, getJwtSecret());
         ws.user = user;
         ws.domainId = domainId;
       } catch (err) {

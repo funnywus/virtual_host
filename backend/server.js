@@ -5,6 +5,10 @@ const path = require('path');
 const http = require('http');
 require('dotenv').config();
 
+const { assertRequiredSecrets } = require('./utils/env-check');
+// 启动即校验密钥，避免以弱默认值对外服务
+assertRequiredSecrets();
+
 const db = require('./db/database');
 const authRoutes = require('./routes/auth');
 const serverRoutes = require('./routes/servers');

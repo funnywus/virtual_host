@@ -23,7 +23,8 @@ function getSiteNginxConfPath(fullDomain, nginxPath) {
 }
 
 function buildScriptContent() {
-  const secret = process.env.UPLOAD_SIGN_SECRET || 'change_this_to_a_long_random_secret_string';
+  const { getUploadSignSecret } = require('../utils/env-check');
+  const secret = getUploadSignSecret();
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
   return template.replace(/__SIGN_SECRET__/g, secret);
 }

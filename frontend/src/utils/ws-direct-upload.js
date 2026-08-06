@@ -60,13 +60,14 @@ export class WebSocketDirectUploader {
       case 'session':
         this.sessionId = data.sessionId;
         console.log(`[WS直传] 会话 ID: ${this.sessionId}`);
-        // 发送连接请求
+        // 仅凭授权码建连，SSH 凭据由服务端解析
+        if (!this.config.authCode) {
+          if (connectReject) connectReject(new Error('缺少授权码'));
+          return;
+        }
         this.sendMessage({
           type: 'connect',
-          host: this.config.host,
-          port: this.config.port || 22,
-          username: this.config.username,
-          password: this.config.password
+          auth_code: this.config.authCode
         });
         break;
         

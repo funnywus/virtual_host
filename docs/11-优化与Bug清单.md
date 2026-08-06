@@ -25,11 +25,11 @@
 
 | ID | 问题 | 位置 | 说明 | 建议修复 |
 |----|------|------|------|----------|
-| B-01 | WebSocket SFTP 代理无鉴权 | `backend/services/ws-sftp-proxy.js` | `/ws-upload` 接受客户端任意 `host/user/password`，等价开放 SSH 中继 | 连接前校验 JWT 或短期 upload token；禁止任意 host，仅允许账号所属服务器 |
-| B-02 | `/api/upload/auth` 回传 SSH 明文密码 | `backend/routes/upload.js` ≈140–154 行 | 响应含 `ftp_password: ftp.ssh_pass`（实为服务器 SSH 密码） | 改为服务端签发短期 token；前端 WS/直传不再持有长期 SSH 密码 |
+| B-01 | WebSocket SFTP 代理无鉴权 | `backend/services/ws-sftp-proxy.js` | ~~已修~~：仅接受 `auth_code`，服务端查库建 SSH；拒绝 host/password；写入路径限制在 home | 已落地 |
+| B-02 | `/api/upload/auth` 回传 SSH 明文密码 | `backend/routes/upload.js` | ~~已修~~：`/auth` 不再返回 `ftp_password` / SSH 字段 | 已落地 |
 | B-03 | SSH/FTP/DNS 密钥明文入库 | `servers.password`、`ftp_accounts.password`、`aliyun_config.secret_key` | DB 泄露即全盘沦陷 | 应用层加密（KMS/主密钥）或至少 AES-GCM + 密钥环境变量 |
-| B-04 | 开放注册无开关 | `backend/routes/auth.js` `POST /register` | 任意人可注册 `user` 角色账号 | 默认关闭；仅 admin 创建用户，或邀请码/开关 |
-| B-05 | `UPLOAD_SIGN_SECRET` 默认硬编码 | `backend/routes/upload.js` | 未配置时使用固定字符串，PHP 直传签名可被伪造 | 启动时强制要求环境变量，缺失则拒绝直传 |
+| B-04 | 开放注册无开关 | `backend/routes/auth.js` `POST /register` | ~~已修~~：默认关闭；`ALLOW_REGISTER=true` 才开放；平时用 admin `/api/users` | 已落地 |
+| B-05 | `UPLOAD_SIGN_SECRET` 默认硬编码 | `backend/routes/upload.js` | ~~已修~~：启动 `assertRequiredSecrets` fail-fast；禁止弱默认值 | 已落地 |
 | B-06 | 历史授权码=域名 MD5 | `backend/services/ftp-auth.js` | 知道域名即可算出授权码进入文件空间 | 强制迁移为随机 auth_code；登录时检测并提示重置 |
 | B-07 | CORS 全开 + 超大 body | `backend/server.js` `cors()` + 500MB JSON | 配合开放接口放大滥用面 | 限制 Origin；上传走 multipart/chunk，缩小 JSON limit |
 
@@ -47,7 +47,7 @@
 | B-15 | 分片上传会话无二次鉴权 | `upload-chunked.js` | `uploadId` 知悉即可续传；`info.json` 含 SSH 密码 | uploadId 绑定 auth 会话；磁盘上的密码加密或改用连接池凭据查询 |
 | B-16 | MySQL 环境变量与文档不一致 | `database-mysql.js` vs README/docs | 代码只读 `MYSQL_*`，文档常写 `DB_*` | 统一一套，并兼容读取；补 `.env.example` |
 | B-17 | Vite 构建产物路径与部署文档不一致 | `frontend/vite.config.js` `outDir: ./dist` | 文档要求拷到 `backend/public`，易部署错版 | build 直接 `outDir: ../backend/public` 或加 copy 脚本 |
-| B-18 | `JWT_SECRET` 未启动校验 | `auth.js` / `middleware/auth.js` | 未设置时 jwt 行为异常或弱安全 | 启动 fail-fast |
+| B-18 | `JWT_SECRET` 未启动校验 | `auth.js` / `middleware/auth.js` | ~~已修~~：与 B-05 一并在启动期校验 | 已落地 |
 
 ### P2 — 体验 / 稳定性（已知历史痛点，根目录大量 FIX 文档佐证）
 
@@ -67,9 +67,9 @@
 
 | ID | 优化项 | 收益 | 工作量 |
 |----|--------|------|--------|
-| O-01 | 上传链路短期 token 替代「回传 SSH 密码」 | 消除浏览器与中间人持有主机密码 | M |
-| O-02 | WS `/ws-upload` 鉴权 + host 白名单 | 关闭开放代理 | S–M |
-| O-03 | 关闭开放注册 / 后台邀请制 | 降低垃圾账号与横向探测 | S |
+| O-01 | 上传链路短期 token 替代「回传 SSH 密码」 | ~~部分完成~~：`/auth` 已不回传密码；WS 凭授权码服务端建连 | — |
+| O-02 | WS `/ws-upload` 鉴权 + host 白名单 | ~~已完成~~：禁凭据直连，仅 auth_code + home 路径约束 | — |
+| O-03 | 关闭开放注册 / 后台邀请制 | ~~已完成~~：默认关，`ALLOW_REGISTER` 开关 | — |
 | O-04 | 登录/上传/API 限流（IP + auth_code） | 防爆破授权码与撞库 | S |
 | O-05 | 敏感字段加密存储 + 审计日志 | 合规与失陷损失可控 | L |
 | O-06 | 管理端 API 统一 ownership 中间件 | 杜绝 IDOR 类缺陷 | M |

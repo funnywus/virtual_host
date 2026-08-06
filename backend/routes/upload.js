@@ -9,7 +9,9 @@ const WorkerPool = require('../utils/worker-pool');
 const sshPool = require('../utils/ssh-connection-pool');
 const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath, normalizeRelPath } = require('../services/upload-system-files');
 const pathPosix = require('path').posix;
-const { domainAuthCode, matchAuthCode } = require('../services/ftp-auth');
+const { domainAuthCode } = require('../services/ftp-auth');
+const { findFtpByAuthCode } = require('../services/ftp-lookup');
+const { getUploadSignSecret } = require('../utils/env-check');
 
 const router = express.Router();
 
@@ -54,30 +56,7 @@ function getDomainAuthCode(domain) {
 
 // PHP 直传 token：HMAC-SHA256(expires, UPLOAD_SIGN_SECRET)，与 upload.php 验签一致
 function generateDirectUploadToken(expires) {
-  const secret = process.env.UPLOAD_SIGN_SECRET || 'change_this_to_a_long_random_secret_string';
-  return crypto.createHmac('sha256', secret).update(String(expires)).digest('hex');
-}
-
-// 根据授权码查找 FTP 账号（优先库内 auth_code，兼容历史域名 MD5）
-async function findFtpByAuthCode(auth_code, { includeDisabled = false } = {}) {
-  const statusClause = includeDisabled
-    ? ''
-    : ` AND (s.use_status IS NULL OR s.use_status != 'disabled')`;
-
-  const ftpAccounts = await db.all(`
-    SELECT f.*, s.id as subdomain_id, s.subdomain, s.expire_at, s.use_status, s.activated_at, s.duration_days,
-           d.domain as main_domain,
-           CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
-           sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass,
-           sv.nginx_path
-    FROM ftp_accounts f
-    LEFT JOIN subdomains s ON f.subdomain_id = s.id
-    LEFT JOIN domains d ON s.domain_id = d.id
-    LEFT JOIN servers sv ON s.server_id = sv.id
-    WHERE f.status = 'active'${statusClause}
-  `);
-
-  return ftpAccounts.find(f => matchAuthCode(f, auth_code));
+  return crypto.createHmac('sha256', getUploadSignSecret()).update(String(expires)).digest('hex');
 }
 
 // 通过授权码验证
@@ -146,12 +125,8 @@ router.post('/auth', async (req, res) => {
       expire_at: expireAt || null,
       activated_at: activatedAt || null,
       remaining_days: remainingDays,
-      use_status: ftp.use_status || 'unused',
-      // 添加 FTP 连接信息（用于 WebSocket 直传）
-      server_ip: ftp.ip,
-      server_port: ftp.ssh_port || 22,
-      ftp_username: ftp.ssh_user,
-      ftp_password: ftp.ssh_pass
+      use_status: ftp.use_status || 'unused'
+      // 不再回传 SSH/FTP 凭据；WS 直传改由服务端凭授权码建连
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
