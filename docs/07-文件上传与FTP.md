@@ -55,12 +55,17 @@
 | POST | `/api/upload/list` | 文件列表 |
 | POST | `/api/upload/upload-file` | 单文件上传 |
 | POST | `/api/upload/mkdir` | 创建目录 |
-| POST | `/api/upload/delete` | 删除 |
+| POST | `/api/upload/delete` | 删除（`path` 或 `paths[]`） |
 | POST | `/api/upload/rename` | 重命名 |
 | POST | `/api/upload/extract` | 解压 zip |
 | POST | `/api/upload/compress` | 压缩为 zip |
-| POST | `/api/upload/copy` / `/cut` | 复制/剪切 |
+| POST | `/api/upload/copy` / `/cut` | 复制/剪切（单条 `source_path`+`target_path`，或 `items[]`） |
+| POST | `/api/upload/lift-contents/check` | 提取到上级：冲突预检（`path` 或 `paths[]`） |
+| POST | `/api/upload/lift-contents` | 提取到上级（`path`/`paths[]` + `on_conflict`） |
+| POST | `/api/upload/empty-folder` | 清空文件夹（`path` 或 `paths[]`） |
 | POST | `/api/upload/read` / `/write` | 读写文本文件 |
+
+批量操作约定：多选删除 / 提取 / 清空 / 粘贴 / 移动应一次请求完成，服务端复用同一条 SSH，避免前端按文件循环调用。
 
 ## 分片上传
 

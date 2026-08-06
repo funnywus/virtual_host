@@ -1217,105 +1217,286 @@ router.post('/compress', async (req, res) => {
   }
 });
 
-// 复制文件/目录（使用工作线程）
-router.post('/copy', async (req, res) => {
-  try {
-    const { auth_code, source_path, target_path } = req.body;
-    
-    const ftp = await findFtpByAuthCode(auth_code);
-    
-    if (!ftp || !ftp.ip) {
-      return res.status(401).json({ error: '授权码无效或服务器未配置' });
-    }
-    
-    const sourcePath = path.join(ftp.home_dir, source_path);
-    const targetPath = path.join(ftp.home_dir, target_path);
-    
-    if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
-      return res.status(403).json({ error: '无权操作该文件' });
-    }
-    if (isProtectedPath(source_path) || isProtectedPath(target_path)) {
-      return res.status(403).json({ error: '系统文件不可复制' });
-    }
-    
-    // 使用工作线程处理复制
-    const result = await fileOperationPool.exec({
-      operation: 'copy',
-      config: {
-        ip: ftp.ip,
-        port: ftp.ssh_port,
-        username: ftp.ssh_user,
-        password: ftp.ssh_pass
-      },
-      params: {
-        sourcePath,
-        targetPath
-      }
-    });
-    
-    if (result.success) {
-      res.json({ success: true, message: result.result.message });
-    } else {
-      res.status(500).json({ error: result.error });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+function resolveTransferItems(body) {
+  const { items, source_path, target_path } = body || {};
+  if (Array.isArray(items) && items.length) {
+    return items
+      .filter(it => it && it.source_path != null && it.target_path != null)
+      .map(it => ({
+        source_path: normalizeRelPath(it.source_path),
+        target_path: normalizeRelPath(it.target_path)
+      }));
   }
-});
+  if (source_path != null && target_path != null) {
+    return [{
+      source_path: normalizeRelPath(source_path),
+      target_path: normalizeRelPath(target_path)
+    }];
+  }
+  return [];
+}
 
-// 剪切（移动）文件/目录
-router.post('/cut', async (req, res) => {
-  try {
-    const { auth_code, source_path, target_path } = req.body;
-    
-    const ftp = await findFtpByAuthCode(auth_code);
-    
-    if (!ftp || !ftp.ip) {
-      return res.status(401).json({ error: '授权码无效或服务器未配置' });
-    }
-    
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-    
-    const sourcePath = remoteAbs(ftp.home_dir, source_path);
-    const targetPath = remoteAbs(ftp.home_dir, target_path);
-    
-    if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
-      return res.status(403).json({ error: '无权操作该文件' });
-    }
-    if (isProtectedPath(source_path) || isProtectedPath(target_path)) {
-      return res.status(403).json({ error: '系统文件不可移动' });
-    }
-    
-    // 使用 mv 移动
-    const result = await sshService.exec(`mv -- ${shellQuote(sourcePath)} ${shellQuote(targetPath)}`);
-    
-    if (result.success || result.code === 0) {
-      res.json({ success: true, message: '移动成功' });
-    } else {
-      res.status(500).json({ error: '移动失败: ' + (result.output || '未知错误') });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+function resolvePathList(body) {
+  const { path: filePath, paths } = body || {};
+  if (Array.isArray(paths) && paths.length) {
+    return paths.map(p => normalizeRelPath(p)).filter(Boolean);
   }
-});
+  if (filePath) {
+    const one = normalizeRelPath(filePath);
+    return one ? [one] : [];
+  }
+  return [];
+}
+
+function createSshFromFtp(ftp) {
+  return new SshFtpService({
+    ip: ftp.ip,
+    port: ftp.ssh_port,
+    username: ftp.ssh_user,
+    password: ftp.ssh_pass
+  });
+}
 
 async function remotePathExists(sshService, absPath) {
-  const result = await sshService.exec(`test -e "${absPath}" && echo 1 || echo 0`);
+  const result = await sshService.exec(`test -e ${shellQuote(absPath)} && echo 1 || echo 0`);
   return result.output?.trim() === '1';
 }
 
-// 检测提取到上级时的重名冲突
+async function applyDestPerms(sshService, destAbs) {
+  await sshService.exec(`chmod -R 755 -- ${shellQuote(destAbs)} 2>/dev/null`);
+  await sshService.exec(`find ${shellQuote(destAbs)} -type f -exec chmod 644 {} \\; 2>/dev/null`);
+  await sshService.exec(
+    `chown -R www:www -- ${shellQuote(destAbs)} 2>/dev/null || chown -R www -- ${shellQuote(destAbs)} 2>/dev/null`
+  );
+}
+
+// 复制文件/目录（支持 source/target 单条或 items 批量，共用一条 SSH）
+router.post('/copy', async (req, res) => {
+  try {
+    const { auth_code } = req.body;
+    const itemList = resolveTransferItems(req.body);
+
+    if (!itemList.length) {
+      return res.status(400).json({ error: '未指定要复制的路径' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    const prepared = [];
+    for (const item of itemList) {
+      const sourcePath = remoteAbs(ftp.home_dir, item.source_path);
+      const targetPath = remoteAbs(ftp.home_dir, item.target_path);
+      if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
+        return res.status(403).json({ error: '无权操作该文件' });
+      }
+      if (isProtectedPath(item.source_path) || isProtectedPath(item.target_path)) {
+        return res.status(403).json({ error: '系统文件不可复制' });
+      }
+      prepared.push({ sourcePath, targetPath, source_path: item.source_path, target_path: item.target_path });
+    }
+
+    const sshService = createSshFromFtp(ftp);
+    let copied = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const item of prepared) {
+      const result = await sshService.exec(
+        `cp -a -- ${shellQuote(item.sourcePath)} ${shellQuote(item.targetPath)}`
+      );
+      if (result.success || result.code === 0) {
+        await applyDestPerms(sshService, item.targetPath);
+        copied += 1;
+      } else {
+        failed += 1;
+        errors.push({
+          source_path: item.source_path,
+          target_path: item.target_path,
+          error: result.output || '复制失败'
+        });
+      }
+    }
+
+    if (itemList.length === 1 && failed > 0) {
+      return res.status(500).json({ error: errors[0]?.error || '复制失败' });
+    }
+
+    res.json({
+      success: failed === 0,
+      copied,
+      failed,
+      errors,
+      message: failed === 0 ? `成功复制 ${copied} 个项目` : `复制完成：成功 ${copied}，失败 ${failed}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 剪切（移动）文件/目录（支持 source/target 单条或 items 批量）
+router.post('/cut', async (req, res) => {
+  try {
+    const { auth_code } = req.body;
+    const itemList = resolveTransferItems(req.body);
+
+    if (!itemList.length) {
+      return res.status(400).json({ error: '未指定要移动的路径' });
+    }
+
+    const ftp = await findFtpByAuthCode(auth_code);
+    if (!ftp || !ftp.ip) {
+      return res.status(401).json({ error: '授权码无效或服务器未配置' });
+    }
+
+    const prepared = [];
+    for (const item of itemList) {
+      const sourcePath = remoteAbs(ftp.home_dir, item.source_path);
+      const targetPath = remoteAbs(ftp.home_dir, item.target_path);
+      if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
+        return res.status(403).json({ error: '无权操作该文件' });
+      }
+      if (isProtectedPath(item.source_path) || isProtectedPath(item.target_path)) {
+        return res.status(403).json({ error: '系统文件不可移动' });
+      }
+      prepared.push({ sourcePath, targetPath, source_path: item.source_path, target_path: item.target_path });
+    }
+
+    const sshService = createSshFromFtp(ftp);
+    let moved = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const item of prepared) {
+      const result = await sshService.exec(
+        `mv -- ${shellQuote(item.sourcePath)} ${shellQuote(item.targetPath)}`
+      );
+      if (result.success || result.code === 0) {
+        moved += 1;
+      } else {
+        failed += 1;
+        errors.push({
+          source_path: item.source_path,
+          target_path: item.target_path,
+          error: result.output || '移动失败'
+        });
+      }
+    }
+
+    if (itemList.length === 1 && failed > 0) {
+      return res.status(500).json({ error: errors[0]?.error || '移动失败' });
+    }
+
+    res.json({
+      success: failed === 0,
+      moved,
+      failed,
+      errors,
+      message: failed === 0 ? `成功移动 ${moved} 个项目` : `移动完成：成功 ${moved}，失败 ${failed}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function inspectLiftFolder(sshService, ftp, folderPath) {
+  if (isProtectedPath(folderPath)) {
+    return { ok: false, error: '系统目录不可操作', status: 403 };
+  }
+
+  const targetFolder = remoteAbs(ftp.home_dir, folderPath);
+  const parentDir = pathPosix.dirname(targetFolder);
+
+  if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
+    return { ok: false, error: '无权操作该目录', status: 403 };
+  }
+
+  const dirCheck = await sshService.exec(`test -d ${shellQuote(targetFolder)} && echo 1 || echo 0`);
+  if (dirCheck.output?.trim() !== '1') {
+    return { ok: false, error: '目标不是文件夹或不存在', status: 400 };
+  }
+
+  const listResult = await sshService.exec(`ls -A ${shellQuote(targetFolder)} 2>/dev/null`);
+  const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
+    .filter(name => !shouldHideInList(name, folderPath));
+
+  return {
+    ok: true,
+    folderPath,
+    targetFolder,
+    parentDir,
+    names,
+    parent_path: (() => {
+      const parentRel = pathPosix.dirname(folderPath);
+      return parentRel === '.' ? '' : parentRel;
+    })()
+  };
+}
+
+async function liftOneFolder(sshService, folderInfo, onConflict) {
+  const { folderPath, targetFolder, parentDir, names } = folderInfo;
+  let moved = 0;
+  let skipped = 0;
+  let overwritten = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const name of names) {
+    try {
+      const source = remoteAbs(targetFolder, name);
+      const dest = remoteAbs(parentDir, name);
+      const exists = await remotePathExists(sshService, dest);
+
+      if (exists) {
+        if (onConflict === 'skip') {
+          skipped += 1;
+          continue;
+        }
+        const rmResult = await sshService.exec(`rm -rf -- ${shellQuote(dest)}`);
+        if (!rmResult.success && rmResult.code !== 0) {
+          failed += 1;
+          errors.push(name);
+          continue;
+        }
+        overwritten += 1;
+      }
+
+      const mvResult = await sshService.exec(`mv -- ${shellQuote(source)} ${shellQuote(dest)}`);
+      if (mvResult.success || mvResult.code === 0) {
+        moved += 1;
+        await applyDestPerms(sshService, dest);
+      } else {
+        failed += 1;
+        errors.push(name);
+      }
+    } catch {
+      failed += 1;
+      errors.push(name);
+    }
+  }
+
+  return { path: folderPath, moved, skipped, overwritten, failed, errors };
+}
+
+function buildLiftMessage({ moved, skipped, overwritten, failed, folderCount }) {
+  const parts = folderCount > 1
+    ? [`已处理 ${folderCount} 个文件夹，共提取 ${moved} 项`]
+    : [`已将 ${moved} 项提取到上级目录`];
+  if (overwritten > 0) parts.push(`${overwritten} 项已覆盖`);
+  if (skipped > 0) parts.push(`${skipped} 项因重名已跳过`);
+  if (failed > 0) parts.push(`${failed} 项失败`);
+  return failed === 0 ? parts.join('，') : `部分失败：${parts.join('，')}`;
+}
+
+// 检测提取到上级时的重名冲突（支持 path 单条或 paths 批量）
 router.post('/lift-contents/check', async (req, res) => {
   try {
-    const { auth_code, path: folderPathRaw } = req.body;
-    const folderPath = normalizeRelPath(folderPathRaw);
+    const { auth_code } = req.body;
+    const pathList = resolvePathList(req.body);
 
-    if (!folderPath) {
+    if (!pathList.length) {
       return res.status(400).json({ error: '请指定文件夹' });
     }
 
@@ -1324,60 +1505,82 @@ router.post('/lift-contents/check', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
 
-    if (isProtectedPath(folderPath)) {
-      return res.status(403).json({ error: '系统目录不可操作' });
-    }
-
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-
-    const targetFolder = path.join(ftp.home_dir, folderPath);
-    const parentDir = path.dirname(targetFolder);
-
-    if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
-      return res.status(403).json({ error: '无权操作该目录' });
-    }
-
-    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
-    if (dirCheck.output?.trim() !== '1') {
-      return res.status(400).json({ error: '目标不是文件夹或不存在' });
-    }
-
-    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
-    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
-      .filter(name => !shouldHideInList(name, folderPath));
-
+    const sshService = createSshFromFtp(ftp);
+    const folders = [];
     const conflicts = [];
-    for (const name of names) {
-      const destPath = path.join(parentDir, name);
-      if (await remotePathExists(sshService, destPath)) {
-        const typeResult = await sshService.exec(`test -d "${destPath}" && echo directory || echo file`);
-        conflicts.push({ name, type: typeResult.output?.trim() === 'directory' ? 'directory' : 'file' });
+    const claimedNames = new Map(); // name -> first folderPath
+    let total = 0;
+    let parentPath = '';
+
+    for (const folderPath of pathList) {
+      const info = await inspectLiftFolder(sshService, ftp, folderPath);
+      if (!info.ok) {
+        if (pathList.length === 1) {
+          return res.status(info.status || 400).json({ error: info.error });
+        }
+        folders.push({ path: folderPath, total: 0, conflicts: [], error: info.error });
+        continue;
       }
+
+      parentPath = info.parent_path;
+      const folderConflicts = [];
+
+      for (const name of info.names) {
+        total += 1;
+        const destPath = remoteAbs(info.parentDir, name);
+
+        if (claimedNames.has(name)) {
+          const conflict = {
+            name,
+            type: 'file',
+            from: folderPath,
+            reason: 'duplicate_in_batch'
+          };
+          folderConflicts.push(conflict);
+          conflicts.push(conflict);
+          continue;
+        }
+        claimedNames.set(name, folderPath);
+
+        if (await remotePathExists(sshService, destPath)) {
+          const typeResult = await sshService.exec(
+            `test -d ${shellQuote(destPath)} && echo directory || echo file`
+          );
+          const conflict = {
+            name,
+            type: typeResult.output?.trim() === 'directory' ? 'directory' : 'file',
+            from: folderPath
+          };
+          folderConflicts.push(conflict);
+          conflicts.push(conflict);
+        }
+      }
+
+      folders.push({
+        path: folderPath,
+        total: info.names.length,
+        conflicts: folderConflicts
+      });
     }
 
-    const parentRel = pathPosix.dirname(folderPath);
     res.json({
-      total: names.length,
+      total,
       conflicts,
-      parent_path: parentRel === '.' ? '' : parentRel
+      folders,
+      parent_path: parentPath
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 将文件夹内所有内容提取到上级目录（仅移动直接子项，不递归展开）
+// 将文件夹内所有内容提取到上级目录（支持 path 单条或 paths 批量；仅移动直接子项）
 router.post('/lift-contents', async (req, res) => {
   try {
-    const { auth_code, path: folderPathRaw, on_conflict = 'skip' } = req.body;
-    const folderPath = normalizeRelPath(folderPathRaw);
+    const { auth_code, on_conflict = 'skip' } = req.body;
+    const pathList = resolvePathList(req.body);
 
-    if (!folderPath) {
+    if (!pathList.length) {
       return res.status(400).json({ error: '请指定文件夹' });
     }
 
@@ -1390,84 +1593,79 @@ router.post('/lift-contents', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
 
-    if (isProtectedPath(folderPath)) {
-      return res.status(403).json({ error: '系统目录不可操作' });
-    }
-
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-
-    const targetFolder = path.join(ftp.home_dir, folderPath);
-    const parentDir = path.dirname(targetFolder);
-
-    if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
-      return res.status(403).json({ error: '无权操作该目录' });
-    }
-
-    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
-    if (dirCheck.output?.trim() !== '1') {
-      return res.status(400).json({ error: '目标不是文件夹或不存在' });
-    }
-
-    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
-    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
-      .filter(name => !shouldHideInList(name, folderPath));
-
-    if (names.length === 0) {
-      return res.json({ success: true, moved: 0, skipped: 0, overwritten: 0, failed: 0, message: '文件夹已是空的' });
-    }
-
+    const sshService = createSshFromFtp(ftp);
+    const results = [];
     let moved = 0;
     let skipped = 0;
     let overwritten = 0;
     let failed = 0;
     const errors = [];
+    let parentPath = '';
 
-    for (const name of names) {
-      try {
-        const source = path.join(targetFolder, name);
-        const dest = path.join(parentDir, name);
-        const exists = await remotePathExists(sshService, dest);
-
-        if (exists) {
-          if (on_conflict === 'skip') {
-            skipped += 1;
-            continue;
-          }
-          const rmResult = await sshService.exec(`rm -rf "${dest}"`);
-          if (!rmResult.success && rmResult.code !== 0) {
-            failed += 1;
-            errors.push(name);
-            continue;
-          }
-          overwritten += 1;
+    for (const folderPath of pathList) {
+      const info = await inspectLiftFolder(sshService, ftp, folderPath);
+      if (!info.ok) {
+        if (pathList.length === 1) {
+          return res.status(info.status || 400).json({ error: info.error });
         }
-
-        const mvResult = await sshService.exec(`mv "${source}" "${dest}"`);
-        if (mvResult.success || mvResult.code === 0) {
-          moved += 1;
-          await sshService.exec(`chmod -R 755 "${dest}" 2>/dev/null`);
-          await sshService.exec(`find "${dest}" -type f -exec chmod 644 {} \\; 2>/dev/null`);
-          await sshService.exec(`chown -R www:www "${dest}" 2>/dev/null || chown -R www "${dest}" 2>/dev/null`);
-        } else {
-          failed += 1;
-          errors.push(name);
-        }
-      } catch (err) {
         failed += 1;
-        errors.push(name);
+        errors.push(folderPath);
+        results.push({
+          path: folderPath,
+          moved: 0,
+          skipped: 0,
+          overwritten: 0,
+          failed: 1,
+          errors: [info.error]
+        });
+        continue;
       }
+
+      parentPath = info.parent_path;
+
+      if (info.names.length === 0) {
+        results.push({
+          path: folderPath,
+          moved: 0,
+          skipped: 0,
+          overwritten: 0,
+          failed: 0,
+          errors: [],
+          empty: true
+        });
+        continue;
+      }
+
+      const one = await liftOneFolder(sshService, info, on_conflict);
+      moved += one.moved;
+      skipped += one.skipped;
+      overwritten += one.overwritten;
+      failed += one.failed;
+      errors.push(...one.errors.map(name => `${folderPath}/${name}`));
+      results.push(one);
     }
 
-    const parentRel = pathPosix.dirname(folderPath);
-    const parts = [`已将 ${moved} 项提取到上级目录`];
-    if (overwritten > 0) parts.push(`${overwritten} 项已覆盖`);
-    if (skipped > 0) parts.push(`${skipped} 项因重名已跳过`);
-    if (failed > 0) parts.push(`${failed} 项失败`);
+    if (pathList.length === 1 && results[0]?.empty) {
+      return res.json({
+        success: true,
+        moved: 0,
+        skipped: 0,
+        overwritten: 0,
+        failed: 0,
+        errors: [],
+        folders: results,
+        parent_path: parentPath,
+        message: '文件夹已是空的'
+      });
+    }
+
+    const message = buildLiftMessage({
+      moved,
+      skipped,
+      overwritten,
+      failed,
+      folderCount: pathList.length
+    });
 
     res.json({
       success: failed === 0,
@@ -1476,21 +1674,22 @@ router.post('/lift-contents', async (req, res) => {
       overwritten,
       failed,
       errors,
-      parent_path: parentRel === '.' ? '' : parentRel,
-      message: failed === 0 ? parts.join('，') : `部分失败：${parts.join('，')}`
+      folders: results,
+      parent_path: parentPath,
+      message
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 清空文件夹（保留文件夹本身）
+// 清空文件夹（保留文件夹本身；支持 path 单条或 paths 批量）
 router.post('/empty-folder', async (req, res) => {
   try {
-    const { auth_code, path: folderPathRaw } = req.body;
-    const folderPath = normalizeRelPath(folderPathRaw);
+    const { auth_code } = req.body;
+    const pathList = resolvePathList(req.body);
 
-    if (!folderPath) {
+    if (!pathList.length) {
       return res.status(400).json({ error: '请指定文件夹' });
     }
 
@@ -1499,41 +1698,64 @@ router.post('/empty-folder', async (req, res) => {
       return res.status(401).json({ error: '授权码无效或服务器未配置' });
     }
 
-    if (isProtectedPath(folderPath)) {
-      return res.status(403).json({ error: '系统目录不可操作' });
-    }
-
-    const sshService = new SshFtpService({
-      ip: ftp.ip,
-      port: ftp.ssh_port,
-      username: ftp.ssh_user,
-      password: ftp.ssh_pass
-    });
-
-    const targetFolder = path.join(ftp.home_dir, folderPath);
-    if (!targetFolder.startsWith(ftp.home_dir)) {
-      return res.status(403).json({ error: '无权操作该目录' });
-    }
-
-    const dirCheck = await sshService.exec(`test -d "${targetFolder}" && echo 1 || echo 0`);
-    if (dirCheck.output?.trim() !== '1') {
-      return res.status(400).json({ error: '目标不是文件夹或不存在' });
-    }
-
-    const listResult = await sshService.exec(`ls -A "${targetFolder}" 2>/dev/null`);
-    const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
-      .filter(name => !shouldHideInList(name, folderPath));
-
+    const sshService = createSshFromFtp(ftp);
     let removed = 0;
     let failed = 0;
+    const folders = [];
 
-    for (const name of names) {
-      const target = path.join(targetFolder, name);
-      const rmResult = await sshService.exec(`rm -rf "${target}"`);
-      if (rmResult.success || rmResult.code === 0) {
-        removed += 1;
-      } else {
+    for (const folderPath of pathList) {
+      if (isProtectedPath(folderPath)) {
+        if (pathList.length === 1) {
+          return res.status(403).json({ error: '系统目录不可操作' });
+        }
         failed += 1;
+        folders.push({ path: folderPath, removed: 0, failed: 1, error: '系统目录不可操作' });
+        continue;
+      }
+
+      const targetFolder = remoteAbs(ftp.home_dir, folderPath);
+      if (!targetFolder.startsWith(ftp.home_dir) || targetFolder === ftp.home_dir) {
+        if (pathList.length === 1) {
+          return res.status(403).json({ error: '无权操作该目录' });
+        }
+        failed += 1;
+        folders.push({ path: folderPath, removed: 0, failed: 1, error: '无权操作该目录' });
+        continue;
+      }
+
+      const dirCheck = await sshService.exec(`test -d ${shellQuote(targetFolder)} && echo 1 || echo 0`);
+      if (dirCheck.output?.trim() !== '1') {
+        if (pathList.length === 1) {
+          return res.status(400).json({ error: '目标不是文件夹或不存在' });
+        }
+        failed += 1;
+        folders.push({ path: folderPath, removed: 0, failed: 1, error: '目标不是文件夹或不存在' });
+        continue;
+      }
+
+      const listResult = await sshService.exec(`ls -A ${shellQuote(targetFolder)} 2>/dev/null`);
+      const names = (listResult.output || '').split('\n').map(s => s.trim()).filter(Boolean)
+        .filter(name => !shouldHideInList(name, folderPath));
+
+      if (names.length === 0) {
+        folders.push({ path: folderPath, removed: 0, failed: 0 });
+        continue;
+      }
+
+      const targets = names.map(name => remoteAbs(targetFolder, name));
+      const quoted = targets.map(p => shellQuote(p)).join(' ');
+      const rmResult = await sshService.exec(`rm -rf -- ${quoted}`);
+      if (rmResult.success || rmResult.code === 0) {
+        removed += names.length;
+        folders.push({ path: folderPath, removed: names.length, failed: 0 });
+      } else {
+        failed += names.length;
+        folders.push({
+          path: folderPath,
+          removed: 0,
+          failed: names.length,
+          error: rmResult.output || '清空失败'
+        });
       }
     }
 
@@ -1541,7 +1763,10 @@ router.post('/empty-folder', async (req, res) => {
       success: failed === 0,
       removed,
       failed,
-      message: failed === 0 ? `已清空 ${removed} 项` : `部分失败：已清空 ${removed} 项，失败 ${failed} 项`
+      folders,
+      message: failed === 0
+        ? `已清空 ${removed} 项`
+        : `部分失败：已清空 ${removed} 项，失败 ${failed} 项`
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1415,34 +1415,25 @@ const cutFiles = () => {
 // 粘贴文件
 const pasteFiles = async () => {
   if (clipboard.value.files.length === 0) return
-  
+
   const loading = ElMessage({
     message: `正在${clipboard.value.operation === 'copy' ? '复制' : '移动'}文件...`,
     type: 'info',
     duration: 0
   })
-  
+
   try {
-    let success = 0, failed = 0
-    
-    for (const file of clipboard.value.files) {
-      try {
-        const targetPath = fileRelPath(file)
-        
-        if (clipboard.value.operation === 'copy') {
-          await api('/copy', { source_path: file.path, target_path: targetPath })
-        } else {
-          await api('/cut', { source_path: file.path, target_path: targetPath })
-        }
-        success++
-      } catch (e) {
-        console.error('粘贴失败:', e)
-        failed++
-      }
-    }
-    
+    const items = clipboard.value.files.map(file => ({
+      source_path: file.path,
+      target_path: fileRelPath(file)
+    }))
+    const endpoint = clipboard.value.operation === 'copy' ? '/copy' : '/cut'
+    const res = await api(endpoint, { items })
+    const success = res.copied ?? res.moved ?? (items.length - (res.failed || 0))
+    const failed = res.failed || 0
+
     loading.close()
-    
+
     if (failed === 0) {
       ElMessage.success(`成功${clipboard.value.operation === 'copy' ? '复制' : '移动'} ${success} 个项目`)
       if (clipboard.value.operation === 'cut') {
@@ -1451,7 +1442,7 @@ const pasteFiles = async () => {
     } else {
       ElMessage.warning(`操作完成: 成功 ${success} 个, 失败 ${failed} 个`)
     }
-    
+
     loadFiles()
   } catch (e) {
     loading.close()
@@ -1481,7 +1472,9 @@ const copyFilePath = async (file) => {
 const resolveLiftConflict = async (conflicts, parentLabel) => {
   const preview = conflicts.slice(0, 8).map(c => {
     const tag = c.type === 'directory' ? '文件夹' : '文件'
-    return `· ${c.name}（${tag}）`
+    const from = c.from ? ` ← ${c.from}` : ''
+    const reason = c.reason === 'duplicate_in_batch' ? '，批量内重名' : ''
+    return `· ${c.name}（${tag}${reason}）${from}`
   }).join('\n')
   const more = conflicts.length > 8 ? `\n… 还有 ${conflicts.length - 8} 项` : ''
 
@@ -1503,10 +1496,13 @@ const resolveLiftConflict = async (conflicts, parentLabel) => {
   }
 }
 
-const executeLiftContents = async (folderRelPath, folderName, { silent = false } = {}) => {
-  const check = await api('/lift-contents/check', { path: folderRelPath })
+const executeLiftContents = async (folderPaths, { silent = false } = {}) => {
+  const paths = (Array.isArray(folderPaths) ? folderPaths : [folderPaths]).filter(Boolean)
+  if (paths.length === 0) return { ok: true, moved: 0, empty: true }
+
+  const check = await api('/lift-contents/check', { paths })
   if (check.total === 0) {
-    if (!silent) ElMessage.info(folderName ? `「${folderName}」已是空的` : '文件夹已是空的')
+    if (!silent) ElMessage.info(paths.length === 1 ? '文件夹已是空的' : '选中的文件夹都是空的')
     return { ok: true, moved: 0, empty: true }
   }
 
@@ -1517,13 +1513,10 @@ const executeLiftContents = async (folderRelPath, folderName, { silent = false }
     onConflict = choice
   }
 
-  const res = await api('/lift-contents', { path: folderRelPath, on_conflict: onConflict })
+  const res = await api('/lift-contents', { paths, on_conflict: onConflict })
   if (!silent) {
-    if (res.failed > 0) {
-      ElMessage.warning(folderName ? `「${folderName}」：${res.message}` : res.message)
-    } else {
-      ElMessage.success(folderName ? `「${folderName}」：${res.message}` : res.message)
-    }
+    if (res.failed > 0) ElMessage.warning(res.message)
+    else ElMessage.success(res.message)
   }
   return { ok: res.failed === 0, ...res }
 }
@@ -1542,7 +1535,7 @@ const liftFolderContents = async (file) => {
 
   const loadingMsg = ElMessage({ message: '正在提取...', type: 'info', duration: 0 })
   try {
-    const result = await executeLiftContents(fileRelPath(file), file.name)
+    const result = await executeLiftContents(fileRelPath(file))
     loadingMsg.close()
     if (result.cancelled) return
     clearSelection()
@@ -1567,25 +1560,16 @@ const liftSelectedFolders = async () => {
   }
 
   const loadingMsg = ElMessage({ message: '正在批量提取...', type: 'info', duration: 0 })
-  let moved = 0
-  let failed = 0
-  let cancelled = false
   try {
-    for (const file of dirs) {
-      const result = await executeLiftContents(fileRelPath(file), file.name, { silent: true })
-      if (result.cancelled) {
-        cancelled = true
-        break
-      }
-      moved += result.moved || 0
-      if (!result.ok && !result.cancelled) failed += 1
-    }
+    const result = await executeLiftContents(dirs.map(f => fileRelPath(f)), { silent: true })
     loadingMsg.close()
-    if (cancelled) return
-    if (failed === 0) {
-      ElMessage.success(`已处理 ${dirs.length} 个文件夹，共提取 ${moved} 项`)
+    if (result.cancelled) return
+    if (result.empty) {
+      ElMessage.info('选中的文件夹都是空的')
+    } else if (result.failed === 0) {
+      ElMessage.success(result.message || `已处理 ${dirs.length} 个文件夹，共提取 ${result.moved || 0} 项`)
     } else {
-      ElMessage.warning(`完成：${dirs.length - failed} 个成功，${failed} 个失败，共提取 ${moved} 项`)
+      ElMessage.warning(result.message || `部分失败，共提取 ${result.moved || 0} 项`)
     }
     clearSelection()
     loadFiles()
@@ -1608,7 +1592,7 @@ const emptyFolder = async (file) => {
   }
 
   try {
-    const res = await api('/empty-folder', { path: fileRelPath(file) })
+    const res = await api('/empty-folder', { paths: [fileRelPath(file)] })
     ElMessage.success(res.message)
     loadFiles()
   } catch (e) {
@@ -3393,19 +3377,21 @@ const moveDestInvalid = computed(() => isMoveDestInvalid(moveDestination.value))
 
 // 执行移动的核心逻辑：供"移动到..."对话框与拖拽移动共用
 const moveItemsTo = async (items, destPath) => {
-  let success = 0, failed = 0
-  for (const item of items) {
-    const targetPath = destPath ? `${destPath}/${item.name}` : item.name
-    if (targetPath === item.path) continue // 目标与来源相同，跳过
-    try {
-      await api('/cut', { source_path: item.path, target_path: targetPath })
-      success++
-    } catch (e) {
-      console.error('移动失败:', item.path, e)
-      failed++
-    }
+  const transferItems = items
+    .map(item => {
+      const targetPath = destPath ? `${destPath}/${item.name}` : item.name
+      if (targetPath === item.path) return null
+      return { source_path: item.path, target_path: targetPath }
+    })
+    .filter(Boolean)
+
+  if (transferItems.length === 0) return { success: 0, failed: 0 }
+
+  const res = await api('/cut', { items: transferItems })
+  return {
+    success: res.moved ?? (transferItems.length - (res.failed || 0)),
+    failed: res.failed || 0
   }
-  return { success, failed }
 }
 
 const confirmMove = async () => {
