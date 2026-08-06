@@ -7,6 +7,16 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+/** 按角色取可访问服务器：admin 任意；普通用户仅自己的 */
+async function getAccessibleServer(req, serverId) {
+  const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+  if (!server) return null;
+  if (req.user.role !== 'admin' && server.user_id !== req.user.id) {
+    return null;
+  }
+  return server;
+}
+
 // 获取服务器列表
 router.get('/', async (req, res) => {
   try {
@@ -17,14 +27,14 @@ router.get('/', async (req, res) => {
     const servers = await db.all(sql, userId ? [userId] : []);
     res.json(servers);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 测试服务器连接
 router.post('/:id/test', async (req, res) => {
   try {
-    const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+    const server = await getAccessibleServer(req, req.params.id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -32,7 +42,7 @@ router.post('/:id/test', async (req, res) => {
     const result = await testConnection(server.ip, server.port);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -67,6 +77,10 @@ function testConnection(ip, port, timeout = 5000) {
 // 获取服务器关联的域名
 router.get('/:id/domains', async (req, res) => {
   try {
+    const server = await getAccessibleServer(req, req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在' });
+    }
     const domains = await db.all(`
       SELECT s.subdomain, d.domain as main_domain, s.record_type, s.record_value, s.status,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
@@ -76,7 +90,7 @@ router.get('/:id/domains', async (req, res) => {
     `, [req.params.id]);
     res.json(domains);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -91,7 +105,7 @@ router.post('/', async (req, res) => {
     );
     res.json({ id: result.lastID, message: 'Server added' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -99,21 +113,21 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { name, ip, port, username, password, tags, nginx_path, ftp_path, expire_at } = req.body;
-    const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+    const server = await getAccessibleServer(req, req.params.id);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在' });
     }
-    
+
     // 如果密码为空，保留原密码
     const newPassword = password || server.password;
-    
+
     await db.run(
       'UPDATE servers SET name = ?, ip = ?, port = ?, username = ?, password = ?, tags = ?, nginx_path = ?, ftp_path = ?, expire_at = ? WHERE id = ?',
       [name, ip, port || 22, username, newPassword, tags || '', nginx_path || '/www/server/panel/vhost/nginx', ftp_path || '/www/wwwroot/ftp', expire_at || null, req.params.id]
     );
     res.json({ message: '更新成功' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -122,39 +136,49 @@ router.put('/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
     const serverStatus = status === 'disabled' ? 'disabled' : 'active';
-    
-    const server = await db.get('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+
+    const server = await getAccessibleServer(req, req.params.id);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在' });
     }
-    
+
     await db.run('UPDATE servers SET status = ? WHERE id = ?', [serverStatus, req.params.id]);
     res.json({ message: serverStatus === 'disabled' ? '服务器已停用' : '服务器已恢复正常', status: serverStatus });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 删除服务器
 router.delete('/:id', async (req, res) => {
   try {
-    await db.run('DELETE FROM servers WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    const server = await getAccessibleServer(req, req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在' });
+    }
+
+    await db.run('DELETE FROM servers WHERE id = ?', [req.params.id]);
     res.json({ message: 'Server deleted' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 设置默认服务器
 router.post('/:id/set-default', async (req, res) => {
   try {
-    // 先清除所有默认
-    await db.run('UPDATE servers SET is_default = 0 WHERE user_id = ?', [req.user.id]);
-    // 设置当前为默认
-    await db.run('UPDATE servers SET is_default = 1 WHERE id = ?', [req.params.id]);
+    const server = await getAccessibleServer(req, req.params.id);
+    if (!server) {
+      return res.status(404).json({ error: '服务器不存在' });
+    }
+
+    // 非 admin：只清自己的默认；admin 设他人服务器时清该所有者的默认
+    const ownerId = server.user_id;
+    await db.run('UPDATE servers SET is_default = 0 WHERE user_id = ?', [ownerId]);
+    await db.run('UPDATE servers SET is_default = 1 WHERE id = ? AND user_id = ?', [req.params.id, ownerId]);
     res.json({ message: '已设为默认' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -162,10 +186,14 @@ router.post('/:id/set-default', async (req, res) => {
 const SshFtpService = require('../services/ssh-ftp');
 const path = require('path');
 
-// 获取SSH服务实例
-async function getSshService(serverId) {
-  const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
-  if (!server) throw new Error('服务器不存在');
+// 获取SSH服务实例（需已通过 getAccessibleServer 校验）
+async function getSshService(req, serverId) {
+  const server = await getAccessibleServer(req, serverId);
+  if (!server) {
+    const err = new Error('服务器不存在');
+    err.status = 404;
+    throw err;
+  }
   return new SshFtpService({
     ip: server.ip,
     port: server.port,
@@ -178,7 +206,7 @@ async function getSshService(serverId) {
 router.post('/:id/files', async (req, res) => {
   try {
     const { path: dirPath = '/' } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec(`ls -la "${dirPath}" 2>/dev/null | tail -n +2`);
     
     const files = (result.output || '').split('\n').filter(line => line.trim()).map(line => {
@@ -194,7 +222,7 @@ router.post('/:id/files', async (req, res) => {
     
     res.json({ files });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -202,12 +230,12 @@ router.post('/:id/files', async (req, res) => {
 router.post('/:id/files/mkdir', async (req, res) => {
   try {
     const { path: dirPath, name } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const targetPath = path.join(dirPath, name);
     await sshService.exec(`mkdir -p "${targetPath}"`);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -215,13 +243,13 @@ router.post('/:id/files/mkdir', async (req, res) => {
 router.post('/:id/files/upload', async (req, res) => {
   try {
     const { path: dirPath, filename, content } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const targetPath = path.join(dirPath, filename);
     const fileBuffer = Buffer.from(content, 'base64');
     await sshService.uploadFile(fileBuffer, targetPath);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -229,11 +257,11 @@ router.post('/:id/files/upload', async (req, res) => {
 router.post('/:id/files/read', async (req, res) => {
   try {
     const { path: filePath } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec(`cat "${filePath}" 2>/dev/null`);
     res.json({ content: result.output || '' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -241,11 +269,11 @@ router.post('/:id/files/read', async (req, res) => {
 router.post('/:id/files/read-binary', async (req, res) => {
   try {
     const { path: filePath } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec(`base64 "${filePath}" 2>/dev/null | tr -d '\\n'`);
     res.json({ content: result.output || '' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -253,12 +281,12 @@ router.post('/:id/files/read-binary', async (req, res) => {
 router.post('/:id/files/write', async (req, res) => {
   try {
     const { path: filePath, content } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const base64Content = Buffer.from(content, 'utf-8').toString('base64');
     await sshService.exec(`echo "${base64Content}" | base64 -d > "${filePath}"`);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -266,11 +294,11 @@ router.post('/:id/files/write', async (req, res) => {
 router.post('/:id/files/delete', async (req, res) => {
   try {
     const { path: filePath } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     await sshService.exec(`rm -rf "${filePath}"`);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -278,11 +306,11 @@ router.post('/:id/files/delete', async (req, res) => {
 router.post('/:id/files/rename', async (req, res) => {
   try {
     const { oldPath, newPath } = req.body;
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     await sshService.exec(`mv "${oldPath}" "${newPath}"`);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -295,7 +323,7 @@ router.post('/:id/exec', async (req, res) => {
       return res.status(400).json({ error: '命令不能为空' });
     }
     
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec(command);
     
     res.json({ 
@@ -303,14 +331,14 @@ router.post('/:id/exec', async (req, res) => {
       error: result.error || '' 
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 检查软件安装状态
 router.get('/:id/software-status', async (req, res) => {
   try {
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     
     // 检查 nginx 及配置路径
     const nginxResult = await sshService.exec('which nginx 2>/dev/null && nginx -v 2>&1 | head -1');
@@ -353,14 +381,14 @@ router.get('/:id/software-status', async (req, res) => {
       pureFtpd: { installed: pureFtpInstalled }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 安装 Nginx
 router.post('/:id/install-nginx', async (req, res) => {
   try {
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     
     // 检测系统类型
     const osResult = await sshService.exec('cat /etc/os-release 2>/dev/null | grep -i "^ID=" | cut -d= -f2 | tr -d \'"\'');
@@ -382,14 +410,14 @@ router.post('/:id/install-nginx', async (req, res) => {
     
     res.json({ success: true, message: 'Nginx 安装成功', output: result.output });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 安装 FTP (vsftpd)
 router.post('/:id/install-ftp', async (req, res) => {
   try {
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     
     // 检测系统类型
     const osResult = await sshService.exec('cat /etc/os-release 2>/dev/null | grep -i "^ID=" | cut -d= -f2 | tr -d \'"\'');
@@ -411,29 +439,29 @@ router.post('/:id/install-ftp', async (req, res) => {
     
     res.json({ success: true, message: 'FTP (vsftpd) 安装成功', output: result.output });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 重启 Nginx
 router.post('/:id/restart-nginx', async (req, res) => {
   try {
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec('nginx -t && systemctl reload nginx');
     res.json({ success: result.success, message: result.success ? 'Nginx 重启成功' : result.output });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // 重启 FTP
 router.post('/:id/restart-ftp', async (req, res) => {
   try {
-    const sshService = await getSshService(req.params.id);
+    const sshService = await getSshService(req, req.params.id);
     const result = await sshService.exec('systemctl restart vsftpd');
     res.json({ success: result.success, message: result.success ? 'FTP 重启成功' : result.output });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

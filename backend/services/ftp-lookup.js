@@ -25,15 +25,26 @@ async function findFtpByAuthCode(auth_code, { includeDisabled = false } = {}) {
   return ftpAccounts.find(f => matchAuthCode(f, auth_code)) || null;
 }
 
-/** 规范化后判断绝对路径是否位于站点 home 内 */
+/** 规范化后判断绝对路径是否位于站点 home 内（含 home 自身） */
 function isPathInsideHome(absPath, homeDir) {
-  const home = String(homeDir || '').replace(/\/+$/, '');
-  const target = String(absPath || '').replace(/\/+$/, '') || absPath;
-  if (!home || !target) return false;
+  const pathPosix = require('path').posix;
+  const home = pathPosix.normalize(String(homeDir || '')).replace(/\/+$/, '') || '/';
+  const target = pathPosix.normalize(String(absPath || '')).replace(/\/+$/, '') || '/';
+  if (!homeDir || absPath == null || absPath === '') return false;
   return target === home || target.startsWith(`${home}/`);
+}
+
+/** 位于 home 内且不是 home 根目录本身（用于禁止删整站根） */
+function isStrictlyInsideHome(absPath, homeDir) {
+  if (!isPathInsideHome(absPath, homeDir)) return false;
+  const pathPosix = require('path').posix;
+  const home = pathPosix.normalize(String(homeDir || '')).replace(/\/+$/, '') || '/';
+  const target = pathPosix.normalize(String(absPath || '')).replace(/\/+$/, '') || '/';
+  return target !== home;
 }
 
 module.exports = {
   findFtpByAuthCode,
-  isPathInsideHome
+  isPathInsideHome,
+  isStrictlyInsideHome
 };

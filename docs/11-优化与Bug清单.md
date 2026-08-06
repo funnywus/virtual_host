@@ -37,13 +37,13 @@
 
 | ID | 问题 | 位置 | 说明 | 建议修复 |
 |----|------|------|------|----------|
-| B-08 | 路径保护可被 `..` 绕过 | `upload-system-files.js` `normalizeRelPath` + `upload.js` `isProtectedPath` | `normalizeRelPath` 不解析 `..`，`foo/../_vhost/...` 可能绕过「系统目录不可删/改」 | 先 `path.posix.normalize` 再校验；拒绝含 `..` 的相对路径 |
-| B-09 | `home_dir` 前缀校验不严谨 | `upload.js` 多处 `startsWith(ftp.home_dir)` | `/www/site` 会误放行 `/www/site2/...` | 规范化后比较：`=== home \|\| startsWith(home + '/')` |
+| B-08 | 路径保护可被 `..` 绕过 | `upload-system-files.js` `normalizeRelPath` + `upload.js` `isProtectedPath` | ~~已修~~：`posix.normalize` + 逃逸返回 null；非法路径按受保护拒绝 | 已落地 |
+| B-09 | `home_dir` 前缀校验不严谨 | `upload.js` 多处 `startsWith(ftp.home_dir)` | ~~已修~~：统一 `isPathInsideHome` / `denyOutsideHome`；`remoteAbs` 二次约束 | 已落地 |
 | B-10 | 授权码查找全表扫描 | `upload.js` `findFtpByAuthCode` | 每次上传操作 `SELECT` 全部 active FTP 再在 Node 中 `find` | `WHERE auth_code = ?`；旧 MD5 可预计算落库并建唯一索引 |
 | B-11 | 首次激活存在竞态 | `upload.js` `/auth` | 并发首次登录可能重复写 `activated_at`/`expire_at` | DB 条件更新：`WHERE activated_at IS NULL` 或事务 + 行锁 |
-| B-12 | 删除服务器对 admin 无效/静默 | `servers.js` `DELETE /:id` | `AND user_id = req.user.id`，admin 删他人服务器影响 0 行仍返回成功 | admin 分支去掉 user_id 限制；0 行返回 404 |
-| B-13 | 设默认服务器缺所有权校验 | `servers.js` `POST /:id/set-default` | 只按当前用户清默认，却可把任意 `id` 标为 default | `UPDATE ... WHERE id=? AND user_id=?`（admin 另议） |
-| B-14 | 服务器停用/恢复可能缺租户校验 | `servers.js` status 更新 | 按 id 更新，未见 user 隔离 | 非 admin 必须带 `user_id` 条件 |
+| B-12 | 删除服务器对 admin 无效/静默 | `servers.js` `DELETE /:id` | ~~已修~~：`getAccessibleServer`；admin 可删，非所有者 404 | 已落地 |
+| B-13 | 设默认服务器缺所有权校验 | `servers.js` `POST /:id/set-default` | ~~已修~~：先校验可访问，再按所有者清默认并设置 | 已落地 |
+| B-14 | 服务器停用/恢复可能缺租户校验 | `servers.js` status 更新 | ~~已修~~：status/update/SSH 操作均走 `getAccessibleServer` | 已落地 |
 | B-15 | 分片上传会话无二次鉴权 | `upload-chunked.js` | `uploadId` 知悉即可续传；`info.json` 含 SSH 密码 | uploadId 绑定 auth 会话；磁盘上的密码加密或改用连接池凭据查询 |
 | B-16 | MySQL 环境变量与文档不一致 | `database-mysql.js` vs README/docs | 代码只读 `MYSQL_*`，文档常写 `DB_*` | 统一一套，并兼容读取；补 `.env.example` |
 | B-17 | Vite 构建产物路径与部署文档不一致 | `frontend/vite.config.js` `outDir: ./dist` | 文档要求拷到 `backend/public`，易部署错版 | build 直接 `outDir: ../backend/public` 或加 copy 脚本 |

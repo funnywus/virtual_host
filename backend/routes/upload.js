@@ -10,7 +10,7 @@ const sshPool = require('../utils/ssh-connection-pool');
 const { UPLOAD_PUBLIC_PATH, isProtectedPath, shouldHideInList, UPLOAD_SCRIPT, scriptRelPath, normalizeRelPath } = require('../services/upload-system-files');
 const pathPosix = require('path').posix;
 const { domainAuthCode } = require('../services/ftp-auth');
-const { findFtpByAuthCode } = require('../services/ftp-lookup');
+const { findFtpByAuthCode, isPathInsideHome, isStrictlyInsideHome } = require('../services/ftp-lookup');
 const { getUploadSignSecret } = require('../utils/env-check');
 
 const router = express.Router();
@@ -31,10 +31,29 @@ function sanitizeRemoteFilename(name) {
 }
 
 function remoteAbs(homeDir, ...parts) {
-  const cleaned = parts
-    .filter(p => p != null && p !== '')
-    .map(p => String(p).replace(/\\/g, '/').replace(/^\/+/, ''));
-  return pathPosix.join(homeDir, ...cleaned);
+  const cleaned = [];
+  for (const p of parts) {
+    if (p == null || p === '') continue;
+    const rel = normalizeRelPath(p);
+    if (rel === null) {
+      const err = new Error('非法路径');
+      err.status = 400;
+      throw err;
+    }
+    if (rel) cleaned.push(rel);
+  }
+  const abs = pathPosix.normalize(pathPosix.join(homeDir, ...cleaned));
+  if (!isPathInsideHome(abs, homeDir)) {
+    const err = new Error('非法路径');
+    err.status = 400;
+    throw err;
+  }
+  return abs;
+}
+
+function denyOutsideHome(absPath, homeDir, { allowHomeRoot = true } = {}) {
+  if (allowHomeRoot) return !isPathInsideHome(absPath, homeDir);
+  return !isStrictlyInsideHome(absPath, homeDir);
 }
 
 // 创建工作线程池（用于文件操作）
@@ -293,6 +312,7 @@ const MAX_SEARCH_RESULTS = 2000;
 
 function buildRelPath(dirPath, name) {
   const base = normalizeRelPath(dirPath);
+  if (base === null) return name;
   return base ? `${base}/${name}` : name;
 }
 
@@ -356,6 +376,7 @@ function parseLsOutput(output, dirPath) {
 async function searchInSubdirs(config, targetPath, dirPath, keyword) {
   const pattern = escapeFindPattern(keyword);
   const relBase = normalizeRelPath(dirPath);
+  if (relBase === null) return { files: [], truncated: false };
   const cmd = `find "${targetPath}" \\( -type f -o -type d \\) -iname '*${pattern}*' -printf '%y\\t%s\\t%T@\\t%P\\n' 2>/dev/null`;
   const result = await sshPool.exec(config, cmd);
   if (!result.success || !result.output) return { files: [], truncated: false };
@@ -373,7 +394,7 @@ async function searchInSubdirs(config, targetPath, dirPath, keyword) {
     const fullRel = relBase ? `${relBase}/${relFromCurrent}` : relFromCurrent;
     const normalizedRel = normalizeRelPath(fullRel);
 
-    if (isProtectedPath(normalizedRel)) continue;
+    if (normalizedRel === null || isProtectedPath(normalizedRel)) continue;
 
     const name = pathPosix.basename(relFromCurrent);
     const parentRel = pathPosix.dirname(normalizedRel);
@@ -419,7 +440,7 @@ router.post('/list', async (req, res) => {
     
     // 确保路径在home_dir内
     const targetPath = dirPath ? remoteAbs(ftp.home_dir, dirPath) : ftp.home_dir;
-    if (!targetPath.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     
@@ -570,7 +591,7 @@ router.post('/upload', async (req, res) => {
     
     // 确保路径在home_dir内
     const targetDir = dirPath ? pathPosix.join(ftp.home_dir, dirPath) : ftp.home_dir;
-    if (!targetDir.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetDir, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     if (dirPath && isProtectedPath(dirPath)) {
@@ -646,7 +667,7 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
     
     // 确保路径在home_dir内
     const targetDir = dirPath ? pathPosix.join(ftp.home_dir, dirPath) : ftp.home_dir;
-    if (!targetDir.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetDir, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     if (dirPath && isProtectedPath(dirPath)) {
@@ -702,7 +723,7 @@ router.post('/mkdir', async (req, res) => {
     
     const safeName = sanitizeRemoteFilename(name);
     const targetDir = remoteAbs(ftp.home_dir, dirPath, safeName);
-    if (!targetDir.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetDir, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     const relDir = dirPath ? (dirPath + (safeName ? '/' + safeName : '')) : safeName;
@@ -744,7 +765,7 @@ router.post('/create-file', async (req, res) => {
     
     const safeName = sanitizeRemoteFilename(name);
     const targetFile = remoteAbs(ftp.home_dir, dirPath, safeName);
-    if (!targetFile.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetFile, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     const relFile = dirPath ? `${dirPath}/${safeName}` : safeName;
@@ -795,7 +816,7 @@ router.post('/delete', async (req, res) => {
     const targetPaths = [];
     for (const relPath of pathList) {
       const targetPath = remoteAbs(ftp.home_dir, relPath);
-      if (!targetPath.startsWith(ftp.home_dir) || targetPath === ftp.home_dir) {
+      if (denyOutsideHome(targetPath, ftp.home_dir, { allowHomeRoot: false })) {
         return res.status(403).json({ error: '无权删除该文件' });
       }
       if (isProtectedPath(relPath)) {
@@ -836,7 +857,7 @@ router.post('/read', async (req, res) => {
     });
     
     const targetPath = remoteAbs(ftp.home_dir, filePath);
-    if (!targetPath.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
     if (isProtectedPath(filePath)) {
@@ -870,7 +891,7 @@ router.post('/read-binary', async (req, res) => {
     });
     
     const targetPath = remoteAbs(ftp.home_dir, filePath);
-    if (!targetPath.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
     if (isProtectedPath(filePath)) {
@@ -904,7 +925,7 @@ router.post('/write', async (req, res) => {
     });
     
     const targetPath = remoteAbs(ftp.home_dir, filePath);
-    if (!targetPath.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
     if (isProtectedPath(filePath)) {
@@ -948,7 +969,7 @@ router.post('/rename', async (req, res) => {
     const targetOldPath = remoteAbs(ftp.home_dir, oldPath);
     const targetNewPath = remoteAbs(ftp.home_dir, newPath);
     
-    if (!targetOldPath.startsWith(ftp.home_dir) || !targetNewPath.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetOldPath, ftp.home_dir) || denyOutsideHome(targetNewPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权操作该文件' });
     }
     if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
@@ -992,7 +1013,7 @@ router.post('/download', async (req, res) => {
 
     for (const rel of pathList) {
       const abs = remoteAbs(ftp.home_dir, rel);
-      if (!abs.startsWith(ftp.home_dir) || abs === ftp.home_dir) {
+      if (denyOutsideHome(abs, ftp.home_dir, { allowHomeRoot: false })) {
         return res.status(403).json({ error: '无权下载该路径' });
       }
       if (isProtectedPath(rel)) {
@@ -1094,7 +1115,7 @@ router.post('/extract', async (req, res) => {
     }
     
     const targetFile = path.join(ftp.home_dir, filePath);
-    if (!targetFile.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(targetFile, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该文件' });
     }
     if (isProtectedPath(filePath) || (target_dir && isProtectedPath(target_dir))) {
@@ -1106,7 +1127,7 @@ router.post('/extract', async (req, res) => {
       ? path.join(ftp.home_dir, target_dir)
       : path.dirname(targetFile);
     
-    if (!extractDir.startsWith(ftp.home_dir)) {
+    if (denyOutsideHome(extractDir, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
     
@@ -1156,7 +1177,7 @@ router.post('/compress', async (req, res) => {
     
     // 验证所有路径
     const fullPaths = paths.map(p => path.join(ftp.home_dir, p));
-    if (!fullPaths.every(p => p.startsWith(ftp.home_dir))) {
+    if (!fullPaths.every(p => isPathInsideHome(p, ftp.home_dir))) {
       return res.status(403).json({ error: '无权访问某些文件' });
     }
     if (paths.some(p => isProtectedPath(p))) {
@@ -1192,20 +1213,30 @@ router.post('/compress', async (req, res) => {
   }
 });
 
+function requireRelPath(raw, label = '路径') {
+  const rel = normalizeRelPath(raw);
+  if (rel === null) {
+    const err = new Error(`非法${label}`);
+    err.status = 400;
+    throw err;
+  }
+  return rel;
+}
+
 function resolveTransferItems(body) {
   const { items, source_path, target_path } = body || {};
   if (Array.isArray(items) && items.length) {
     return items
       .filter(it => it && it.source_path != null && it.target_path != null)
       .map(it => ({
-        source_path: normalizeRelPath(it.source_path),
-        target_path: normalizeRelPath(it.target_path)
+        source_path: requireRelPath(it.source_path, '源路径'),
+        target_path: requireRelPath(it.target_path, '目标路径')
       }));
   }
   if (source_path != null && target_path != null) {
     return [{
-      source_path: normalizeRelPath(source_path),
-      target_path: normalizeRelPath(target_path)
+      source_path: requireRelPath(source_path, '源路径'),
+      target_path: requireRelPath(target_path, '目标路径')
     }];
   }
   return [];
@@ -1214,11 +1245,10 @@ function resolveTransferItems(body) {
 function resolvePathList(body) {
   const { path: filePath, paths } = body || {};
   if (Array.isArray(paths) && paths.length) {
-    return paths.map(p => normalizeRelPath(p)).filter(Boolean);
+    return paths.map(p => requireRelPath(p));
   }
-  if (filePath) {
-    const one = normalizeRelPath(filePath);
-    return one ? [one] : [];
+  if (filePath != null && filePath !== '') {
+    return [requireRelPath(filePath)];
   }
   return [];
 }
@@ -1264,7 +1294,7 @@ router.post('/copy', async (req, res) => {
     for (const item of itemList) {
       const sourcePath = remoteAbs(ftp.home_dir, item.source_path);
       const targetPath = remoteAbs(ftp.home_dir, item.target_path);
-      if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
+      if (denyOutsideHome(sourcePath, ftp.home_dir) || denyOutsideHome(targetPath, ftp.home_dir)) {
         return res.status(403).json({ error: '无权操作该文件' });
       }
       if (isProtectedPath(item.source_path) || isProtectedPath(item.target_path)) {
@@ -1330,7 +1360,7 @@ router.post('/cut', async (req, res) => {
     for (const item of itemList) {
       const sourcePath = remoteAbs(ftp.home_dir, item.source_path);
       const targetPath = remoteAbs(ftp.home_dir, item.target_path);
-      if (!sourcePath.startsWith(ftp.home_dir) || !targetPath.startsWith(ftp.home_dir)) {
+      if (denyOutsideHome(sourcePath, ftp.home_dir) || denyOutsideHome(targetPath, ftp.home_dir)) {
         return res.status(403).json({ error: '无权操作该文件' });
       }
       if (isProtectedPath(item.source_path) || isProtectedPath(item.target_path)) {
@@ -1384,7 +1414,7 @@ async function inspectLiftFolder(sshService, ftp, folderPath) {
   const targetFolder = remoteAbs(ftp.home_dir, folderPath);
   const parentDir = pathPosix.dirname(targetFolder);
 
-  if (!targetFolder.startsWith(ftp.home_dir) || parentDir === targetFolder) {
+  if (denyOutsideHome(targetFolder, ftp.home_dir, { allowHomeRoot: false }) || parentDir === targetFolder) {
     return { ok: false, error: '无权操作该目录', status: 403 };
   }
 
@@ -1689,7 +1719,7 @@ router.post('/empty-folder', async (req, res) => {
       }
 
       const targetFolder = remoteAbs(ftp.home_dir, folderPath);
-      if (!targetFolder.startsWith(ftp.home_dir) || targetFolder === ftp.home_dir) {
+      if (denyOutsideHome(targetFolder, ftp.home_dir, { allowHomeRoot: false })) {
         if (pathList.length === 1) {
           return res.status(403).json({ error: '无权操作该目录' });
         }
