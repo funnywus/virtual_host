@@ -300,9 +300,10 @@ router.post('/:id/sync', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { username, password, port, home_dir, max_upload_size, status } = req.body;
+    const ftpMaxUploadSize = Number(max_upload_size) > 0 ? Math.floor(Number(max_upload_size)) : 524288000;
     
     let sql = 'UPDATE ftp_accounts SET username = ?, port = ?, home_dir = ?, max_upload_size = ?, status = ?';
-    const params = [username, port || 21, home_dir, max_upload_size || 524288000, status || 'active'];
+    const params = [username, port || 21, home_dir, ftpMaxUploadSize, status || 'active'];
     
     if (password) {
       sql += ', password = ?, sync_status = ?';

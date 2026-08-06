@@ -2683,6 +2683,12 @@ const handleUploadDialogClose = (done) => {
     done()
     return
   }
+  const hasPendingWork = uploadQueue.value.some(f => f.status === 'pending' || f.status === 'uploading')
+  if (!hasPendingWork) {
+    uploadQueue.value = []
+    done()
+    return
+  }
   ElMessageBox.confirm('关闭将清空当前上传列表，确定吗？', '提示', {
     type: 'warning',
     confirmButtonText: '清空并关闭',

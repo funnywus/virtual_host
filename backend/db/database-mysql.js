@@ -68,6 +68,20 @@ async function runMigrations(connection) {
       console.log(`✓ 已添加 ${migration.table}.${migration.column} 列`);
     }
   }
+
+  // max_upload_size 存字节数，INT 最大约 2GB-1，≥2GB 会报 Out of range
+  const [uploadSizeCols] = await connection.query(
+    "SHOW COLUMNS FROM ftp_accounts LIKE 'max_upload_size'"
+  );
+  if (uploadSizeCols.length > 0) {
+    const type = String(uploadSizeCols[0].Type || '').toLowerCase();
+    if (!type.includes('bigint')) {
+      await connection.query(
+        'ALTER TABLE ftp_accounts MODIFY COLUMN max_upload_size BIGINT DEFAULT 524288000'
+      );
+      console.log('✓ 已将 ftp_accounts.max_upload_size 升级为 BIGINT');
+    }
+  }
 }
 
 // 执行查询（返回所有行）
