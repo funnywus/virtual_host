@@ -13,7 +13,8 @@ export default defineConfig({
     port: 5173
   },
   build: {
-    outDir: './dist',
+    // 直接输出到后端静态目录，避免部署时漏拷 dist
+    outDir: path.resolve(__dirname, '../backend/public'),
     emptyOutDir: true
   }
 })

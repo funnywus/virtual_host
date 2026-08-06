@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { getJwtSecret } = require('../utils/env-check');
+const { loginLimiter } = require('../middleware/rate-limit');
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ function isRegisterAllowed() {
 }
 
 // 注册（默认关闭；需 ALLOW_REGISTER=true，生产环境请用管理员创建用户）
-router.post('/register', async (req, res) => {
+router.post('/register', loginLimiter, async (req, res) => {
   try {
     if (!isRegisterAllowed()) {
       return res.status(403).json({
@@ -41,7 +42,7 @@ router.post('/register', async (req, res) => {
 });
 
 // 登录
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
 

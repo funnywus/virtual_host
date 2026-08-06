@@ -12,6 +12,7 @@ const pathPosix = require('path').posix;
 const { domainAuthCode, isLegacyAuthCode } = require('../services/ftp-auth');
 const { findFtpByAuthCode, isPathInsideHome, isStrictlyInsideHome } = require('../services/ftp-lookup');
 const { getUploadSignSecret } = require('../utils/env-check');
+const { uploadAuthLimiter } = require('../middleware/rate-limit');
 
 const router = express.Router();
 
@@ -79,7 +80,7 @@ function generateDirectUploadToken(expires) {
 }
 
 // 通过授权码验证
-router.post('/auth', async (req, res) => {
+router.post('/auth', uploadAuthLimiter, async (req, res) => {
   try {
     const { auth_code } = req.body;
     

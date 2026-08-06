@@ -7,6 +7,7 @@ const SshFtpService = require('../services/ssh-ftp');
 const { findFtpByAuthCode, isPathInsideHome } = require('../services/ftp-lookup');
 const { normalizeRelPath } = require('../services/upload-system-files');
 const { getUploadSignSecret } = require('../utils/env-check');
+const { uploadAuthLimiter } = require('../middleware/rate-limit');
 
 const router = express.Router();
 
@@ -117,7 +118,7 @@ function getAvailableDiskSpace() {
   }
 }
 
-router.post('/init-chunk', async (req, res) => {
+router.post('/init-chunk', uploadAuthLimiter, async (req, res) => {
   try {
     const { auth_code, path: dirPathRaw, filename, total_chunks, file_size } = req.body;
     const safeFilename = sanitizeRemoteFilename(filename);

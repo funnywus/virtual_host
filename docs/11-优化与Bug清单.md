@@ -45,8 +45,8 @@
 | B-13 | 设默认服务器缺所有权校验 | `servers.js` `POST /:id/set-default` | ~~已修~~：先校验可访问，再按所有者清默认并设置 | 已落地 |
 | B-14 | 服务器停用/恢复可能缺租户校验 | `servers.js` status 更新 | ~~已修~~：status/update/SSH 操作均走 `getAccessibleServer` | 已落地 |
 | B-15 | 分片上传会话无二次鉴权 | `upload-chunked.js` | ~~已修~~：各步骤校验 auth_code HMAC；磁盘不存 SSH 密码，合并时查库建连 | 已落地 |
-| B-16 | MySQL 环境变量与文档不一致 | `database-mysql.js` vs README/docs | 代码只读 `MYSQL_*`，文档常写 `DB_*` | 统一一套，并兼容读取；补 `.env.example` |
-| B-17 | Vite 构建产物路径与部署文档不一致 | `frontend/vite.config.js` `outDir: ./dist` | 文档要求拷到 `backend/public`，易部署错版 | build 直接 `outDir: ../backend/public` 或加 copy 脚本 |
+| B-16 | MySQL 环境变量与文档不一致 | `database-mysql.js` vs README/docs | ~~已修~~：同时读 `MYSQL_*` 与 `DB_*` | 已落地 |
+| B-17 | Vite 构建产物路径与部署文档不一致 | `frontend/vite.config.js` `outDir: ./dist` | ~~已修~~：`outDir` 指向 `backend/public` | 已落地 |
 | B-18 | `JWT_SECRET` 未启动校验 | `auth.js` / `middleware/auth.js` | ~~已修~~：与 B-05 一并在启动期校验 | 已落地 |
 
 ### P2 — 体验 / 稳定性（已知历史痛点，根目录大量 FIX 文档佐证）
@@ -70,7 +70,7 @@
 | O-01 | 上传链路短期 token 替代「回传 SSH 密码」 | ~~部分完成~~：`/auth` 已不回传密码；WS 凭授权码服务端建连 | — |
 | O-02 | WS `/ws-upload` 鉴权 + host 白名单 | ~~已完成~~：禁凭据直连，仅 auth_code + home 路径约束 | — |
 | O-03 | 关闭开放注册 / 后台邀请制 | ~~已完成~~：默认关，`ALLOW_REGISTER` 开关 | — |
-| O-04 | 登录/上传/API 限流（IP + auth_code） | 防爆破授权码与撞库 | S |
+| O-04 | 登录/上传/API 限流（IP + auth_code） | ~~已完成~~：login/register/upload auth/init-chunk 内存限流 | — |
 | O-05 | 敏感字段加密存储 + 审计日志 | 合规与失陷损失可控 | L |
 | O-06 | 管理端 API 统一 ownership 中间件 | 杜绝 IDOR 类缺陷 | M |
 

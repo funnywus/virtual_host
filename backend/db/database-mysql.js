@@ -8,12 +8,13 @@ let pool = null;
 function createPool() {
   if (pool) return pool;
   
+  // 兼容 MYSQL_* 与文档中的 DB_* 两套变量名
   pool = mysql.createPool({
-    host: process.env.MYSQL_HOST || 'localhost',
-    port: parseInt(process.env.MYSQL_PORT) || 3306,
-    user: process.env.MYSQL_USER || 'root',
-    password: process.env.MYSQL_PASSWORD || '',
-    database: process.env.MYSQL_DATABASE || 'virtual_host',
+    host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.MYSQL_PORT || process.env.DB_PORT, 10) || 3306,
+    user: process.env.MYSQL_USER || process.env.DB_USER || 'root',
+    password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '',
+    database: process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || 'virtual_host',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
