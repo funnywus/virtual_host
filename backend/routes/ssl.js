@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { getAccessibleDomain, getAccessibleDomainWithDns, getAccessibleServer, notFound } = require('../middleware/ownership');
 const SshFtpService = require('../services/ssh-ftp');
 const sslCert = require('../services/ssl-cert');
 const { broadcastSslLog } = require('../services/ssl-log-ws');
@@ -277,12 +278,14 @@ const getDefaultServer = async (userId = null) => {
 
 const { decryptSecret, decryptServerSecrets } = require('../utils/secret-crypto');
 
-const getServerById = async (serverId) => {
+const getServerById = async (req, serverId) => {
   if (!serverId) return null;
   const id = parseInt(serverId, 10);
   if (!Number.isInteger(id) || id <= 0) return null;
-  const server = await db.get('SELECT * FROM servers WHERE id = ? AND (status IS NULL OR status != ?)', [id, 'disabled']);
-  return server ? decryptServerSecrets(server) : null;
+  const server = await getAccessibleServer(req, id);
+  if (!server) return null;
+  if (server.status === 'disabled') return null;
+  return server;
 };
 
 const getSshService = (server) => {
@@ -576,6 +579,8 @@ router.get('/verify-methods', (req, res) => {
 // 检查主域名证书状态
 router.get('/status/:domain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const domain = await db.get(`
       SELECT d.*, a.access_key, a.secret_key, a.platform
       FROM domains d
@@ -666,7 +671,9 @@ router.get('/status/:domain_id', async (req, res) => {
 // 获取可用服务器列表（用于发布证书）
 router.get('/servers', async (req, res) => {
   try {
-    const servers = await db.all('SELECT id, name, ip, is_default FROM servers WHERE status IS NULL OR status != ? ORDER BY is_default DESC, id ASC', ['disabled']);
+    const servers = req.user.role === 'admin'
+      ? await db.all('SELECT id, name, ip, is_default FROM servers WHERE status IS NULL OR status != ? ORDER BY is_default DESC, id ASC', ['disabled'])
+      : await db.all('SELECT id, name, ip, is_default FROM servers WHERE user_id = ? AND (status IS NULL OR status != ?) ORDER BY is_default DESC, id ASC', [req.user.id, 'disabled']);
     res.json(servers);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -676,6 +683,8 @@ router.get('/servers', async (req, res) => {
 // 获取证书申请日志（用于实时轮询）
 router.get('/log/:domain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const domain = await db.get('SELECT ssl_log, ssl_status FROM domains WHERE id = ?', [req.params.domain_id]);
     if (!domain) {
       return res.status(404).json({ error: '域名不存在' });
@@ -1019,6 +1028,8 @@ router.post('/issue/:domain_id', async (req, res) => {
   const startTime = formatTime();
   let log = `[${startTime}] 开始申请证书\n`;
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const { cert_type, verify_method, webroot } = req.body;
 
     const domain = await db.get(`
@@ -1201,6 +1212,8 @@ router.post('/renew/:domain_id', async (req, res) => {
   const startTime = formatTime();
   let log = `[${startTime}] 开始续期证书\n`;
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
 
     const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.domain_id]);
 
@@ -1285,7 +1298,7 @@ router.post('/install-acme', async (req, res) => {
   try {
     const { server_id, email } = req.body;
 
-    const server = await getServerById(server_id) || await getDefaultServer(req.user.id);
+    const server = await getServerById(req, server_id) || await getDefaultServer(req.user.id);
 
     if (!server) {
       return res.status(404).json({ error: '没有可用的服务器' });
@@ -1314,6 +1327,8 @@ router.get('/paths/:domain', async (req, res) => {
 // 获取当前项目本地保存的证书文件
 router.get('/files/:domain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.domain_id]);
     if (!domain) {
       return res.status(404).json({ error: '域名不存在' });
@@ -1339,6 +1354,8 @@ router.post('/publish/:domain_id', async (req, res) => {
   const startTime = formatTime();
   let log = `[${startTime}] 开始发布证书\n`;
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const { server_id, target_dir } = req.body;
     const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.domain_id]);
     if (!domain) {
@@ -1351,7 +1368,7 @@ router.post('/publish/:domain_id', async (req, res) => {
       return res.status(400).json({ error: '当前项目本地证书不完整，请先申请或续期证书', log });
     }
 
-    const server = await getServerById(server_id) || await getDefaultServer(domain.user_id);
+    const server = await getServerById(req, server_id) || await getDefaultServer(domain.user_id);
     if (!server || !server.ip) {
       log += `[${formatTime()}] 错误: 没有可用的发布服务器\n`;
       return res.status(400).json({ error: '没有可用的发布服务器', log });
@@ -1415,6 +1432,8 @@ router.post('/publish/:domain_id', async (req, res) => {
 // 查看证书内容
 router.get('/view/:domain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.domain_id]);
     if (!domain) {
       return res.status(404).json({ error: '域名不存在' });
@@ -1459,6 +1478,8 @@ router.get('/view/:domain_id', async (req, res) => {
 // 下载证书（ZIP压缩包）
 router.get('/download/:domain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.domain_id))) return notFound(res, '域名不存在');
+
     const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.domain_id]);
     if (!domain) {
       return res.status(404).json({ error: '域名不存在' });
@@ -1690,7 +1711,7 @@ router.post('/batch-publish', async (req, res) => {
 // 列出宝塔已有的网站（即 /www/server/panel/vhost/nginx 下的 .conf 文件）
 router.get('/bt-sites/:server_id', async (req, res) => {
   try {
-    const server = await getServerById(req.params.server_id);
+    const server = await getServerById(req, req.params.server_id);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在或已禁用' });
     }
@@ -1750,6 +1771,9 @@ router.post('/apply-to-bt-site', async (req, res) => {
     if (!domain) {
       return res.status(404).json({ error: '证书域名不存在' });
     }
+    if (req.user.role !== 'admin' && Number(domain.user_id) !== Number(req.user.id)) {
+      return notFound(res, '证书域名不存在');
+    }
     
     // 检查本地证书
     const localCert = await getLocalCertInfo(domain.domain);
@@ -1758,7 +1782,7 @@ router.post('/apply-to-bt-site', async (req, res) => {
       return res.status(400).json({ error: '本地证书不存在，请先申请', log });
     }
     
-    const server = await getServerById(server_id);
+    const server = await getServerById(req, server_id);
     if (!server) {
       return res.status(404).json({ error: '服务器不存在或已禁用' });
     }

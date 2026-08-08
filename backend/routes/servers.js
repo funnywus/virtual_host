@@ -3,20 +3,12 @@ const net = require('net');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const { encryptSecret, decryptServerSecrets } = require('../utils/secret-crypto');
+const { writeAudit } = require('../services/audit-log');
+const { getAccessibleServer } = require('../middleware/ownership');
 
 const router = express.Router();
 
 router.use(authMiddleware);
-
-/** 按角色取可访问服务器：admin 任意；普通用户仅自己的 */
-async function getAccessibleServer(req, serverId) {
-  const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
-  if (!server) return null;
-  if (req.user.role !== 'admin' && server.user_id !== req.user.id) {
-    return null;
-  }
-  return decryptServerSecrets(server);
-}
 
 // 获取服务器列表
 router.get('/', async (req, res) => {
@@ -104,6 +96,13 @@ router.post('/', async (req, res) => {
       'INSERT INTO servers (name, ip, port, username, password, tags, user_id, expire_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [name, ip, port || 22, username, encryptSecret(password), tags || '', req.user.id, expire_at || null, serverStatus]
     );
+    await writeAudit({
+      req,
+      action: 'server.create',
+      resource: 'server',
+      resourceId: result.lastID,
+      detail: { name, ip }
+    });
     res.json({ id: result.lastID, message: 'Server added' });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -148,6 +147,13 @@ router.put('/:id/status', async (req, res) => {
     }
 
     await db.run('UPDATE servers SET status = ? WHERE id = ?', [serverStatus, req.params.id]);
+    await writeAudit({
+      req,
+      action: serverStatus === 'disabled' ? 'server.disable' : 'server.enable',
+      resource: 'server',
+      resourceId: req.params.id,
+      detail: { name: server.name }
+    });
     res.json({ message: serverStatus === 'disabled' ? '服务器已停用' : '服务器已恢复正常', status: serverStatus });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -163,6 +169,13 @@ router.delete('/:id', async (req, res) => {
     }
 
     await db.run('DELETE FROM servers WHERE id = ?', [req.params.id]);
+    await writeAudit({
+      req,
+      action: 'server.delete',
+      resource: 'server',
+      resourceId: req.params.id,
+      detail: { name: server.name, ip: server.ip }
+    });
     res.json({ message: 'Server deleted' });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });

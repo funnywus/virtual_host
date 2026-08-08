@@ -71,17 +71,17 @@
 | O-02 | WS `/ws-upload` 鉴权 + host 白名单 | ~~已完成~~：禁凭据直连，仅 auth_code + home 路径约束 | — |
 | O-03 | 关闭开放注册 / 后台邀请制 | ~~已完成~~：默认关，`ALLOW_REGISTER` 开关 | — |
 | O-04 | 登录/上传/API 限流（IP + auth_code） | ~~已完成~~：login/register/upload auth/init-chunk 内存限流 | — |
-| O-05 | 敏感字段加密存储 + 审计日志 | ~~部分完成~~：AES-GCM 已落地；审计日志仍待做 | M |
-| O-06 | 管理端 API 统一 ownership 中间件 | 杜绝 IDOR 类缺陷 | M |
+| O-05 | 敏感字段加密存储 + 审计日志 | ~~已完成~~：AES-GCM + `audit_logs`（登录/服务器/FTP/用户/DNS/备份）+ `GET /api/system/audit-logs` | — |
+| O-06 | 管理端 API 统一 ownership 中间件 | ~~已完成~~：`middleware/ownership.js`；dns/ftp/nginx/ssl/tags/servers 写读接口按租户隔离（admin 豁免） | — |
 
 ### 3.2 性能
 
 | ID | 优化项 | 现状 | 建议 |
 |----|--------|------|------|
-| O-10 | 授权码索引查询 | 全表加载后 JS 匹配 | DB 唯一索引 + 等值查询 |
-| O-11 | SSH 连接池扩到更多路由 | list/usage 已用池，部分仍新建连接 | 统一走 `ssh-connection-pool` |
-| O-12 | 文件列表分页与字段裁剪 | 大目录仍可能一次拉全量 | 服务端分页 + 可选不返回 content meta |
-| O-13 | 分片临时目录生命周期 | 依赖脚本/重启清理 | TTL 任务 + 磁盘水位熔断 |
+| O-10 | 授权码索引查询 | ~~已完成~~：等值查询 + `idx_ftp_auth_code` | — |
+| O-11 | SSH 连接池扩到更多路由 | ~~已完成~~：池支持同主机多连接；`SshFtpService.exec/SFTP` 默认走池（ftp/nginx/dns/ssl/upload 一并受益）；`SSH_POOL_MAX_PER_HOST` | — |
+| O-12 | 文件列表分页与字段裁剪 | ~~已完成~~：远端 `find` 一层 + 排序切片；`lite` 裁剪 permissions；`/folders` 限深/限量；子目录搜索 `head` 截断 | — |
+| O-13 | 分片临时目录生命周期 | ~~已完成~~：24h TTL 定时清理 + 启动清一轮；`init-chunk` 磁盘水位熔断（`CHUNK_DISK_WATERMARK_BYTES`） | — |
 | O-14 | Worker 池用于压缩/解压/大复制 | 已有 `file-operation-worker` | 覆盖更多 CPU 密集路径，限制并发 |
 | O-15 | 前端 Upload 虚拟列表 | 大目录 DOM 过重 | 表格虚拟滚动 |
 | O-16 | 文件操作批量接口 | 删除/提取/复制/剪切/清空按文件循环请求 | 已对齐：`paths[]` / `items[]` 一次请求 + 单 SSH |
@@ -92,10 +92,10 @@
 |----|--------|------|
 | O-20 | 拆分巨型 route/view | `upload` / `ssl` / `dns` / `Upload.vue` / `Subdomains.vue` 按用例拆模块与 composable |
 | O-21 | 业务逻辑下沉 service | route 只做校验与编排，SSH/DNS/SSL 进 service，便于单测 |
-| O-22 | 统一 DB 迁移机制 | 废弃「多处 ALTER + 手工 SQL」；单一 migrations 目录（版本号） |
-| O-23 | 清理根目录历史 FIX/GUIDE md | 合并进 `docs/` + CHANGELOG，降低噪音 |
-| O-24 | 补齐 `.env.example`、健康检查、基础集成测试 | 降低部署踩坑；覆盖 auth / upload / ownership |
-| O-25 | 删除死代码 | 如疑似未用的 `database-new.js`、空 `start.sh` / 空指南文件 |
+| O-22 | 统一 DB 迁移机制 | ~~已完成~~：`backend/db/migrate.js` + `migrations/001_*.js` + `schema_migrations`；后续增量按序号新增 | — |
+| O-23 | 清理根目录历史 FIX/GUIDE md | ~~已完成~~：历史 `*-FIX/GUIDE` 已迁入 `docs/archive/`；根目录保留 README/CHANGELOG |
+| O-24 | 补齐 `.env.example`、健康检查、基础集成测试 | ~~部分完成~~：`.env.example` + `/api/health`（含 ssh_pool）；集成测试仍待补 |
+| O-25 | 删除死代码 | ~~部分完成~~：已删 `database-new.js`、空 `start.sh`；其余空指南可继续收敛 |
 
 ### 3.4 产品能力（路线图已有，可择优）
 
@@ -124,12 +124,13 @@
 | 区域 | 路径 |
 |------|------|
 | 入口 | `backend/server.js` |
-| 鉴权 | `backend/middleware/auth.js`、`backend/routes/auth.js` |
+| 鉴权 | `backend/middleware/auth.js`、`ownership.js`、`backend/routes/auth.js` |
+| 审计 | `backend/services/audit-log.js`、`GET /api/system/audit-logs` |
 | 上传 | `backend/routes/upload.js`、`upload-chunked.js`、`frontend/src/views/Upload.vue` |
 | WS | `backend/services/ws-sftp-proxy.js` |
 | FTP 授权码 | `backend/services/ftp-auth.js` |
 | 服务器 CRUD | `backend/routes/servers.js` |
-| DB | `backend/db/database.js`、`database-mysql.js`、`database-sqlite.js` |
+| DB | `backend/db/database.js`、`migrate.js`、`migrations/`、`database-mysql.js`、`database-sqlite.js` |
 | 产品文档 | `docs/01-项目概述.md` … `docs/10-数据库与部署.md` |
 
 ---

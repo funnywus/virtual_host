@@ -2248,7 +2248,8 @@ const loadFiles = async (skipUsage = false) => {
       keyword: searchKeyword.value.trim(),
       search_subdirs: searchSubdirs.value,
       sort_by: sortBy.value,
-      sort_order: sortOrder.value
+      sort_order: sortOrder.value,
+      lite: true
     })]
 
     if (!skipUsage) {

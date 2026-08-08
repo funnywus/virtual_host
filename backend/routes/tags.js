@@ -1,14 +1,17 @@
 const express = require('express');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { getAccessibleTag, setDefaultOwned, isAdmin, notFound } = require('../middleware/ownership');
 
 const router = express.Router();
 router.use(authMiddleware);
 
-// 获取所有标签
+// 获取标签（admin 全部；普通用户仅自己的）
 router.get('/', async (req, res) => {
   try {
-    const tags = await db.all('SELECT * FROM server_tags ORDER BY name');
+    const tags = isAdmin(req)
+      ? await db.all('SELECT * FROM server_tags ORDER BY name')
+      : await db.all('SELECT * FROM server_tags WHERE user_id = ? ORDER BY name', [req.user.id]);
     res.json(tags);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -20,7 +23,7 @@ router.post('/', async (req, res) => {
   try {
     const { name, color, is_filterable = 1 } = req.body;
     if (!name) return res.status(400).json({ error: '标签名称不能为空' });
-    
+
     const result = await db.run(
       'INSERT INTO server_tags (name, color, is_filterable, user_id) VALUES (?, ?, ?, ?)',
       [name.trim(), color || '', is_filterable ? 1 : 0, req.user.id]
@@ -38,6 +41,9 @@ router.post('/', async (req, res) => {
 // 更新标签
 router.put('/:id', async (req, res) => {
   try {
+    const tag = await getAccessibleTag(req, req.params.id);
+    if (!tag) return notFound(res, '标签不存在');
+
     const { name, color, is_filterable = 1 } = req.body;
     await db.run(
       'UPDATE server_tags SET name = ?, color = ?, is_filterable = ? WHERE id = ?',
@@ -52,6 +58,9 @@ router.put('/:id', async (req, res) => {
 // 删除标签
 router.delete('/:id', async (req, res) => {
   try {
+    const tag = await getAccessibleTag(req, req.params.id);
+    if (!tag) return notFound(res, '标签不存在');
+
     await db.run('DELETE FROM server_tags WHERE id = ?', [req.params.id]);
     res.json({ message: '删除成功' });
   } catch (err) {
@@ -62,8 +71,8 @@ router.delete('/:id', async (req, res) => {
 // 设置默认标签
 router.post('/:id/set-default', async (req, res) => {
   try {
-    await db.run('UPDATE server_tags SET is_default = 0 WHERE user_id = ?', [req.user.id]);
-    await db.run('UPDATE server_tags SET is_default = 1 WHERE id = ?', [req.params.id]);
+    const tag = await setDefaultOwned(req, 'server_tags', req.params.id);
+    if (!tag) return notFound(res, '标签不存在');
     res.json({ message: '已设为默认' });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -5,6 +5,8 @@ const path = require('path');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const db = require('../db/database');
+const { ensureAuditTable, writeAudit } = require('../services/audit-log');
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -288,12 +290,53 @@ router.delete('/backup/:filename', async (req, res) => {
     const { filename } = req.params;
     const filepath = resolveBackupPath(filename);
     await fs.unlink(filepath);
-    
+    await writeAudit({
+      req,
+      action: 'backup.delete',
+      resource: 'backup',
+      detail: { filename }
+    });
+
     res.json({ success: true, message: '删除成功' });
   } catch (err) {
     console.error('删除备份失败:', err);
     const status = err.message === '无效的文件名' ? 400 : 500;
     res.status(status).json({ error: status === 400 ? err.message : '删除失败' });
+  }
+});
+
+// 审计日志列表
+router.get('/audit-logs', async (req, res) => {
+  try {
+    await ensureAuditTable();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
+    const offset = (page - 1) * pageSize;
+    const action = String(req.query.action || '').trim();
+
+    let where = '';
+    const params = [];
+    if (action) {
+      where = 'WHERE action = ?';
+      params.push(action);
+    }
+
+    const countRow = await db.get(`SELECT COUNT(*) as total FROM audit_logs ${where}`, params);
+    const list = await db.all(
+      `SELECT id, user_id, username, action, resource, resource_id, ip, detail, created_at
+       FROM audit_logs ${where}
+       ORDER BY id DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+
+    res.json({
+      list,
+      total: countRow?.total || 0,
+      page,
+      pageSize
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

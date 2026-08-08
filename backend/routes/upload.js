@@ -401,8 +401,8 @@ async function searchInSubdirs(config, targetPath, dirPath, keyword) {
   const pattern = escapeFindPattern(keyword);
   const relBase = normalizeRelPath(dirPath);
   if (relBase === null) return { files: [], truncated: false };
-  const cmd = `find "${targetPath}" \\( -type f -o -type d \\) -iname '*${pattern}*' -printf '%y\\t%s\\t%T@\\t%P\\n' 2>/dev/null`;
-  const result = await sshPool.exec(config, cmd);
+  const cmd = `find "${targetPath}" \\( -type f -o -type d \\) -iname '*${pattern}*' -printf '%y\\t%s\\t%T@\\t%P\\n' 2>/dev/null | head -n ${MAX_SEARCH_RESULTS + 1}`;
+  const result = await sshPool.exec(config, cmd, 120000);
   if (!result.success || !result.output) return { files: [], truncated: false };
 
   const files = [];
@@ -441,82 +441,207 @@ async function searchInSubdirs(config, targetPath, dirPath, keyword) {
   return { files, truncated };
 }
 
-// 获取文件列表（使用连接池优化，支持分页）
+/**
+ * 远端分页列目录：find 只取一层，排序/过滤/切片在远端完成，避免大目录整表回传
+ * 输出协议：
+ *   META\t<total>\t<file_count>\t<folder_count>
+ *   <y>\t<size>\t<mtime>\t<name>
+ */
+function buildRemotePagedListCmd(targetPath, opts) {
+  const page = opts.page;
+  const pageSize = opts.pageSize;
+  const offset = (page - 1) * pageSize;
+  const sortBy = opts.sortBy === 'size' || opts.sortBy === 'date' ? opts.sortBy : 'name';
+  const sortOrder = opts.sortOrder === 'desc' ? 'desc' : 'asc';
+  const keyword = opts.keyword || '';
+  const kwEsc = keyword.replace(/'/g, `'\\''`);
+
+  return `
+TARGET=${shellQuote(targetPath)}
+KW='${kwEsc}'
+SORT_BY='${sortBy}'
+SORT_ORDER='${sortOrder}'
+OFFSET=${offset}
+LIMIT=${pageSize}
+TMP=$(mktemp)
+trap 'rm -f "$TMP" "$TMP.f" "$TMP.s"' EXIT
+find "$TARGET" -mindepth 1 -maxdepth 1 \\( -name '_vhost' -o -name '.vhost' -o -name 'upload.php' -o -name '.upload_tmp' \\) -prune -o \\( -type f -o -type d \\) -printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null > "$TMP" || true
+if [ -n "$KW" ]; then
+  awk -F '\\t' -v kw="$KW" 'BEGIN{IGNORECASE=1} { n=$4; for(i=5;i<=NF;i++) n=n"\\t"$i; if (index(tolower(n), tolower(kw))>0) print }' "$TMP" > "$TMP.f"
+else
+  cp "$TMP" "$TMP.f"
+fi
+TOTAL=$(wc -l < "$TMP.f" | tr -d ' ')
+FILE_COUNT=$(awk -F '\\t' '$1=="f"{c++} END{print c+0}' "$TMP.f")
+FOLDER_COUNT=$(awk -F '\\t' '$1=="d"{c++} END{print c+0}' "$TMP.f")
+printf 'META\\t%s\\t%s\\t%s\\n' "$TOTAL" "$FILE_COUNT" "$FOLDER_COUNT"
+awk -F '\\t' -v sb="$SORT_BY" -v so="$SORT_ORDER" '
+function keyname(n) { return tolower(n) }
+{
+  name=$4; for(i=5;i<=NF;i++) name=name "\\t" $i
+  pref=($1=="d"?0:1)
+  if (sb=="size") k=sprintf("%020d", $2+0)
+  else if (sb=="date") k=sprintf("%020d", int($3+0))
+  else k=keyname(name)
+  printf "%d\\t%s\\t%s\\n", pref, k, $0
+}' "$TMP.f" | sort -t "$(printf '\\t')" -k1,1n -k2,2${sortOrder === 'desc' ? 'r' : ''} | awk -F '\\t' -v start=$((OFFSET+1)) -v end=$((OFFSET+LIMIT)) '
+{
+  n++
+  if (n<start || n>end) next
+  out=$3
+  for(i=4;i<=NF;i++) out=out "\\t" $i
+  print out
+}'
+`.trim();
+}
+
+function parseFindEntryLine(line, dirPath, lite) {
+  const parts = line.split('\t');
+  if (parts.length < 4) return null;
+  const typeChar = parts[0];
+  const size = parseInt(parts[1], 10) || 0;
+  const mtime = parseFloat(parts[2]);
+  const name = parts.slice(3).join('\t');
+  if (!name || name === '.' || name === '..') return null;
+  if (shouldHideInList(name, dirPath || '')) return null;
+  const entry = {
+    name,
+    rel_path: buildRelPath(dirPath || '', name),
+    type: typeChar === 'd' ? 'directory' : 'file',
+    size,
+    date: Number.isFinite(mtime) ? new Date(mtime * 1000).toISOString() : new Date().toISOString()
+  };
+  if (!lite) {
+    entry.permissions = typeChar === 'd' ? 'drwxr-xr-x' : '-rw-r--r--';
+  }
+  return entry;
+}
+
+async function listDirPagedRemote(config, targetPath, dirPath, opts) {
+  const cmd = buildRemotePagedListCmd(targetPath, opts);
+  const result = await sshPool.exec(config, cmd, 120000);
+  if (!result.success || !result.output) {
+    return null; // 让调用方回退
+  }
+
+  const lines = result.output.split('\n').filter((l) => l.trim());
+  if (lines.length === 0) {
+    return { files: [], total: 0, file_count: 0, folder_count: 0 };
+  }
+
+  let total = 0;
+  let file_count = 0;
+  let folder_count = 0;
+  const files = [];
+  for (const line of lines) {
+    if (line.startsWith('META\t')) {
+      const meta = line.split('\t');
+      total = parseInt(meta[1], 10) || 0;
+      file_count = parseInt(meta[2], 10) || 0;
+      folder_count = parseInt(meta[3], 10) || 0;
+      continue;
+    }
+    const entry = parseFindEntryLine(line, dirPath, opts.lite);
+    if (entry) files.push(entry);
+  }
+  return { files, total, file_count, folder_count };
+}
+
+// 获取文件列表（远端分页；大目录不全量回传）
 router.post('/list', async (req, res) => {
   try {
-    const { auth_code, path: dirPath, page: pageRaw, pageSize: pageSizeRaw, keyword: keywordRaw, search_subdirs: searchSubdirsRaw, sort_by: sortByRaw, sort_order: sortOrderRaw } = req.body;
+    const {
+      auth_code,
+      path: dirPath,
+      page: pageRaw,
+      pageSize: pageSizeRaw,
+      keyword: keywordRaw,
+      search_subdirs: searchSubdirsRaw,
+      sort_by: sortByRaw,
+      sort_order: sortOrderRaw,
+      lite: liteRaw
+    } = req.body;
     const page = Math.max(1, parseInt(pageRaw, 10) || 1);
     const pageSize = Math.min(500, Math.max(1, parseInt(pageSizeRaw, 10) || 10));
     const keyword = typeof keywordRaw === 'string' ? keywordRaw.trim().toLowerCase() : '';
     const search_subdirs = !!searchSubdirsRaw && !!keyword;
     const sortBy = ['name', 'size', 'date'].includes(sortByRaw) ? sortByRaw : 'name';
     const sortOrder = sortOrderRaw === 'desc' ? 'desc' : 'asc';
-    
+    const lite = liteRaw === true || liteRaw === 1 || liteRaw === '1';
+
     const ftp = await findFtpByAuthCode(auth_code);
-    
+
     if (!ftp) {
       return res.status(401).json({ error: '授权码无效' });
     }
-    
+
     if (!ftp.ip) {
       return res.status(400).json({ error: '服务器未配置' });
     }
-    
-    // 确保路径在home_dir内
+
     const targetPath = dirPath ? remoteAbs(ftp.home_dir, dirPath) : ftp.home_dir;
     if (denyOutsideHome(targetPath, ftp.home_dir)) {
       return res.status(403).json({ error: '无权访问该目录' });
     }
-    
-    // 使用连接池执行命令
+
     const config = {
       ip: ftp.ip,
       port: ftp.ssh_port,
       username: ftp.ssh_user,
       password: ftp.ssh_pass
     };
-    
-    const result = await sshPool.exec(config, `ls -la -- ${shellQuote(targetPath)} 2>/dev/null | tail -n +2`);
-    const dirFiles = result.success ? parseLsOutput(result.output, dirPath || '') : [];
-    const file_count = dirFiles.filter(f => f.type === 'file').length;
-    const folder_count = dirFiles.filter(f => f.type === 'directory').length;
 
-    if (!result.success && !(keyword && search_subdirs)) {
-      return res.json({
-        files: [],
-        current_path: dirPath || '/',
-        total: 0,
-        page,
-        pageSize,
-        file_count: 0,
-        folder_count: 0,
-        keyword,
-        search_subdirs
-      });
-    }
-
-    let files = [];
     let search_truncated = false;
+    let files = [];
+    let total = 0;
+    let file_count = 0;
+    let folder_count = 0;
 
     if (keyword && search_subdirs) {
       const searchResult = await searchInSubdirs(config, targetPath, dirPath || '', keyword);
       files = searchResult.files;
       search_truncated = searchResult.truncated;
       sortFileEntries(files, sortBy, sortOrder);
+      total = files.length;
+      file_count = files.filter((f) => f.type === 'file').length;
+      folder_count = files.filter((f) => f.type === 'directory').length;
+      const start = (page - 1) * pageSize;
+      files = files.slice(start, start + pageSize);
+      if (lite) files = files.map(({ permissions, ...rest }) => rest);
     } else {
-      files = keyword
-        ? dirFiles.filter(f => f.name.toLowerCase().includes(keyword))
-        : dirFiles;
-      sortFileEntries(files, sortBy, sortOrder);
+      const remote = await listDirPagedRemote(config, targetPath, dirPath || '', {
+        page,
+        pageSize,
+        keyword,
+        sortBy,
+        sortOrder,
+        lite
+      });
+
+      if (remote) {
+        files = remote.files;
+        total = remote.total;
+        file_count = remote.file_count;
+        folder_count = remote.folder_count;
+      } else {
+        // 回退：旧 ls -la（无 find -printf 的环境）
+        const result = await sshPool.exec(config, `ls -la -- ${shellQuote(targetPath)} 2>/dev/null | tail -n +2`);
+        const dirFiles = result.success ? parseLsOutput(result.output, dirPath || '') : [];
+        file_count = dirFiles.filter((f) => f.type === 'file').length;
+        folder_count = dirFiles.filter((f) => f.type === 'directory').length;
+        let filtered = keyword
+          ? dirFiles.filter((f) => f.name.toLowerCase().includes(keyword))
+          : dirFiles;
+        sortFileEntries(filtered, sortBy, sortOrder);
+        total = filtered.length;
+        const start = (page - 1) * pageSize;
+        files = filtered.slice(start, start + pageSize);
+        if (lite) files = files.map(({ permissions, ...rest }) => rest);
+      }
     }
 
-    const filtered = files;
-    const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const pagedFiles = filtered.slice(start, start + pageSize);
-
     res.json({
-      files: pagedFiles,
+      files,
       current_path: dirPath || '/',
       total,
       page,
@@ -525,7 +650,8 @@ router.post('/list', async (req, res) => {
       folder_count,
       keyword,
       search_subdirs,
-      search_truncated
+      search_truncated,
+      lite
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -549,26 +675,34 @@ router.post('/folders', async (req, res) => {
       password: ftp.ssh_pass
     };
 
-    // 只列目录，深度不限，按路径排序方便前端构建树
+    // 列目录树：限制深度与条数，避免超大站点拖垮接口
+    const maxDepth = Math.min(12, Math.max(2, parseInt(req.body.max_depth, 10) || 8));
+    const maxFolders = Math.min(20000, Math.max(100, parseInt(req.body.max_folders, 10) || 5000));
     const result = await sshPool.exec(
       config,
-      `find "${ftp.home_dir}" -type d -printf '%P\\n' 2>/dev/null | sort`
+      `find "${ftp.home_dir}" -mindepth 1 -maxdepth ${maxDepth} \\( -name '_vhost' -o -name '.vhost' -o -name '.upload_tmp' \\) -prune -o -type d -printf '%P\\n' 2>/dev/null | head -n ${maxFolders + 1} | sort`,
+      120000
     );
 
     const folders = [];
+    let truncated = false;
     if (result.success && result.output) {
       for (const line of result.output.split('\n')) {
         const rel = normalizeRelPath(line);
-        if (!rel) continue; // 根目录本身跳过，前端单独表示"根目录"
+        if (!rel) continue;
         if (isProtectedPath(rel)) continue;
         const name = pathPosix.basename(rel);
         const parentRel = pathPosix.dirname(rel);
         if (shouldHideInList(name, parentRel === '.' ? '' : parentRel)) continue;
+        if (folders.length >= maxFolders) {
+          truncated = true;
+          break;
+        }
         folders.push(rel);
       }
     }
 
-    res.json({ folders });
+    res.json({ folders, truncated, max_depth: maxDepth, max_folders: maxFolders });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

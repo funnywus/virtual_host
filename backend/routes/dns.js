@@ -5,6 +5,17 @@ const { authMiddleware } = require('../middleware/auth');
 const AliyunDns = require('../services/aliyun-dns');
 const TencentDns = require('../services/tencent-dns');
 const { encryptSecret, decryptSecret, decryptDnsCreds } = require('../utils/secret-crypto');
+const { writeAudit } = require('../services/audit-log');
+const {
+  getAccessibleDomain,
+  getAccessibleDomainWithDns,
+  getAccessibleAliyunConfig,
+  getAccessibleSubdomain,
+  getAccessibleServer,
+  filterOwnedSubdomainIds,
+  setDefaultOwned,
+  notFound
+} = require('../middleware/ownership');
 
 const router = express.Router();
 
@@ -102,6 +113,8 @@ router.get('/domains', async (req, res) => {
 // 从DNS平台获取域名的解析记录列表
 router.get('/domains/:id/dns-records', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.id))) return notFound(res, 'Domain not found');
+
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
     
     if (!domain) {
@@ -148,6 +161,8 @@ router.get('/domains/:id/dns-records', async (req, res) => {
 // 添加DNS记录到平台
 router.post('/domains/:id/dns-records', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.id))) return notFound(res, 'Domain not found');
+
     const { name, type, value, ttl } = req.body;
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
     
@@ -167,6 +182,8 @@ router.post('/domains/:id/dns-records', async (req, res) => {
 // 删除DNS平台上的记录
 router.delete('/domains/:id/dns-records/:recordId', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.id))) return notFound(res, 'Domain not found');
+
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
     
     if (!domain || !domain.access_key) {
@@ -190,6 +207,8 @@ router.delete('/domains/:id/dns-records/:recordId', async (req, res) => {
 // 修改DNS记录
 router.put('/domains/:id/dns-records/:recordId', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.id))) return notFound(res, 'Domain not found');
+
     const { name, type, value, ttl } = req.body;
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
 
@@ -263,6 +282,9 @@ router.post('/domains', async (req, res) => {
 // 更新主域名
 router.put('/domains/:id', async (req, res) => {
   try {
+    const ownedDomain = await getAccessibleDomain(req, req.params.id);
+    if (!ownedDomain) return notFound(res, 'Domain not found');
+
     const { aliyun_config_id, tags, expire_at } = req.body;
     await db.run('UPDATE domains SET aliyun_config_id = ?, tags = ?, expire_at = ? WHERE id = ?', [aliyun_config_id || null, tags || '', expire_at || null, req.params.id]);
     res.json({ message: 'Domain updated' });
@@ -274,12 +296,12 @@ router.put('/domains/:id', async (req, res) => {
 // 更新域名状态（启用/禁用）
 router.put('/domains/:id/status', async (req, res) => {
   try {
+    const ownedDomain = await getAccessibleDomain(req, req.params.id);
+    if (!ownedDomain) return notFound(res, 'Domain not found');
+
     const { status } = req.body;
     const domainStatus = status === 'disabled' ? 'disabled' : 'active';
-    const domain = await db.get('SELECT * FROM domains WHERE id = ?', [req.params.id]);
-    if (!domain) {
-      return res.status(404).json({ error: '域名不存在' });
-    }
+    const domain = ownedDomain;
     await db.run('UPDATE domains SET status = ? WHERE id = ?', [domainStatus, req.params.id]);
     res.json({ message: domainStatus === 'disabled' ? '已禁用' : '已启用' });
   } catch (err) {
@@ -290,6 +312,8 @@ router.put('/domains/:id/status', async (req, res) => {
 // 删除主域名
 router.delete('/domains/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleDomain(req, req.params.id))) return notFound(res, 'Domain not found');
+
     // 获取域名及其DNS配置
     const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [req.params.id]);
     
@@ -322,8 +346,8 @@ router.delete('/domains/:id', async (req, res) => {
 // 设置默认域名
 router.post('/domains/:id/set-default', async (req, res) => {
   try {
-    await db.run('UPDATE domains SET is_default = 0 WHERE user_id = ?', [req.user.id]);
-    await db.run('UPDATE domains SET is_default = 1 WHERE id = ?', [req.params.id]);
+    const owned = await setDefaultOwned(req, 'domains', req.params.id);
+    if (!owned) return notFound(res, 'Domain not found');
     res.json({ message: '已设为默认' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -365,16 +389,19 @@ router.post('/batch-create', async (req, res) => {
       return res.status(400).json({ error: '请选择域名并输入有效数量(1-100)' });
     }
     
-    // 获取主域名及其阿里云配置
-    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [domain_id]);
+    // 获取主域名及其阿里云配置（含所有权）
+    const domain = await getAccessibleDomainWithDns(req, domain_id);
     if (!domain) {
-      return res.status(400).json({ error: 'Domain not found' });
+      return notFound(res, 'Domain not found');
     }
 
-    // 获取服务器信息
+    // 获取服务器信息（含所有权）
     let server = null;
     if (server_id) {
-      server = await db.get('SELECT * FROM servers WHERE id = ?', [server_id]);
+      server = await getAccessibleServer(req, server_id);
+      if (!server) {
+        return notFound(res, 'Server not found');
+      }
     }
 
     const results = [];
@@ -611,6 +638,8 @@ router.get('/subdomains', async (req, res) => {
 // 获取子域名的 FTP 账号信息（按需查看，不在列表默认返回）
 router.get('/subdomains/:id/ftp-info', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const sub = await db.get(`
       SELECT s.subdomain, d.domain as main_domain, sv.ip as server_ip, sv.port as ssh_port
       FROM subdomains s
@@ -655,6 +684,8 @@ router.get('/subdomains/:id/ftp-info', async (req, res) => {
 // 更新子域名使用状态（停用/启用走 Nginx，不动 DNS）
 router.put('/subdomains/:id/status', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const { use_status, duration_months } = req.body;
     const sub = await db.get('SELECT * FROM subdomains WHERE id = ?', [req.params.id]);
     
@@ -704,6 +735,8 @@ router.put('/subdomains/:id/status', async (req, res) => {
 // 续费子域名
 router.post('/subdomains/:id/renew', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const durationMonths = Number(req.body.duration_months);
     if (!Number.isInteger(durationMonths) || durationMonths === 0) {
       return res.status(400).json({ error: '请选择调整时长' });
@@ -762,6 +795,8 @@ router.post('/subdomains/:id/renew', async (req, res) => {
 // 检查并处理过期子域名（定时任务调用）—— 禁用 Nginx，不动 DNS
 router.post('/subdomains/check-expire', async (req, res) => {
   try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可执行' });
+
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     
     const expiredSubs = await db.all(`
@@ -859,6 +894,8 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
 // 为已有子域名补发 PHP 直传脚本（单个）
 router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
@@ -915,6 +952,8 @@ router.post('/subdomains/:id/deploy-upload-script', async (req, res) => {
 // 仅补齐站点 nginx 的 PHP 配置（不下发 upload.php）
 router.post('/subdomains/:id/fix-php-config', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
@@ -956,6 +995,8 @@ router.post('/subdomains/:id/fix-php-config', async (req, res) => {
 // 检测某子域名的 PHP 直传是否就绪（SSH 实测：脚本/PHP/SSL）
 router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
@@ -1051,7 +1092,8 @@ router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
     if (Array.isArray(ids) && ids.length > 0) {
       sql += ` AND s.id IN (${ids.map(() => '?').join(',')})`;
       params.push(...ids);
-    } else if (req.user.role !== 'admin') {
+    }
+    if (req.user.role !== 'admin') {
       sql += ' AND d.user_id = ?';
       params.push(req.user.id);
     }
@@ -1082,7 +1124,7 @@ router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
         ip: server.server_ip,
         port: server.server_port,
         username: server.server_user,
-        password: server.server_pass
+        password: decryptSecret(server.server_pass)
       });
       const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
       for (const item of items) {
@@ -1117,16 +1159,19 @@ router.post('/subdomains', async (req, res) => {
     const { domain_id, subdomain, server_id, record_type, record_value, ttl, auto_ftp, auto_nginx, nginx_type, duration_days = 31, remark, max_upload_size } = req.body;
     const ftpMaxUploadSize = resolveMaxUploadSize(max_upload_size);
     
-    // 获取主域名及其阿里云配置
-    const domain = await db.get('SELECT d.*, ac.access_key, ac.secret_key, ac.platform FROM domains d LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id WHERE d.id = ?', [domain_id]);
+    // 获取主域名及其阿里云配置（含所有权）
+    const domain = await getAccessibleDomainWithDns(req, domain_id);
     if (!domain) {
-      return res.status(400).json({ error: 'Domain not found' });
+      return notFound(res, 'Domain not found');
     }
 
-    // 获取服务器信息
+    // 获取服务器信息（含所有权）
     let server = null;
     if (server_id) {
-      server = await db.get('SELECT * FROM servers WHERE id = ?', [server_id]);
+      server = await getAccessibleServer(req, server_id);
+      if (!server) {
+        return notFound(res, 'Server not found');
+      }
     }
 
     // 确定记录值
@@ -1265,6 +1310,8 @@ router.post('/subdomains', async (req, res) => {
 // 只更新备注（不修改DNS解析）
 router.put('/subdomains/:id/remark', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const { remark } = req.body;
     const sub = await db.get('SELECT id FROM subdomains WHERE id = ?', [req.params.id]);
     if (!sub) {
@@ -1280,6 +1327,8 @@ router.put('/subdomains/:id/remark', async (req, res) => {
 // 更新子域名限流配置
 router.put('/subdomains/:id/rate-limit', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const { enabled, rate, burst, nodelay, conn_limit } = req.body;
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain, sv.ip, sv.port, sv.username, sv.password
@@ -1367,6 +1416,8 @@ router.put('/subdomains/:id/rate-limit', async (req, res) => {
 // 更新子域名
 router.put('/subdomains/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const { server_id, record_type, record_value, ttl, remark } = req.body;
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain, ac.access_key, ac.secret_key, ac.platform 
@@ -1431,6 +1482,8 @@ router.put('/subdomains/:id', async (req, res) => {
 // body: { delete_ftp: bool, delete_files: bool }
 router.delete('/subdomains/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
     const { delete_ftp, delete_files } = req.body || {};
     const result = await deleteSubdomainWithResources(req.params.id, { delete_ftp, delete_files });
     res.json({ message: 'Subdomain deleted', ...result });
@@ -1448,11 +1501,16 @@ router.post('/subdomains/batch-delete', async (req, res) => {
       return res.status(400).json({ error: '请选择要删除的子域名' });
     }
 
+    const ownedIds = await filterOwnedSubdomainIds(req, ids);
+    if (ownedIds.length === 0) {
+      return notFound(res, 'Subdomain not found');
+    }
+
     let success = 0;
     let failed = 0;
     const results = [];
 
-    for (const id of ids) {
+    for (const id of ownedIds) {
       try {
         const result = await deleteSubdomainWithResources(id, { delete_ftp, delete_files });
         success++;
@@ -1588,6 +1646,13 @@ router.post('/aliyun-configs', async (req, res) => {
         tags || ''
       ]
     );
+    await writeAudit({
+      req,
+      action: 'dns_config.create',
+      resource: 'aliyun_config',
+      resourceId: result.lastID,
+      detail: { name, platform: platform || 'aliyun' }
+    });
     res.json({ id: result.lastID, message: 'Config added' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1597,6 +1662,8 @@ router.post('/aliyun-configs', async (req, res) => {
 // 更新DNS平台配置
 router.put('/aliyun-configs/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleAliyunConfig(req, req.params.id))) return notFound(res, 'Config not found');
+
     const { name, platform, access_key, secret_key, remark, tags } = req.body;
     if (secret_key) {
       await db.run(
@@ -1617,6 +1684,13 @@ router.put('/aliyun-configs/:id', async (req, res) => {
         [name, platform || 'aliyun', encryptSecret(access_key), remark || '', tags || '', req.params.id]
       );
     }
+    await writeAudit({
+      req,
+      action: 'dns_config.update',
+      resource: 'aliyun_config',
+      resourceId: req.params.id,
+      detail: { name, platform: platform || 'aliyun' }
+    });
     res.json({ message: 'Config updated' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1626,12 +1700,20 @@ router.put('/aliyun-configs/:id', async (req, res) => {
 // 删除DNS平台配置
 router.delete('/aliyun-configs/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleAliyunConfig(req, req.params.id))) return notFound(res, 'Config not found');
+
     // 检查是否有域名在使用
     const using = await db.get('SELECT id FROM domains WHERE aliyun_config_id = ?', [req.params.id]);
     if (using) {
       return res.status(400).json({ error: '该配置正在被域名使用，无法删除' });
     }
     await db.run('DELETE FROM aliyun_config WHERE id = ?', [req.params.id]);
+    await writeAudit({
+      req,
+      action: 'dns_config.delete',
+      resource: 'aliyun_config',
+      resourceId: req.params.id
+    });
     res.json({ message: 'Config deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1641,8 +1723,8 @@ router.delete('/aliyun-configs/:id', async (req, res) => {
 // 设置默认DNS配置
 router.post('/aliyun-configs/:id/set-default', async (req, res) => {
   try {
-    await db.run('UPDATE aliyun_config SET is_default = 0 WHERE user_id = ?', [req.user.id]);
-    await db.run('UPDATE aliyun_config SET is_default = 1 WHERE id = ?', [req.params.id]);
+    const owned = await setDefaultOwned(req, 'aliyun_config', req.params.id);
+    if (!owned) return notFound(res, 'Config not found');
     res.json({ message: '已设为默认' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1652,9 +1734,9 @@ router.post('/aliyun-configs/:id/set-default', async (req, res) => {
 // 测试DNS平台配置
 router.post('/aliyun-configs/:id/test', async (req, res) => {
   try {
-    const config = await db.get('SELECT * FROM aliyun_config WHERE id = ?', [req.params.id]);
+    const config = await getAccessibleAliyunConfig(req, req.params.id);
     if (!config) {
-      return res.status(404).json({ error: '配置不存在' });
+      return notFound(res, '配置不存在');
     }
     decryptDnsCreds(config);
 

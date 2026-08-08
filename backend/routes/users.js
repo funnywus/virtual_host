@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { writeAudit } = require('../services/audit-log');
 
 const router = express.Router();
 
@@ -46,6 +47,13 @@ router.post('/', adminMiddleware, async (req, res) => {
       [username, email, hashedPassword, role]
     );
 
+    await writeAudit({
+      req,
+      action: 'user.create',
+      resource: 'user',
+      resourceId: result.lastID,
+      detail: { username, email, role }
+    });
     res.json({
       id: result.lastID,
       username,
@@ -69,6 +77,13 @@ router.put('/:id/role', adminMiddleware, async (req, res) => {
       return res.status(400).json({ error: '无效的用户角色' });
     }
     await db.run('UPDATE users SET role = ? WHERE id = ?', [role, req.params.id]);
+    await writeAudit({
+      req,
+      action: 'user.role_update',
+      resource: 'user',
+      resourceId: req.params.id,
+      detail: { role }
+    });
     res.json({ message: 'Role updated' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -78,7 +93,16 @@ router.put('/:id/role', adminMiddleware, async (req, res) => {
 // 管理员：删除用户
 router.delete('/:id', adminMiddleware, async (req, res) => {
   try {
+    if (String(req.params.id) === String(req.user.id)) {
+      return res.status(400).json({ error: '不能删除当前登录账号' });
+    }
     await db.run('DELETE FROM users WHERE id = ?', [req.params.id]);
+    await writeAudit({
+      req,
+      action: 'user.delete',
+      resource: 'user',
+      resourceId: req.params.id
+    });
     res.json({ message: 'User deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

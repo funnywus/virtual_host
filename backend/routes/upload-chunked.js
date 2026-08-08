@@ -118,6 +118,26 @@ function getAvailableDiskSpace() {
   }
 }
 
+/** 最低剩余空间熔断（默认 1GB，可用 CHUNK_DISK_WATERMARK_BYTES 覆盖） */
+function getDiskWatermarkBytes() {
+  const n = parseInt(process.env.CHUNK_DISK_WATERMARK_BYTES || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 1024 * 1024 * 1024;
+}
+
+function assertDiskCapacity(neededBytes) {
+  const available = getAvailableDiskSpace();
+  if (available === null) return;
+  const watermark = getDiskWatermarkBytes();
+  const need = Math.max(0, Number(neededBytes) || 0) + watermark;
+  if (available < need) {
+    const err = new Error(
+      `服务器磁盘空间不足（可用 ${(available / 1024 / 1024).toFixed(0)}MB，需要约 ${(need / 1024 / 1024).toFixed(0)}MB）`
+    );
+    err.status = 507;
+    throw err;
+  }
+}
+
 router.post('/init-chunk', uploadAuthLimiter, async (req, res) => {
   try {
     const { auth_code, path: dirPathRaw, filename, total_chunks, file_size } = req.body;
@@ -133,6 +153,13 @@ router.post('/init-chunk', uploadAuthLimiter, async (req, res) => {
     const dirPath = normalizeRelPath(dirPathRaw || '');
     if (dirPath === null) {
       return res.status(400).json({ error: '非法路径' });
+    }
+
+    try {
+      // 合并阶段约需 2 倍文件体积（分片 + merged）
+      assertDiskCapacity((parseInt(file_size, 10) || 0) * 2);
+    } catch (diskErr) {
+      return res.status(diskErr.status || 507).json({ error: diskErr.message });
     }
 
     const uploadId = crypto.randomBytes(16).toString('hex');
@@ -466,5 +493,7 @@ function cleanupExpiredUploads() {
 }
 
 setInterval(cleanupExpiredUploads, 60 * 60 * 1000);
+// 启动时先清一轮过期分片
+setTimeout(cleanupExpiredUploads, 3000);
 
 module.exports = router;

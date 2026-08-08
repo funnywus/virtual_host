@@ -2,6 +2,7 @@ const express = require('express');
 const { decryptSecret } = require('../utils/secret-crypto');
 const db = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { getAccessibleSubdomain, notFound } = require('../middleware/ownership');
 const SshFtpService = require('../services/ssh-ftp');
 const nginxConfig = require('../services/nginx-config');
 
@@ -52,6 +53,10 @@ router.get('/templates', (req, res) => {
 router.post('/preview', async (req, res) => {
   try {
     const { subdomain_id, type, custom_config, root_path, proxy_pass } = req.body;
+
+    if (!(await getAccessibleSubdomain(req, subdomain_id))) {
+      return notFound(res, 'Subdomain not found');
+    }
     
     const sub = await db.get(`
       SELECT s.subdomain, d.domain as main_domain,
@@ -93,6 +98,9 @@ async function saveNginxConfig(req, res) {
     if (config === undefined || config === null) {
       return res.status(400).json({ error: '缺少 config' });
     }
+    if (!(await getAccessibleSubdomain(req, subdomain_id))) {
+      return notFound(res, 'Subdomain not found');
+    }
 
     await db.run('UPDATE subdomains SET nginx_config = ?, nginx_synced = 0 WHERE id = ?', [config, subdomain_id]);
 
@@ -108,6 +116,10 @@ router.post('/save', saveNginxConfig);
 // 同步Nginx配置到服务器
 router.post('/sync/:subdomain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.subdomain_id))) {
+      return notFound(res, 'Subdomain not found');
+    }
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
@@ -228,6 +240,10 @@ EOF'`);
 // 从服务器获取当前Nginx配置
 router.get('/fetch/:subdomain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.subdomain_id))) {
+      return notFound(res, 'Subdomain not found');
+    }
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,
@@ -265,6 +281,10 @@ router.get('/fetch/:subdomain_id', async (req, res) => {
 // 删除服务器上的Nginx配置
 router.delete('/remove/:subdomain_id', async (req, res) => {
   try {
+    if (!(await getAccessibleSubdomain(req, req.params.subdomain_id))) {
+      return notFound(res, 'Subdomain not found');
+    }
+
     const sub = await db.get(`
       SELECT s.*, d.domain as main_domain,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain,

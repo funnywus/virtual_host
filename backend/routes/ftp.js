@@ -5,6 +5,12 @@ const { authMiddleware } = require('../middleware/auth');
 const SshFtpService = require('../services/ssh-ftp');
 const { randomAuthCode, resolveAuthCode, isLegacyAuthCode } = require('../services/ftp-auth');
 const { encryptSecret, decryptFtpSecrets } = require('../utils/secret-crypto');
+const { writeAudit } = require('../services/audit-log');
+const {
+  getAccessibleSubdomain,
+  getAccessibleFtpAccount,
+  notFound
+} = require('../middleware/ownership');
 
 const router = express.Router();
 
@@ -168,6 +174,11 @@ router.post('/', async (req, res) => {
     const { subdomain_id, username, password, port, home_dir, max_upload_size } = req.body;
     const ftpMaxUploadSize = Number(max_upload_size) > 0 ? Math.floor(Number(max_upload_size)) : 524288000;
     
+    const ownedSub = await getAccessibleSubdomain(req, subdomain_id);
+    if (!ownedSub) {
+      return res.status(404).json({ error: 'Subdomain not found' });
+    }
+
     // 获取子域名和服务器信息
     const subdomain = await db.get(`
       SELECT s.*, d.domain as main_domain, sv.id as server_id, sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass, sv.nginx_path
@@ -178,7 +189,7 @@ router.post('/', async (req, res) => {
     `, [subdomain_id]);
     
     if (!subdomain) {
-      return res.status(400).json({ error: 'Subdomain not found' });
+      return res.status(404).json({ error: 'Subdomain not found' });
     }
     decryptFtpSecrets(subdomain);
 
@@ -252,6 +263,10 @@ router.post('/', async (req, res) => {
 // 同步FTP账号到服务器
 router.post('/:id/sync', async (req, res) => {
   try {
+    if (!(await getAccessibleFtpAccount(req, req.params.id))) {
+      return notFound(res, 'FTP account not found');
+    }
+
     const ftp = await db.get(`
       SELECT f.*, s.subdomain, d.domain as main_domain, 
              sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass, sv.nginx_path
@@ -307,6 +322,10 @@ router.post('/:id/sync', async (req, res) => {
 // 更新FTP账号
 router.put('/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleFtpAccount(req, req.params.id))) {
+      return notFound(res, 'FTP account not found');
+    }
+
     const { username, password, port, home_dir, max_upload_size, status } = req.body;
     const ftpMaxUploadSize = Number(max_upload_size) > 0 ? Math.floor(Number(max_upload_size)) : 524288000;
     
@@ -331,7 +350,7 @@ router.put('/:id', async (req, res) => {
 // 重置授权码（随机生成，旧码立即失效）
 router.post('/:id/reset-auth-code', async (req, res) => {
   try {
-    const ftp = await db.get('SELECT id FROM ftp_accounts WHERE id = ?', [req.params.id]);
+    const ftp = await getAccessibleFtpAccount(req, req.params.id);
     
     if (!ftp) {
       return res.status(404).json({ error: 'FTP account not found' });
@@ -339,6 +358,12 @@ router.post('/:id/reset-auth-code', async (req, res) => {
     
     const authCode = randomAuthCode();
     await db.run('UPDATE ftp_accounts SET auth_code = ? WHERE id = ?', [authCode, req.params.id]);
+    await writeAudit({
+      req,
+      action: 'ftp.reset_auth_code',
+      resource: 'ftp_account',
+      resourceId: req.params.id
+    });
     res.json({ auth_code: authCode, message: '授权码已重置，旧授权码立即失效' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -348,6 +373,10 @@ router.post('/:id/reset-auth-code', async (req, res) => {
 // 重置密码
 router.post('/:id/reset-password', async (req, res) => {
   try {
+    if (!(await getAccessibleFtpAccount(req, req.params.id))) {
+      return notFound(res, 'FTP account not found');
+    }
+
     const newPassword = generatePassword();
     
     const ftp = await db.get(`
@@ -390,6 +419,13 @@ router.post('/:id/reset-password', async (req, res) => {
       [encryptSecret(newPassword), syncStatus, syncMessage, req.params.id]
     );
     
+    await writeAudit({
+      req,
+      action: 'ftp.reset_password',
+      resource: 'ftp_account',
+      resourceId: req.params.id,
+      detail: { sync_status: syncStatus }
+    });
     res.json({ password: newPassword, sync_status: syncStatus, message: 'Password reset' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -399,6 +435,10 @@ router.post('/:id/reset-password', async (req, res) => {
 // 删除FTP账号
 router.delete('/:id', async (req, res) => {
   try {
+    if (!(await getAccessibleFtpAccount(req, req.params.id))) {
+      return notFound(res, 'FTP account not found');
+    }
+
     const ftp = await db.get(`
       SELECT f.*, sv.ip, sv.port as ssh_port, sv.username as ssh_user, sv.password as ssh_pass
       FROM ftp_accounts f
@@ -424,6 +464,13 @@ router.delete('/:id', async (req, res) => {
     }
     
     await db.run('DELETE FROM ftp_accounts WHERE id = ?', [req.params.id]);
+    await writeAudit({
+      req,
+      action: 'ftp.delete',
+      resource: 'ftp_account',
+      resourceId: req.params.id,
+      detail: { username: ftp?.username }
+    });
     res.json({ message: 'FTP account deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

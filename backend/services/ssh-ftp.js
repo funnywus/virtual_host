@@ -1,22 +1,38 @@
 const { Client } = require('ssh2');
+const sshPool = require('../utils/ssh-connection-pool');
 
 class SshFtpService {
   constructor(server) {
     this.server = server;
   }
 
-  // 执行SSH命令
-  exec(command, timeout = 300000) {  // 默认5分钟超时
+  poolConfig() {
+    return {
+      ip: this.server.ip,
+      port: this.server.port || 22,
+      username: this.server.username,
+      password: this.server.password
+    };
+  }
+
+  // 执行SSH命令（默认走连接池；server.usePool === false 时直连）
+  exec(command, timeout = 300000) {
+    if (this.server.usePool === false) {
+      return this.execDirect(command, timeout);
+    }
+    return sshPool.exec(this.poolConfig(), command, timeout);
+  }
+
+  execDirect(command, timeout = 300000) {
     return new Promise((resolve, reject) => {
       const conn = new Client();
       let output = '';
       let errorOutput = '';
       let timeoutId = null;
 
-      // 设置超时
       timeoutId = setTimeout(() => {
         conn.end();
-        resolve({ success: false, output: output.trim() + '\n[命令执行超时]', code: -1 });
+        resolve({ success: false, output: `${output.trim()}\n[命令执行超时]`, code: -1 });
       }, timeout);
 
       conn.on('ready', () => {
@@ -43,7 +59,7 @@ class SshFtpService {
 
           stream.stderr.on('data', (data) => {
             errorOutput += data.toString();
-            output += data.toString();  // 也加到output方便查看完整日志
+            output += data.toString();
           });
         });
       });
@@ -297,148 +313,119 @@ EOF'`);
 
   // SFTP上传文件（支持大文件）
   uploadFile(localBuffer, remotePath) {
-    return new Promise((resolve, reject) => {
-      const conn = new Client();
-
-      conn.on('ready', () => {
+    if (this.server.usePool === false) {
+      return this._sftpWithNewConn((conn) => new Promise((resolve, reject) => {
         conn.sftp((err, sftp) => {
-          if (err) {
-            conn.end();
-            return reject(err);
-          }
-
+          if (err) return reject(err);
           const writeStream = sftp.createWriteStream(remotePath);
-          
-          writeStream.on('close', () => {
-            conn.end();
-            resolve({ success: true, message: '上传成功' });
-          });
-
-          writeStream.on('error', (err) => {
-            conn.end();
-            reject(err);
-          });
-
+          writeStream.on('close', () => resolve({ success: true, message: '上传成功' }));
+          writeStream.on('error', reject);
           writeStream.end(localBuffer);
         });
-      });
+      }), true);
+    }
 
-      conn.on('error', (err) => {
-        reject(err);
+    return sshPool.withConnection(this.poolConfig(), (conn) => new Promise((resolve, reject) => {
+      conn.sftp((err, sftp) => {
+        if (err) return reject(err);
+        const writeStream = sftp.createWriteStream(remotePath);
+        writeStream.on('close', () => resolve({ success: true, message: '上传成功' }));
+        writeStream.on('error', reject);
+        writeStream.end(localBuffer);
       });
-
-      conn.connect({
-        host: this.server.ip,
-        port: this.server.port || 22,
-        username: this.server.username,
-        password: this.server.password,
-        readyTimeout: 30000,
-        keepaliveInterval: 10000,
-        keepaliveCountMax: 360
-      });
-    });
+    }));
   }
 
   // SFTP流式上传文件（避免内存溢出，适合大文件）
   // onProgress(bytesWritten) 可选，用于实时上报上传进度
   uploadFileStream(localPath, remotePath, onProgress) {
-    return new Promise((resolve, reject) => {
-      const fs = require('fs');
-      const conn = new Client();
+    const fs = require('fs');
+    const run = (conn) => new Promise((resolve, reject) => {
+      conn.sftp((err, sftp) => {
+        if (err) return reject(err);
 
-      conn.on('ready', () => {
-        conn.sftp((err, sftp) => {
-          if (err) {
-            conn.end();
-            return reject(err);
-          }
+        const readStream = fs.createReadStream(localPath);
+        const writeStream = sftp.createWriteStream(remotePath);
+        let bytesWritten = 0;
 
-          const readStream = fs.createReadStream(localPath);
-          const writeStream = sftp.createWriteStream(remotePath);
-          let bytesWritten = 0;
-
-          writeStream.on('close', () => {
-            conn.end();
-            resolve({ success: true, message: '上传成功', bytesWritten });
-          });
-
-          writeStream.on('error', (err) => {
-            conn.end();
-            reject(err);
-          });
-
-          readStream.on('error', (err) => {
-            conn.end();
-            reject(err);
-          });
-
-          // 统计已传输字节并上报进度
-          readStream.on('data', (chunk) => {
-            bytesWritten += chunk.length;
-            if (typeof onProgress === 'function') {
-              onProgress(bytesWritten);
-            }
-          });
-
-          // 流式传输
-          readStream.pipe(writeStream);
+        writeStream.on('close', () => {
+          resolve({ success: true, message: '上传成功', bytesWritten });
         });
-      });
-
-      conn.on('error', (err) => {
-        reject(err);
-      });
-
-      conn.connect({
-        host: this.server.ip,
-        port: this.server.port || 22,
-        username: this.server.username,
-        password: this.server.password,
-        readyTimeout: 30000,
-        keepaliveInterval: 10000,
-        keepaliveCountMax: 360
+        writeStream.on('error', reject);
+        readStream.on('error', reject);
+        readStream.on('data', (chunk) => {
+          bytesWritten += chunk.length;
+          if (typeof onProgress === 'function') onProgress(bytesWritten);
+        });
+        readStream.pipe(writeStream);
       });
     });
+
+    if (this.server.usePool === false) {
+      return this._sftpWithNewConn(run, true);
+    }
+    return sshPool.withConnection(this.poolConfig(), run);
   }
 
   /**
    * 将远端文件流式 pipe 到可写流（如 HTTP response）
    */
   streamRemoteFile(remotePath, writable) {
-    return new Promise((resolve, reject) => {
-      const conn = new Client();
+    const run = (conn, endConn) => new Promise((resolve, reject) => {
       let settled = false;
-
       const finish = (err) => {
         if (settled) return;
         settled = true;
-        try { conn.end(); } catch (_) { /* ignore */ }
+        if (endConn) {
+          try { conn.end(); } catch (_) { /* ignore */ }
+        }
         if (err) reject(err);
         else resolve();
       };
 
-      conn.on('ready', () => {
-        conn.sftp((err, sftp) => {
-          if (err) return finish(err);
-          const rs = sftp.createReadStream(remotePath);
-          rs.on('error', (e) => finish(e));
-          writable.on('error', (e) => {
-            try { rs.destroy(); } catch (_) { /* ignore */ }
-            finish(e);
-          });
-          writable.on('close', () => {
-            if (!settled) {
-              try { rs.destroy(); } catch (_) { /* ignore */ }
-              finish();
-            }
-          });
-          rs.on('end', () => finish());
-          rs.pipe(writable);
+      conn.sftp((err, sftp) => {
+        if (err) return finish(err);
+        const rs = sftp.createReadStream(remotePath);
+        rs.on('error', (e) => finish(e));
+        writable.on('error', (e) => {
+          try { rs.destroy(); } catch (_) { /* ignore */ }
+          finish(e);
         });
+        writable.on('close', () => {
+          if (!settled) {
+            try { rs.destroy(); } catch (_) { /* ignore */ }
+            finish();
+          }
+        });
+        rs.on('end', () => finish());
+        rs.pipe(writable);
       });
+    });
 
-      conn.on('error', (err) => finish(err));
+    if (this.server.usePool === false) {
+      return this._sftpWithNewConn((conn) => run(conn, false), true);
+    }
+    return sshPool.withConnection(this.poolConfig(), (conn) => run(conn, false));
+  }
 
+  /** 直连包装（不走池）；endOnDone 时在 finally 关闭连接 */
+  _sftpWithNewConn(fn, endOnDone) {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
+      conn.on('ready', () => {
+        Promise.resolve(fn(conn))
+          .then((result) => {
+            if (endOnDone) {
+              try { conn.end(); } catch (_) { /* ignore */ }
+            }
+            resolve(result);
+          })
+          .catch((err) => {
+            try { conn.end(); } catch (_) { /* ignore */ }
+            reject(err);
+          });
+      });
+      conn.on('error', reject);
       conn.connect({
         host: this.server.ip,
         port: this.server.port || 22,

@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { getJwtSecret } = require('../utils/env-check');
 const { loginLimiter } = require('../middleware/rate-limit');
+const { writeAudit } = require('../services/audit-log');
 
 const router = express.Router();
 
@@ -35,6 +36,14 @@ router.post('/register', loginLimiter, async (req, res) => {
       [username, email, hashedPassword, 'user']
     );
 
+    await writeAudit({
+      req,
+      username,
+      action: 'user.register',
+      resource: 'user',
+      detail: { email }
+    });
+
     res.json({ message: 'User registered successfully' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -49,12 +58,27 @@ router.post('/login', loginLimiter, async (req, res) => {
     const user = await db.get('SELECT * FROM users WHERE username = ?', [username]);
 
     if (!user) {
+      await writeAudit({
+        req,
+        username: username || null,
+        action: 'login.failed',
+        resource: 'auth',
+        detail: { reason: 'user_not_found' }
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
 
     if (!validPassword) {
+      await writeAudit({
+        req,
+        userId: user.id,
+        username: user.username,
+        action: 'login.failed',
+        resource: 'auth',
+        detail: { reason: 'bad_password' }
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -63,6 +87,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       getJwtSecret(),
       { expiresIn: '24h' }
     );
+
+    await writeAudit({
+      req,
+      userId: user.id,
+      username: user.username,
+      action: 'login.success',
+      resource: 'auth',
+      detail: { role: user.role }
+    });
 
     res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
   } catch (err) {
