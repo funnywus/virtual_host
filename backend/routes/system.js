@@ -57,11 +57,6 @@ function resolveBackupPath(filename) {
   return path.join(BACKUP_DIR, filename);
 }
 
-function resolveSqliteDbPath(dbPath) {
-  if (path.isAbsolute(dbPath)) return dbPath;
-  return path.resolve(__dirname, '..', dbPath);
-}
-
 function escapeMysqlValue(value) {
   if (value === null || value === undefined) return 'NULL';
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
@@ -197,25 +192,14 @@ router.post('/backup', async (req, res) => {
     await ensureBackupDir();
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const dbType = process.env.DB_TYPE || 'sqlite';
-    const filename = dbType === 'sqlite' ? `backup_${timestamp}.db` : `backup_${timestamp}.sql`;
+    const filename = `backup_${timestamp}.sql`;
     filepath = path.join(BACKUP_DIR, filename);
-    
-    if (dbType === 'mysql') {
-      // 检查 mysqldump 是否可用
-      const hasMysqldump = await isMysqldumpAvailable();
-      
-      if (hasMysqldump) {
-        // 使用 mysqldump 命令
-        await backupMysqlWithMysqldump(filepath, getMysqlConfig());
-      } else {
-        // 使用 Node.js 方式备份
-        await backupMysqlWithNode(filepath);
-      }
+
+    const hasMysqldump = await isMysqldumpAvailable();
+    if (hasMysqldump) {
+      await backupMysqlWithMysqldump(filepath, getMysqlConfig());
     } else {
-      // SQLite 备份
-      const dbPath = resolveSqliteDbPath(process.env.DB_PATH || 'data/app.db');
-      await fs.copyFile(dbPath, filepath);
+      await backupMysqlWithNode(filepath);
     }
     
     // 获取文件大小
@@ -344,7 +328,6 @@ router.get('/audit-logs', async (req, res) => {
 router.get('/info', async (req, res) => {
   try {
     const diagnostics = require('../services/system-diagnostics');
-    const dbType = process.env.DB_TYPE || 'sqlite';
     const uptime = process.uptime();
     const mem = process.memoryUsage();
     const pkg = require('../package.json');
@@ -359,7 +342,7 @@ router.get('/info', async (req, res) => {
       version: pkg.version || '2.0.0',
       nodeVersion: process.version,
       platform: `${process.platform} ${process.arch}`,
-      dbType: dbType === 'mysql' ? 'MySQL' : 'SQLite',
+      dbType: 'MySQL',
       uptime: uptimeStr,
       uptimeSeconds: Math.floor(uptime),
       memory: {

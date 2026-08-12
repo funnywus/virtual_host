@@ -13,7 +13,7 @@
 1. **密钥与凭据暴露面过大**（明文存库、上传鉴权回传 SSH 密码、WS 无鉴权代理）
 2. **鉴权与租户隔离不完整**（开放注册、部分写操作缺 ownership 校验）
 3. **超大单体文件**导致难测、难演进（`Upload.vue` / `upload.js` / `ssl.js` / `dns.js` / `Subdomains.vue`）
-4. **迁移与环境变量双轨**（SQLite ALTER + `server.js` migrate + MySQL SQL；`DB_*` vs `MYSQL_*`）
+4. **环境变量双轨**（`DB_*` vs `MYSQL_*`，现已统一优先 `MYSQL_*`）
 
 建议优先处理全部 `P0`，再按上传链路与后台权限做 `P1`。
 
@@ -130,7 +130,7 @@
 | WS | `backend/services/ws-sftp-proxy.js` |
 | FTP 授权码 | `backend/services/ftp-auth.js` |
 | 服务器 CRUD | `backend/routes/servers.js` |
-| DB | `backend/db/database.js`、`migrate.js`、`migrations/`、`database-mysql.js`、`database-sqlite.js` |
+| DB | `backend/db/database.js`、`migrate.js`、`migrations/`、`database-mysql.js` |
 | 产品文档 | `docs/01-项目概述.md` … `docs/10-数据库与部署.md` |
 
 ---

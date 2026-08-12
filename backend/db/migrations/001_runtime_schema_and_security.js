@@ -24,49 +24,26 @@ module.exports = {
 
     const batchJobsTableExists = await checkTableExists('batch_ssl_jobs');
     if (!batchJobsTableExists) {
-      if (db.type === 'mysql') {
-        await db.run(`
-          CREATE TABLE batch_ssl_jobs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            job_id VARCHAR(255) UNIQUE NOT NULL,
-            user_id INT NOT NULL,
-            status VARCHAR(50) DEFAULT 'pending',
-            total INT DEFAULT 0,
-            done INT DEFAULT 0,
-            success INT DEFAULT 0,
-            failed INT DEFAULT 0,
-            log TEXT,
-            results TEXT,
-            cert_type VARCHAR(50) DEFAULT 'letsencrypt',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            started_at DATETIME,
-            finished_at DATETIME,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        `);
-      } else {
-        await db.run(`
-          CREATE TABLE batch_ssl_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id TEXT UNIQUE NOT NULL,
-            user_id INTEGER NOT NULL,
-            status TEXT DEFAULT 'pending',
-            total INTEGER DEFAULT 0,
-            done INTEGER DEFAULT 0,
-            success INTEGER DEFAULT 0,
-            failed INTEGER DEFAULT 0,
-            log TEXT,
-            results TEXT,
-            cert_type TEXT DEFAULT 'letsencrypt',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            started_at DATETIME,
-            finished_at DATETIME,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-          )
-        `);
-      }
+      await db.run(`
+        CREATE TABLE batch_ssl_jobs (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          job_id VARCHAR(255) UNIQUE NOT NULL,
+          user_id INT NOT NULL,
+          status VARCHAR(50) DEFAULT 'pending',
+          total INT DEFAULT 0,
+          done INT DEFAULT 0,
+          success INT DEFAULT 0,
+          failed INT DEFAULT 0,
+          log TEXT,
+          results TEXT,
+          cert_type VARCHAR(50) DEFAULT 'letsencrypt',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          started_at DATETIME,
+          finished_at DATETIME,
+          FOREIGN KEY(user_id) REFERENCES users(id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
       console.log('[DB Migration]   + batch_ssl_jobs');
     }
 
@@ -96,14 +73,10 @@ module.exports = {
         `UPDATE ftp_accounts SET auth_code = LOWER(auth_code) WHERE auth_code IS NOT NULL AND auth_code != LOWER(auth_code)`
       );
 
-      if (db.type === 'mysql') {
-        const idx = await db.all(`SHOW INDEX FROM ftp_accounts WHERE Key_name = 'idx_ftp_auth_code'`);
-        if (!idx || idx.length === 0) {
-          await db.run('CREATE INDEX idx_ftp_auth_code ON ftp_accounts (auth_code)');
-          console.log('[DB Migration]   + idx_ftp_auth_code');
-        }
-      } else {
-        await db.run('CREATE INDEX IF NOT EXISTS idx_ftp_auth_code ON ftp_accounts (auth_code)');
+      const idx = await db.all(`SHOW INDEX FROM ftp_accounts WHERE Key_name = 'idx_ftp_auth_code'`);
+      if (!idx || idx.length === 0) {
+        await db.run('CREATE INDEX idx_ftp_auth_code ON ftp_accounts (auth_code)');
+        console.log('[DB Migration]   + idx_ftp_auth_code');
       }
     } catch (err) {
       console.error('[DB Migration]   授权码索引/回填:', err.message);

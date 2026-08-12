@@ -36,3 +36,6 @@ dist/
 yarn.lock
 .kiro
 归档.zip
+
+# Deploy secrets
+deploy.config

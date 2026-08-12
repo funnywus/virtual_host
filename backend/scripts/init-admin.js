@@ -1,4 +1,4 @@
-// 初始化管理员账号脚本，跟随 backend/.env 中的 DB_TYPE 使用当前运行数据库。
+// 初始化管理员账号脚本（使用 MySQL，配置见 backend/.env）
 const path = require('path');
 const bcrypt = require('bcryptjs');
 

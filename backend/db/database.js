@@ -1,27 +1,11 @@
 require('dotenv').config();
 
-const dbType = process.env.DB_TYPE || 'sqlite';
+const db = require('./database-mysql');
 
-let db;
+db.type = 'mysql';
+console.log('✓ 使用 MySQL 数据库');
 
-if (dbType === 'mysql') {
-  console.log('✓ 使用 MySQL 数据库');
-  db = require('./database-mysql');
-} else {
-  console.log('✓ 使用 SQLite 数据库');
-  db = require('./database-sqlite');
-}
-
-// 数据库类型
-db.type = dbType;
-
-// SQL 兼容函数 - 字符串拼接
-db.concat = (...args) => {
-  if (dbType === 'mysql') {
-    return `CONCAT(${args.join(', ')})`;
-  }
-  // SQLite 使用 ||
-  return args.join(' || ');
-};
+// SQL 字符串拼接（历史调用点统一走 CONCAT）
+db.concat = (...args) => `CONCAT(${args.join(', ')})`;
 
 module.exports = db;

@@ -19,7 +19,7 @@
 
 - Node.js >= 14.x
 - npm >= 6.x
-- SQLite3 或 MySQL
+- MySQL 5.7+
 
 ### 安装步骤
 
@@ -48,13 +48,12 @@ PORT=3000
 # JWT密钥
 JWT_SECRET=your_jwt_secret_key_here
 
-# 数据库配置（可选，默认使用SQLite）
-# DB_TYPE=mysql
-# DB_HOST=localhost
-# DB_PORT=3306
-# DB_USER=root
-# DB_PASSWORD=your_password
-# DB_NAME=vhost_manager
+# MySQL
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=virtual_host
+MYSQL_PASSWORD=your_password
+MYSQL_DATABASE=virtual_host
 
 # 阿里云DNS配置（可选）
 ALIYUN_ACCESS_KEY=your_aliyun_access_key
@@ -367,7 +366,7 @@ echo "部署完成！"
 
 **后端**:
 - Node.js + Express
-- SQLite3 / MySQL
+- MySQL
 - SSH2 (服务器连接)
 - JWT (身份认证)
 - Multer (文件上传)
@@ -452,12 +451,8 @@ echo "部署完成！"
 ### 数据库连接失败
 
 ```bash
-# 检查数据库文件权限
-ls -la backend/data/app.db
-
-# 重新初始化数据库
-rm backend/data/app.db
-node backend/scripts/init-admin.js
+# 检查 MySQL 连通性与 .env 中 MYSQL_* 配置
+mysql -h 127.0.0.1 -u virtual_host -p virtual_host
 ```
 
 ### SSH 连接失败
@@ -473,17 +468,6 @@ node backend/scripts/init-admin.js
 2. 确认文件大小是否超出限制
 3. 查看服务器磁盘空间
 4. 检查文件权限设置
-
-## 📚 数据库迁移
-
-系统支持从 SQLite 迁移到 MySQL：
-
-```bash
-cd backend/scripts
-node sqlite-to-mysql.js
-```
-
-详见: [SQLite to MySQL 迁移指南](backend/scripts/README-sqlite-to-mysql.md)
 
 ## 🔄 更新日志
 

@@ -12,39 +12,21 @@ async function ensureAuditTable() {
   if (preparing) return preparing;
 
   preparing = (async () => {
-    if (db.type === 'mysql') {
-      await db.run(`
-        CREATE TABLE IF NOT EXISTS audit_logs (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          user_id INT NULL,
-          username VARCHAR(100) NULL,
-          action VARCHAR(100) NOT NULL,
-          resource VARCHAR(100) NULL,
-          resource_id VARCHAR(100) NULL,
-          ip VARCHAR(64) NULL,
-          detail TEXT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          INDEX idx_audit_created (created_at),
-          INDEX idx_audit_action (action)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-      `);
-    } else {
-      await db.run(`
-        CREATE TABLE IF NOT EXISTS audit_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER,
-          username TEXT,
-          action TEXT NOT NULL,
-          resource TEXT,
-          resource_id TEXT,
-          ip TEXT,
-          detail TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs (created_at)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action)');
-    }
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        username VARCHAR(100) NULL,
+        action VARCHAR(100) NOT NULL,
+        resource VARCHAR(100) NULL,
+        resource_id VARCHAR(100) NULL,
+        ip VARCHAR(64) NULL,
+        detail TEXT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_audit_created (created_at),
+        INDEX idx_audit_action (action)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
     tableReady = true;
   })().finally(() => {
     preparing = null;

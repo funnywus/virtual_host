@@ -1,0 +1,27 @@
+# 复制为 deploy.config 后按需修改：
+#   cp deploy.config.example deploy.config
+#
+# deploy.config 含密码，请勿提交到 git
+
+# SSH 连接
+DEPLOY_HOST=your.server.ip
+DEPLOY_USER=root
+DEPLOY_PORT=22
+
+# 服务器密码（有特殊字符时务必用单引号，如 'pass$word'）
+DEPLOY_PASSWORD='your_server_password'
+
+# 可选：密钥登录（一般不用；配了密码时优先密码）
+# DEPLOY_SSH_KEY=~/.ssh/id_rsa
+
+# 远端项目目录（后端根目录，其下应有 public/）
+DEPLOY_PATH=/www/wwwroot/me/virtual_host/backend
+
+# 远端重启命令
+DEPLOY_RESTART_CMD="cd /www/wwwroot/me/virtual_host/backend && pm2 restart vhost-manager || pm2 start server.js --name vhost-manager --node-args='--max-old-space-size=2048'"
+
+# 是否同步后端业务代码（1=同步；0=只同步前端静态资源 public/）
+DEPLOY_SYNC_BACKEND=1
+
+# 是否在远端执行 npm install --production
+DEPLOY_REMOTE_NPM_INSTALL=0

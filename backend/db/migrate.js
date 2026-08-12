@@ -6,45 +6,26 @@ const path = require('path');
 const db = require('./database');
 
 async function getTableColumns(tableName) {
-  if (db.type === 'mysql') {
-    const rows = await db.all(`SHOW COLUMNS FROM ${tableName}`);
-    return rows.map((row) => ({ name: row.Field }));
-  }
-  return db.all(`PRAGMA table_info(${tableName})`);
+  const rows = await db.all(`SHOW COLUMNS FROM ${tableName}`);
+  return rows.map((row) => ({ name: row.Field }));
 }
 
 async function checkTableExists(tableName) {
   try {
-    if (db.type === 'mysql') {
-      const rows = await db.all(`SHOW TABLES LIKE '${tableName}'`);
-      return rows.length > 0;
-    }
-    const row = await db.get(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
-      [tableName]
-    );
-    return !!row;
+    const rows = await db.all(`SHOW TABLES LIKE '${tableName}'`);
+    return rows.length > 0;
   } catch {
     return false;
   }
 }
 
 async function ensureMigrationsTable() {
-  if (db.type === 'mysql') {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        id VARCHAR(191) PRIMARY KEY,
-        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `);
-  } else {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-  }
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id VARCHAR(191) PRIMARY KEY,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
 }
 
 function loadMigrationModules() {
