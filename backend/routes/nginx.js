@@ -158,6 +158,11 @@ router.post('/sync/:subdomain_id', async (req, res) => {
     const configPath = nginxConfig.getConfigPath(sub.full_domain);
     const backupPath = `${configPath}.bak.${Date.now()}`;
     const rootPath = `/www/wwwroot/ftp/${sub.full_domain}`;
+
+    // 新模板使用 vhost_traffic 日志格式时需先下发全局 log_format
+    if (sub.nginx_config && sub.nginx_config.includes('vhost_traffic')) {
+      await nginxConfig.ensureTrafficLogFormat(sshService);
+    }
     
     // 创建网站目录
     await sshService.exec(`sudo mkdir -p ${rootPath}`);

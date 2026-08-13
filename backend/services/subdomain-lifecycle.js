@@ -123,6 +123,14 @@ async function applyNginxToServer(sub, configContent) {
     password: sub.ssh_pass
   });
 
+  if (configContent && configContent.includes('vhost_traffic')) {
+    try {
+      await nginxConfig.ensureTrafficLogFormat(sshService);
+    } catch (e) {
+      console.error('下发流量日志格式失败:', e.message);
+    }
+  }
+
   let result = await writeAndReloadNginx(sshService, configPath, configContent);
   return { ...result, sshService, configPath, fullDomain };
 }

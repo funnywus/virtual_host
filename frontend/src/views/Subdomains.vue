@@ -54,6 +54,10 @@
           <el-option label="已停用" value="disabled" />
         </el-select>
         <div class="filter-checks">
+          <el-radio-group v-model="trafficPeriod" size="small" class="traffic-period" @change="onTrafficPeriodChange">
+            <el-radio-button value="today">今日</el-radio-button>
+            <el-radio-button value="7d">近7天</el-radio-button>
+          </el-radio-group>
           <el-checkbox v-model="filterExpiringSoon" size="small" border @change="onFilterChange">快过期</el-checkbox>
           <el-checkbox v-model="filterExpired" size="small" border @change="onFilterChange">已过期</el-checkbox>
         </div>
@@ -88,6 +92,40 @@
             <el-tag :type="row.status === 'active' ? 'success' : row.status === 'dns_error' ? 'danger' : 'warning'" size="small">
               DNS: {{ getDnsStatusText(row.status) }}
             </el-tag>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column width="150">
+        <template #header>
+          <el-tooltip content="来自 Nginx 访问日志；旧站点可能为近似值（响应体大小）" placement="top">
+            <span>流量</span>
+          </el-tooltip>
+        </template>
+        <template #default="{ row }">
+          <div class="traffic-cell">
+            <template v-if="row.trafficLoading">
+              <span class="traffic-muted">统计中</span>
+            </template>
+            <template v-else-if="row.traffic">
+              <el-tooltip
+                :content="row.trafficHint || (row.traffic.accurate ? '精确流量（含响应头）' : '近似流量（响应体大小，旧日志格式）')"
+                placement="top"
+              >
+                <div>
+                  <div class="traffic-main">{{ formatTrafficBytes(row.traffic.bytes) }}</div>
+                  <div class="traffic-sub">
+                    {{ formatRequestCount(row.traffic.requests) }} 次
+                    <span v-if="!row.traffic.accurate" class="traffic-approx">≈</span>
+                  </div>
+                </div>
+              </el-tooltip>
+            </template>
+            <template v-else-if="row.trafficError">
+              <el-tooltip :content="row.trafficError" placement="top">
+                <span class="traffic-muted traffic-retry" @click="loadTrafficForRow(row)">重试</span>
+              </el-tooltip>
+            </template>
+            <span v-else class="traffic-muted">—</span>
           </div>
         </template>
       </el-table-column>
@@ -875,6 +913,8 @@ const filterServerId = ref(null)
 const filterStatus = ref('')
 const filterExpiringSoon = ref(false)
 const filterExpired = ref(false)
+const trafficPeriod = ref('today')
+let trafficLoadToken = 0
 
 // 删除选项对话框
 const deleteDialogVisible = ref(false)
@@ -1560,9 +1600,71 @@ async function loadData() {
       expired: filterExpired.value,
       keyword: searchKeyword.value.trim()
     })
+    loadTrafficForCurrentPage()
   } finally {
     loading.value = false
   }
+}
+
+function formatTrafficBytes(bytes) {
+  const n = Number(bytes) || 0
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+}
+
+function formatRequestCount(count) {
+  const n = Number(count) || 0
+  if (n < 10000) return String(n)
+  if (n < 100000000) return (n / 10000).toFixed(n < 100000 ? 1 : 0) + '万'
+  return (n / 100000000).toFixed(2) + '亿'
+}
+
+async function loadTrafficForRow(row) {
+  if (!row?.id) return
+  row.trafficLoading = true
+  row.trafficError = ''
+  row.trafficHint = ''
+  try {
+    const res = await api.get(`/dns/subdomains/${row.id}/traffic`, {
+      params: { period: trafficPeriod.value }
+    })
+    row.traffic = {
+      requests: res.requests || 0,
+      bytes: res.bytes || 0,
+      accurate: !!res.accurate,
+      period: res.period
+    }
+    if (res.error) row.trafficHint = res.error
+  } catch (err) {
+    row.traffic = null
+    row.trafficError = err?.data?.error || err.message || '加载失败'
+  } finally {
+    row.trafficLoading = false
+  }
+}
+
+async function loadTrafficForCurrentPage() {
+  const token = ++trafficLoadToken
+  const rows = [...dataStore.subdomains]
+  const concurrency = 3
+  let cursor = 0
+
+  async function worker() {
+    while (cursor < rows.length) {
+      if (token !== trafficLoadToken) return
+      const row = rows[cursor]
+      cursor += 1
+      await loadTrafficForRow(row)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, worker))
+}
+
+function onTrafficPeriodChange() {
+  loadTrafficForCurrentPage()
 }
 
 function onFilterChange() {
@@ -1886,6 +1988,40 @@ async function handleRateLimitSave() {
   height: 24px;
   padding: 0 10px;
   background: #fff;
+}
+
+.traffic-period {
+  margin-right: 4px;
+}
+
+.traffic-cell {
+  line-height: 1.35;
+}
+
+.traffic-main {
+  font-size: 13px;
+  color: #303133;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-sub {
+  font-size: 12px;
+  color: #909399;
+}
+
+.traffic-approx {
+  margin-left: 2px;
+  color: #e6a23c;
+}
+
+.traffic-muted {
+  color: #c0c4cc;
+  font-size: 12px;
+}
+
+.traffic-retry {
+  cursor: pointer;
+  color: #409eff;
 }
 
 .toolbar {

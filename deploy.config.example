@@ -17,8 +17,9 @@ DEPLOY_PASSWORD='your_server_password'
 # 远端项目目录（后端根目录，其下应有 public/）
 DEPLOY_PATH=/www/wwwroot/me/virtual_host/backend
 
-# 远端重启命令
-DEPLOY_RESTART_CMD="cd /www/wwwroot/me/virtual_host/backend && pm2 restart vhost-manager || pm2 start server.js --name vhost-manager --node-args='--max-old-space-size=2048'"
+# 远端重启命令（deploy 用，勿写前台 bt_start.sh，否则 SSH 会挂住）
+# 宝塔面板「Node 项目」启动文件请选 bt_start.sh；这里用 PM2 热重启：
+DEPLOY_RESTART_CMD="cd /www/wwwroot/me/virtual_host && (pm2 restart vhost-manager || pm2 start ecosystem.config.cjs)"
 
 # 是否同步后端业务代码（1=同步；0=只同步前端静态资源 public/）
 DEPLOY_SYNC_BACKEND=1

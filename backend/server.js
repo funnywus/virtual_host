@@ -182,8 +182,12 @@ new WebSocketSFTPProxy(server);
 initSslLogWebSocket(server);
 
 server.listen(PORT, () => {
+  const baseUrl = `http://localhost:${PORT}`;
   console.log(`Server running on port ${PORT}`);
-  console.log(`WebSocket SFTP Proxy available at ws://localhost:${PORT}/ws-upload`);
+  console.log(`前台(管理后台): ${baseUrl}/admin-jm`);
+  console.log(`前台(上传页):   ${baseUrl}/`);
+  console.log(`后台接口:       ${baseUrl}/api`);
+  console.log(`WebSocket SFTP: ws://localhost:${PORT}/ws-upload`);
   // 审计表惰性创建（失败不影响主服务）
   try {
     const { ensureAuditTable } = require('./services/audit-log');

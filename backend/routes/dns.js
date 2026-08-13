@@ -484,6 +484,11 @@ router.post('/batch-create', async (req, res) => {
             await db.run('UPDATE subdomains SET nginx_config = ? WHERE id = ?', [config, subdomainId]);
 
             const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
+            try {
+              await nginxConfigService.ensureTrafficLogFormat(sshService);
+            } catch (e) {
+              console.error('下发流量日志格式失败:', e.message);
+            }
             const escapedConfig = config.replace(/'/g, "'\\''");
             await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
             await db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [subdomainId]);
@@ -675,6 +680,59 @@ router.get('/subdomains/:id/ftp-info', async (req, res) => {
       status: ftp.status,
       sync_status: ftp.sync_status,
       sync_message: ftp.sync_message
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 站点流量统计（解析 Nginx access_log）
+router.get('/subdomains/:id/traffic', async (req, res) => {
+  try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
+    const period = req.query.period === '7d' ? '7d' : 'today';
+    const sub = await db.get(`
+      SELECT s.subdomain, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) {
+      return res.status(404).json({ error: '子域名不存在' });
+    }
+
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+
+    if (!sub.server_ip) {
+      return res.json({
+        id: Number(req.params.id),
+        full_domain: fullDomain,
+        requests: 0,
+        bytes: 0,
+        period,
+        accurate: false,
+        error: '未绑定服务器'
+      });
+    }
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const { fetchSiteTraffic } = require('../services/site-traffic');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: decryptSecret(sub.server_pass)
+    });
+
+    const traffic = await fetchSiteTraffic(sshService, fullDomain, period);
+    res.json({
+      id: Number(req.params.id),
+      full_domain: fullDomain,
+      ...traffic
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1260,6 +1318,11 @@ router.post('/subdomains', async (req, res) => {
         });
 
         const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
+        try {
+          await nginxConfigService.ensureTrafficLogFormat(sshService);
+        } catch (e) {
+          console.error('下发流量日志格式失败:', e.message);
+        }
         const escapedConfig = config.replace(/'/g, "'\\''");
         await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
 
@@ -1389,6 +1452,11 @@ router.put('/subdomains/:id/rate-limit', async (req, res) => {
         });
 
         const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
+        try {
+          await nginxConfigService.ensureTrafficLogFormat(sshService);
+        } catch (e) {
+          console.error('下发流量日志格式失败:', e.message);
+        }
         const escapedConfig = config.replace(/'/g, "'\\''");
         await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
         

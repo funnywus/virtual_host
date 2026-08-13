@@ -3,6 +3,26 @@
 const NGINX_PATH = '/www/server/panel/vhost/nginx';
 const CERT_PATH = '/www/certs';
 
+/** 含 $bytes_sent，便于精确统计流量；需配合 ensureTrafficLogFormat 下发 */
+const TRAFFIC_LOG_FORMAT_NAME = 'vhost_traffic';
+const TRAFFIC_LOG_FORMAT_FILE = `${NGINX_PATH}/0.traffic_log_format.conf`;
+const TRAFFIC_LOG_FORMAT_CONTENT = `log_format ${TRAFFIC_LOG_FORMAT_NAME} '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent $bytes_sent "$http_referer" "$http_user_agent"';
+`;
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+/** 在服务器写入全局 log_format（http 上下文 include 的独立文件） */
+async function ensureTrafficLogFormat(sshService) {
+  const cmd = `printf %s ${shellQuote(TRAFFIC_LOG_FORMAT_CONTENT)} | sudo tee ${shellQuote(TRAFFIC_LOG_FORMAT_FILE)} >/dev/null`;
+  return sshService.exec(cmd, 15000);
+}
+
+function accessLogLine(domain) {
+  return `access_log /www/wwwlogs/${domain}.log ${TRAFFIC_LOG_FORMAT_NAME};`;
+}
+
 // 限流配置模板
 const rateLimitConfig = (options = {}) => {
   const {
@@ -51,7 +71,7 @@ const httpTemplate = (domain, rootPath, rateLimitOpts = {}) => {
     root ${rootPath};
 
     # 日志
-    access_log /www/wwwlogs/${domain}.log;
+    ${accessLogLine(domain)}
     error_log /www/wwwlogs/${domain}.error.log;
 ${rateLimitConf}
     location / {
@@ -114,7 +134,7 @@ server {
     ssl_session_timeout 10m;
 
     # 日志
-    access_log /www/wwwlogs/${domain}.log;
+    ${accessLogLine(domain)}
     error_log /www/wwwlogs/${domain}.error.log;
 ${rateLimitConf}
     location / {
@@ -163,7 +183,7 @@ const proxyTemplate = (domain, proxyPass) => `server {
         proxy_send_timeout 60s;
     }
 
-    access_log /www/wwwlogs/${domain}.log;
+    ${accessLogLine(domain)}
     error_log /www/wwwlogs/${domain}.error.log;
 }`;
 
@@ -203,6 +223,9 @@ module.exports = {
   getConfigPath,
   getCertPaths,
   rateLimitConfig,
+  ensureTrafficLogFormat,
+  TRAFFIC_LOG_FORMAT_NAME,
+  TRAFFIC_LOG_FORMAT_FILE,
   NGINX_PATH,
   CERT_PATH,
   templates: {
