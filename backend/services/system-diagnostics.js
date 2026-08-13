@@ -297,9 +297,9 @@ async function cleanupTemp() {
 }
 
 async function runFullDiagnose() {
-  const [stats, expire, servers, dns, sites] = await Promise.all([
+  // 只读巡检：停用过期站点走独立的 runExpireCheck，避免「检测」误伤在线站
+  const [stats, servers, dns, sites] = await Promise.all([
     getStats(),
-    runExpireCheck(),
     checkServers(),
     checkDnsPlatforms(),
     checkSiteHealth()
@@ -308,7 +308,6 @@ async function runFullDiagnose() {
   return {
     finished_at: formatTime(),
     stats,
-    expire,
     servers,
     dns,
     sites

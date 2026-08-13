@@ -15,8 +15,14 @@
         <router-link to="/admin-jm/subdomains" class="menu-item" :class="{ active: $route.path === '/admin-jm/subdomains' }" @click="handleMenuClick">
           <span class="menu-icon">📁</span><span class="menu-text" v-show="!isCollapsed">子域名管理</span>
         </router-link>
+        <router-link to="/admin-jm/traffic" class="menu-item" :class="{ active: $route.path === '/admin-jm/traffic' }" @click="handleMenuClick">
+          <span class="menu-icon">📊</span><span class="menu-text" v-show="!isCollapsed">流量统计</span>
+        </router-link>
         <router-link to="/admin-jm/domains" class="menu-item" :class="{ active: $route.path === '/admin-jm/domains' }" @click="handleMenuClick">
           <span class="menu-icon">🌐</span><span class="menu-text" v-show="!isCollapsed">域名管理</span>
+        </router-link>
+        <router-link to="/admin-jm/dns" class="menu-item" :class="{ active: $route.path === '/admin-jm/dns' }" @click="handleMenuClick">
+          <span class="menu-icon">📡</span><span class="menu-text" v-show="!isCollapsed">DNS记录</span>
         </router-link>
         <router-link to="/admin-jm/servers" class="menu-item" :class="{ active: $route.path === '/admin-jm/servers' }" @click="handleMenuClick">
           <span class="menu-icon">🖥️</span><span class="menu-text" v-show="!isCollapsed">服务器管理</span>
@@ -76,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { SwitchButton } from '@element-plus/icons-vue'
@@ -98,15 +104,14 @@ function checkMobile() {
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  document.documentElement.style.overflow = 'hidden'
+  document.body.style.overflow = 'hidden'
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
+  document.documentElement.style.overflow = ''
   document.body.style.overflow = ''
-})
-
-watch(mobileMenuOpen, (open) => {
-  document.body.style.overflow = open ? 'hidden' : ''
 })
 
 function toggleCollapse() {
@@ -138,11 +143,13 @@ function handleLogout() {
 <style scoped>
 .admin-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: linear-gradient(135deg, #F5F5F7 0%, #FAFAFA 100%);
   position: relative;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
-  overflow: hidden;
 }
 
 .admin-layout::before {
@@ -165,11 +172,14 @@ function handleLogout() {
 
 .sidebar {
   width: 240px;
+  height: 100%;
+  flex-shrink: 0;
   background: rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(80px) saturate(180%);
   -webkit-backdrop-filter: blur(80px) saturate(180%);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   border-right: 0.5px solid rgba(255, 255, 255, 0.95);
   box-shadow:
     0 0 0 0.5px rgba(255, 255, 255, 0.9) inset,
@@ -198,6 +208,7 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
   border-bottom: 1px solid rgba(209, 209, 214, 0.32);
   overflow: hidden;
   white-space: nowrap;
@@ -221,7 +232,9 @@ function handleLogout() {
 
 .sidebar-menu {
   flex: 1;
+  min-height: 0;
   padding: 15px 12px;
+  overflow-y: auto;
 }
 
 .menu-item {
@@ -274,6 +287,7 @@ function handleLogout() {
 
 .sidebar-footer {
   padding: 15px 20px;
+  flex-shrink: 0;
   border-top: 1px solid rgba(209, 209, 214, 0.32);
 }
 
@@ -302,6 +316,9 @@ function handleLogout() {
 
 .main-area {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   padding: 20px;
@@ -314,6 +331,7 @@ function handleLogout() {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
   padding: 18px 25px;
   background: rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(80px) saturate(180%);
@@ -345,8 +363,12 @@ function handleLogout() {
 
 .content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding-right: 5px;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* 美化滚动条 */
@@ -406,7 +428,7 @@ function handleLogout() {
 @media (max-width: 768px) {
   .admin-layout {
     flex-direction: column;
-    min-height: 100dvh;
+    height: 100dvh;
     background:
       radial-gradient(circle at 20% 30%, rgba(0, 122, 255, 0.08) 0%, transparent 50%),
       radial-gradient(circle at 80% 70%, rgba(88, 86, 214, 0.06) 0%, transparent 50%),
@@ -484,8 +506,9 @@ function handleLogout() {
   .main-area {
     padding: max(10px, env(safe-area-inset-top)) 10px calc(12px + env(safe-area-inset-bottom));
     width: 100%;
-    min-height: 100dvh;
-    overflow: visible;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
   /* 头部 */
@@ -493,8 +516,7 @@ function handleLogout() {
     padding: 12px 15px;
     margin-bottom: 15px;
     border-radius: 12px;
-    position: sticky;
-    top: 8px;
+    flex-shrink: 0;
     z-index: 50;
     min-height: 54px;
   }
@@ -526,7 +548,9 @@ function handleLogout() {
   /* 内容区 */
   .content {
     padding-right: 0;
-    overflow: visible;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   /* 侧边栏菜单项 */

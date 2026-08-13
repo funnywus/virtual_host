@@ -16,11 +16,24 @@ api.interceptors.request.use(config => {
   return config
 })
 
+async function readErrorMessage(error) {
+  const data = error.response?.data
+  if (data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text())
+      if (parsed?.error) return parsed.error
+    } catch {
+      // 非 JSON 的 blob 错误页（如 nginx 404 HTML）走默认文案
+    }
+  }
+  return data?.error || error.message
+}
+
 // 响应拦截器
 api.interceptors.response.use(
   response => response.data,
-  error => {
-    const msg = error.response?.data?.error || error.message
+  async error => {
+    const msg = await readErrorMessage(error)
     const status = error.response?.status
     const normalizedError = new Error(msg)
     normalizedError.response = error.response

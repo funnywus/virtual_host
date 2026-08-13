@@ -23,7 +23,9 @@ const routes = [
     children: [
       { path: '', redirect: '/admin-jm/domains' },
       { path: 'domains', name: 'Domains', component: () => import('@/views/Domains.vue') },
+      { path: 'dns', name: 'DnsRecords', component: () => import('@/views/DnsRecords.vue') },
       { path: 'subdomains', name: 'Subdomains', component: () => import('@/views/Subdomains.vue') },
+      { path: 'traffic', name: 'Traffic', component: () => import('@/views/Traffic.vue') },
       { path: 'ftp', name: 'Ftp', component: () => import('@/views/Ftp.vue') },
       { path: 'servers', name: 'Servers', component: () => import('@/views/Servers.vue') },
       { path: 'dns-platforms', name: 'DnsPlatforms', component: () => import('@/views/DnsPlatforms.vue') },

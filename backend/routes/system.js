@@ -57,6 +57,10 @@ function resolveBackupPath(filename) {
   return path.join(BACKUP_DIR, filename);
 }
 
+function getRequestedBackupFilename(req) {
+  return String(req.query.filename || req.params.filename || '');
+}
+
 function escapeMysqlValue(value) {
   if (value === null || value === undefined) return 'NULL';
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
@@ -251,15 +255,14 @@ router.get('/backups', async (req, res) => {
   }
 });
 
-// 下载备份文件
-router.get('/backup/download/:filename', async (req, res) => {
+// 下载备份文件（filename 走 query，避免 URL 以 .sql 结尾被宝塔/WAF 直接 404）
+router.get('/backup/download', async (req, res) => {
   try {
-    const { filename } = req.params;
+    const filename = getRequestedBackupFilename(req);
     const filepath = resolveBackupPath(filename);
-    
-    // 检查文件是否存在
+
     await fs.access(filepath);
-    
+
     res.download(filepath, filename);
   } catch (err) {
     console.error('下载备份失败:', err);
@@ -269,9 +272,9 @@ router.get('/backup/download/:filename', async (req, res) => {
 });
 
 // 删除备份文件
-router.delete('/backup/:filename', async (req, res) => {
+router.delete('/backup', async (req, res) => {
   try {
-    const { filename } = req.params;
+    const filename = getRequestedBackupFilename(req);
     const filepath = resolveBackupPath(filename);
     await fs.unlink(filepath);
     await writeAudit({

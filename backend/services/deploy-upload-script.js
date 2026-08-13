@@ -13,8 +13,17 @@ const {
 const TEMPLATE_PATH = path.join(__dirname, '..', 'templates', 'upload.php');
 const DEFAULT_NGINX_PATH = '/www/server/panel/vhost/nginx';
 
+/** 同主机 PHP sock 探测缓存 */
+const phpSockCache = new Map(); // hostKey -> { sock, expireAt }
+const PHP_SOCK_TTL_MS = 10 * 60 * 1000;
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function sshHostKey(sshService) {
+  const s = sshService?.server || {};
+  return `${s.ip || ''}:${s.port || 22}:${s.username || ''}`;
 }
 
 function getSiteNginxConfPath(fullDomain, nginxPath) {
@@ -42,46 +51,45 @@ async function deployUploadScript(sshService, homeDir) {
   const vhostDir = path.posix.join(homeDir, VHOST_DIR);
   const remotePath = path.posix.join(vhostDir, UPLOAD_SCRIPT);
   const tmpDir = path.posix.join(vhostDir, UPLOAD_TMP);
-
-  await sshService.exec(`mkdir -p ${shellQuote(homeDir)}`);
-  await sshService.exec(`mkdir -p ${shellQuote(vhostDir)}`);
-
-  // 更新脚本前先去掉不可变属性
-  await sshService.exec(`chattr -i ${shellQuote(remotePath)} 2>/dev/null || true`);
-
+  const legacyScript = path.posix.join(homeDir, UPLOAD_SCRIPT);
+  const legacyTmp = path.posix.join(homeDir, UPLOAD_TMP);
   const b64 = Buffer.from(content, 'utf8').toString('base64');
-  const writeCmd = `echo ${shellQuote(b64)} | base64 -d > ${shellQuote(remotePath)}`;
-  const result = await sshService.exec(writeCmd);
-  if (!result.success) {
+
+  // 单次 SSH：目录/写文件/权限/ACL/清理旧脚本
+  const script = `
+set -e
+HOME_DIR=${shellQuote(homeDir)}
+VHOST_DIR=${shellQuote(vhostDir)}
+REMOTE=${shellQuote(remotePath)}
+TMP_DIR=${shellQuote(tmpDir)}
+LEGACY=${shellQuote(legacyScript)}
+LEGACY_TMP=${shellQuote(legacyTmp)}
+mkdir -p "$HOME_DIR" "$VHOST_DIR" "$TMP_DIR"
+chattr -i "$REMOTE" 2>/dev/null || true
+echo ${shellQuote(b64)} | base64 -d > "$REMOTE"
+chown www:www "$VHOST_DIR" 2>/dev/null || chown www-data:www-data "$VHOST_DIR" 2>/dev/null || true
+chmod 755 "$VHOST_DIR"
+chmod 644 "$REMOTE"
+chown www:www "$REMOTE" 2>/dev/null || chown www-data:www-data "$REMOTE" 2>/dev/null || true
+chattr +i "$REMOTE" 2>/dev/null || true
+chmod 777 "$TMP_DIR"
+chown www:www "$TMP_DIR" 2>/dev/null || chown www-data:www-data "$TMP_DIR" 2>/dev/null || true
+if setfacl -m u:www:rwx "$HOME_DIR" 2>/dev/null && setfacl -d -m u:www:rwx "$HOME_DIR" 2>/dev/null; then
+  true
+else
+  chgrp www "$HOME_DIR" 2>/dev/null || chgrp www-data "$HOME_DIR" 2>/dev/null || true
+  chmod 775 "$HOME_DIR" 2>/dev/null || true
+fi
+chattr -i "$LEGACY" 2>/dev/null || true
+rm -f "$LEGACY" 2>/dev/null || true
+rm -rf "$LEGACY_TMP" 2>/dev/null || true
+echo DEPLOY_OK
+`.trim();
+
+  const result = await sshService.exec(script);
+  if (!result.success || !(result.output || '').includes('DEPLOY_OK')) {
     return { success: false, message: result.output || '写入 upload.php 失败' };
   }
-
-  // _vhost 属主 www、755：FTP 用户无法删除/修改其中文件
-  await sshService.exec(`chown www:www ${shellQuote(vhostDir)} 2>/dev/null || chown www-data:www-data ${shellQuote(vhostDir)} 2>/dev/null || true`);
-  await sshService.exec(`chmod 755 ${shellQuote(vhostDir)}`);
-  await sshService.exec(`chmod 644 ${shellQuote(remotePath)}`);
-  await sshService.exec(`chown www:www ${shellQuote(remotePath)} 2>/dev/null || chown www-data:www-data ${shellQuote(remotePath)} 2>/dev/null || true`);
-  await sshService.exec(`chattr +i ${shellQuote(remotePath)} 2>/dev/null || true`);
-
-  // 分片临时目录
-  await sshService.exec(`mkdir -p ${shellQuote(tmpDir)}`);
-  await sshService.exec(`chmod 777 ${shellQuote(tmpDir)}`);
-  await sshService.exec(`chown www:www ${shellQuote(tmpDir)} 2>/dev/null || chown www-data:www-data ${shellQuote(tmpDir)} 2>/dev/null || true`);
-
-  // PHP(www) 需能写入站点根（合并分片）
-  const qHome = shellQuote(homeDir);
-  const aclOk = await sshService.exec(
-    `setfacl -m u:www:rwx ${qHome} 2>/dev/null && setfacl -d -m u:www:rwx ${qHome} 2>/dev/null && echo ACL_OK`
-  );
-  if (!(aclOk.output || '').includes('ACL_OK')) {
-    await sshService.exec(`chgrp www ${qHome} 2>/dev/null || chgrp www-data ${qHome} 2>/dev/null || true`);
-    await sshService.exec(`chmod 775 ${qHome} 2>/dev/null || true`);
-  }
-
-  // 清理旧版根目录下的脚本
-  await sshService.exec(`chattr -i ${shellQuote(path.posix.join(homeDir, UPLOAD_SCRIPT))} 2>/dev/null || true`);
-  await sshService.exec(`rm -f ${shellQuote(path.posix.join(homeDir, UPLOAD_SCRIPT))} 2>/dev/null || true`);
-  await sshService.exec(`rm -rf ${shellQuote(path.posix.join(homeDir, UPLOAD_TMP))} 2>/dev/null || true`);
 
   return {
     success: true,
@@ -119,35 +127,59 @@ async function tryStartPhpFpm(sshService) {
 
 /** 从宝塔/常见路径探测 PHP-FPM sock（/tmp 以外也兼容） */
 async function detectPhpSock(sshService, confPath) {
-  const probes = [
-    'ls -t /tmp/php-cgi-*.sock /dev/shm/php-cgi-*.sock 2>/dev/null | head -1',
-    `grep -rh 'fastcgi_pass[[:space:]]*unix:' /www/server/nginx/conf/enable-php-*.conf 2>/dev/null | head -1 | sed -E 's/.*unix:([^;]+);.*/\\1/'`,
-    'find /www/server/php -name "*.sock" 2>/dev/null | head -1',
-    `grep -rh "^listen[[:space:]]*=" /www/server/php/*/etc/php-fpm.conf /www/server/php/*/etc/php-fpm.d/www.conf 2>/dev/null | grep -v '^;' | head -1 | sed -E 's/listen[[:space:]]*=[[:space:]]*//' | tr -d ' "'`,
-  ];
-
-  if (confPath) {
-    probes.unshift(
-      `grep -oE 'fastcgi_pass[[:space:]]*unix:[^;]+' ${shellQuote(confPath)} 2>/dev/null | head -1 | sed -E 's/fastcgi_pass[[:space:]]*unix://'`
-    );
+  const key = sshHostKey(sshService);
+  const cached = phpSockCache.get(key);
+  if (cached && cached.expireAt > Date.now() && cached.sock) {
+    if (await isSocketPath(sshService, cached.sock)) return cached.sock;
   }
 
-  for (const cmd of probes) {
-    const r = await sshService.exec(cmd);
-    const sock = (r.output || '').trim();
-    if (await isSocketPath(sshService, sock)) return sock;
-  }
+  // 合并探测为一次 SSH（conf 内优先，再全局）
+  const confProbe = confPath
+    ? `grep -oE 'fastcgi_pass[[:space:]]*unix:[^;]+' ${shellQuote(confPath)} 2>/dev/null | head -1 | sed -E 's/fastcgi_pass[[:space:]]*unix://'`
+    : 'true';
+  const probe = await sshService.exec(`
+SOCK=""
+C=$(${confProbe} | head -1 | tr -d '[:space:]')
+if [ -n "$C" ] && [ -S "$C" ]; then SOCK="$C"; fi
+if [ -z "$SOCK" ]; then
+  for C in $(ls -t /tmp/php-cgi-*.sock /dev/shm/php-cgi-*.sock 2>/dev/null); do
+    [ -S "$C" ] && SOCK="$C" && break
+  done
+fi
+if [ -z "$SOCK" ]; then
+  C=$(grep -rh 'fastcgi_pass[[:space:]]*unix:' /www/server/nginx/conf/enable-php-*.conf 2>/dev/null | head -1 | sed -E 's/.*unix:([^;]+);.*/\\1/' | tr -d '[:space:]')
+  [ -n "$C" ] && [ -S "$C" ] && SOCK="$C"
+fi
+if [ -z "$SOCK" ]; then
+  C=$(find /www/server/php -name "*.sock" 2>/dev/null | head -1)
+  [ -n "$C" ] && [ -S "$C" ] && SOCK="$C"
+fi
+echo "PHP_SOCK:$SOCK"
+`.trim());
 
-  const start = await tryStartPhpFpm(sshService);
-  if (start.started) {
-    for (const cmd of probes) {
-      const r = await sshService.exec(cmd);
-      const sock = (r.output || '').trim();
-      if (await isSocketPath(sshService, sock)) return sock;
+  let sock = '';
+  const m = String(probe.output || '').match(/PHP_SOCK:(\S*)/);
+  if (m && m[1]) sock = m[1];
+
+  if (!sock) {
+    const start = await tryStartPhpFpm(sshService);
+    if (start.started) {
+      const again = await sshService.exec(`
+SOCK=""
+for C in $(ls -t /tmp/php-cgi-*.sock /dev/shm/php-cgi-*.sock 2>/dev/null); do
+  [ -S "$C" ] && SOCK="$C" && break
+done
+echo "PHP_SOCK:$SOCK"
+`.trim());
+      const m2 = String(again.output || '').match(/PHP_SOCK:(\S*)/);
+      if (m2 && m2[1]) sock = m2[1];
     }
   }
 
-  return '';
+  if (sock) {
+    phpSockCache.set(key, { sock, expireAt: Date.now() + PHP_SOCK_TTL_MS });
+  }
+  return sock;
 }
 
 async function diagnosePhpEnvironment(sshService) {
@@ -253,8 +285,10 @@ async function reloadNginxIfOk(sshService) {
  * 补齐/修正站点 nginx 的 PHP 配置（老站点缺 PHP 段、sock 路径错误均可修复）
  * @param {SshFtpService} sshService
  * @param {string} confPath nginx 站点配置文件绝对路径
+ * @param {{ reload?: boolean }} options 批量场景可传 reload:false，由调用方统一 reload
  */
-async function ensureSitePhpConfig(sshService, confPath) {
+async function ensureSitePhpConfig(sshService, confPath, options = {}) {
+  const shouldReload = options.reload !== false;
   const exists = await sshService.exec(`test -f ${shellQuote(confPath)} && echo 1 || echo 0`);
   if (!(exists.output || '').includes('1')) {
     return { success: false, message: `站点配置不存在: ${confPath}` };
@@ -290,9 +324,11 @@ async function ensureSitePhpConfig(sshService, confPath) {
     action = fixedInclude ? 'fixed_include' : 'fixed_sock';
   }
 
-  const reload = await reloadNginxIfOk(sshService);
-  if (!reload.ok) {
-    return { success: false, message: reload.message };
+  if (shouldReload) {
+    const reload = await reloadNginxIfOk(sshService);
+    if (!reload.ok) {
+      return { success: false, message: reload.message };
+    }
   }
 
   const messages = {
@@ -303,23 +339,23 @@ async function ensureSitePhpConfig(sshService, confPath) {
     unchanged: 'PHP 配置正常',
   };
 
-  return { success: true, action, message: messages[action] || messages.unchanged, sock };
+  return { success: true, action, message: messages[action] || messages.unchanged, sock, reloaded: shouldReload };
 }
 
 /** @deprecated 使用 ensureSitePhpConfig */
-async function fixSitePhpSock(sshService, confPath) {
-  return ensureSitePhpConfig(sshService, confPath);
+async function fixSitePhpSock(sshService, confPath, options = {}) {
+  return ensureSitePhpConfig(sshService, confPath, options);
 }
 
 /**
  * 下发直传脚本后顺带补齐 PHP（按域名定位 nginx 配置）
  */
-async function ensureSitePhpAfterDeploy(sshService, fullDomain, nginxPath) {
+async function ensureSitePhpAfterDeploy(sshService, fullDomain, nginxPath, options = {}) {
   if (!fullDomain) {
     return { success: false, message: '缺少域名，无法定位 nginx 配置' };
   }
   const confPath = getSiteNginxConfPath(fullDomain, nginxPath);
-  return ensureSitePhpConfig(sshService, confPath);
+  return ensureSitePhpConfig(sshService, confPath, options);
 }
 
 /**

@@ -5,6 +5,7 @@
         <span class="page-title">
           子域名列表
           <el-tag v-if="currentDomain" type="info" size="small" class="domain-filter-tag">{{ currentDomain.domain }}</el-tag>
+          <el-tag v-if="currentServerFilter" type="info" size="small" class="domain-filter-tag">{{ currentServerFilter.name }}</el-tag>
         </span>
         <div class="header-actions">
           <el-dropdown v-if="selectedRows.length > 0" trigger="click">
@@ -54,10 +55,6 @@
           <el-option label="已停用" value="disabled" />
         </el-select>
         <div class="filter-checks">
-          <el-radio-group v-model="trafficPeriod" size="small" class="traffic-period" @change="onTrafficPeriodChange">
-            <el-radio-button value="today">今日</el-radio-button>
-            <el-radio-button value="7d">近7天</el-radio-button>
-          </el-radio-group>
           <el-checkbox v-model="filterExpiringSoon" size="small" border @change="onFilterChange">快过期</el-checkbox>
           <el-checkbox v-model="filterExpired" size="small" border @change="onFilterChange">已过期</el-checkbox>
         </div>
@@ -95,30 +92,62 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column width="150">
-        <template #header>
-          <el-tooltip content="来自 Nginx 访问日志；旧站点可能为近似值（响应体大小）" placement="top">
-            <span>流量</span>
-          </el-tooltip>
-        </template>
+      <el-table-column width="168" label="今日流量">
         <template #default="{ row }">
           <div class="traffic-cell">
             <template v-if="row.trafficLoading">
               <span class="traffic-muted">统计中</span>
             </template>
             <template v-else-if="row.traffic">
-              <el-tooltip
-                :content="row.trafficHint || (row.traffic.accurate ? '精确流量（含响应头）' : '近似流量（响应体大小，旧日志格式）')"
-                placement="top"
+              <el-popover
+                placement="bottom-start"
+                trigger="hover"
+                :show-after="250"
+                :hide-after="80"
+                :width="280"
+                @show="() => loadWeekTraffic(row)"
               >
-                <div>
-                  <div class="traffic-main">{{ formatTrafficBytes(row.traffic.bytes) }}</div>
-                  <div class="traffic-sub">
-                    {{ formatRequestCount(row.traffic.requests) }} 次
-                    <span v-if="!row.traffic.accurate" class="traffic-approx">≈</span>
-                  </div>
+                <template #reference>
+                  <span class="traffic-cell-inner" @click="openTrafficPage(row)">
+                    <span class="traffic-main">{{ formatTrafficBytes(row.traffic.bytes) }}</span>
+                    <span class="traffic-sub">
+                      {{ formatRequestCount(row.traffic.requests) }} 次
+                      <span v-if="!row.traffic.accurate" class="traffic-approx">≈</span>
+                    </span>
+                  </span>
+                </template>
+                <div class="traffic-week">
+                  <div v-if="row.trafficWeekLoading" class="traffic-week-status">正在统计近 7 天…</div>
+                  <div v-else-if="row.trafficWeekError" class="traffic-week-status is-error">{{ row.trafficWeekError }}</div>
+                  <template v-else-if="row.trafficWeek">
+                    <div class="traffic-week-head">
+                      <span>近 7 天</span>
+                      <span>
+                        {{ formatTrafficBytes(row.trafficWeek.bytes) }}
+                        · {{ formatRequestCount(row.trafficWeek.requests) }} 次
+                        <span v-if="!row.trafficWeek.accurate" class="traffic-approx">≈</span>
+                      </span>
+                    </div>
+                    <div
+                      v-for="day in row.trafficWeek.days"
+                      :key="day.date"
+                      class="traffic-week-row"
+                      :class="{ today: isTodayDate(day.date) }"
+                    >
+                      <span class="traffic-week-date">{{ formatWeekDate(day.date) }}</span>
+                      <div class="traffic-week-track">
+                        <div class="traffic-week-fill" :style="{ width: weekBarWidth(day.bytes, row.trafficWeek.days) }" />
+                      </div>
+                      <span class="traffic-week-metric">
+                        <span class="traffic-week-bytes">{{ formatTrafficBytes(day.bytes) }}</span>
+                        <span class="traffic-week-count">{{ formatRequestCount(day.requests) }} 次</span>
+                      </span>
+                    </div>
+                    <div class="traffic-week-foot">点击查看分时明细</div>
+                  </template>
+                  <div v-else class="traffic-week-status">准备统计…</div>
                 </div>
-              </el-tooltip>
+              </el-popover>
             </template>
             <template v-else-if="row.trafficError">
               <el-tooltip :content="row.trafficError" placement="top">
@@ -161,6 +190,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="openFtpInfoDialog(row)">FTP 信息</el-dropdown-item>
+                <el-dropdown-item @click="openTrafficPage(row)">流量统计</el-dropdown-item>
                 <el-dropdown-item @click="checkDirectUpload(row)">检测直传</el-dropdown-item>
                 <el-dropdown-item @click="openNginxDialog(row)">Nginx 配置</el-dropdown-item>
                 <el-dropdown-item @click="openRateLimitDialog(row)">限流配置</el-dropdown-item>
@@ -374,6 +404,17 @@
           </el-select>
         </el-form-item>
       </el-form>
+      <div v-if="batchJob.job_id" class="batch-job-progress" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;color:#606266">
+          <span>{{ batchJob.message || '处理中...' }}</span>
+          <span>{{ batchJob.done || 0 }}/{{ batchJob.total || batchForm.count }}</span>
+        </div>
+        <el-progress
+          :percentage="batchJob.percent || 0"
+          :status="batchJobProgressStatus"
+          :stroke-width="10"
+        />
+      </div>
       <div v-if="batchResults.length > 0" style="margin-top:20px">
         <el-divider>生成结果</el-divider>
         <el-table :data="batchResults" size="small" stripe max-height="300">
@@ -395,7 +436,9 @@
       </div>
       <template #footer>
         <el-button @click="batchDialogVisible = false">关闭</el-button>
-        <el-button type="primary" @click="handleBatchCreate" :loading="batchCreating">开始生成</el-button>
+        <el-button type="primary" @click="handleBatchCreate" :loading="batchCreating" :disabled="batchCreating">
+          {{ batchCreating ? '生成中...' : '开始生成' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -666,6 +709,37 @@
       </template>
     </el-dialog>
 
+    <!-- 批量补发直传脚本进度 -->
+    <el-dialog
+      v-model="deployScriptDialogVisible"
+      title="补发直传脚本"
+      width="480px"
+      append-to-body
+      :close-on-click-modal="!deployingScript"
+      :close-on-press-escape="!deployingScript"
+      :show-close="!deployingScript"
+    >
+      <div class="batch-job-progress">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;color:#606266">
+          <span>{{ deployScriptJob.message || '处理中...' }}</span>
+          <span>{{ deployScriptJob.done || 0 }}/{{ deployScriptJob.total || 0 }}</span>
+        </div>
+        <el-progress
+          :percentage="deployScriptJob.percent || 0"
+          :status="deployScriptProgressStatus"
+          :stroke-width="10"
+        />
+        <div v-if="deployScriptJob.success || deployScriptJob.failed" style="margin-top:10px;font-size:13px;color:#909399">
+          成功 {{ deployScriptJob.success || 0 }}，失败 {{ deployScriptJob.failed || 0 }}
+        </div>
+      </div>
+      <template #footer>
+        <el-button :disabled="deployingScript" @click="deployScriptDialogVisible = false">
+          {{ deployingScript ? '执行中...' : '关闭' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- FTP信息对话框 -->
     <el-dialog v-model="ftpInfoDialogVisible" title="FTP 账号信息" width="480px" append-to-body>
       <div v-loading="ftpInfoLoading">
@@ -876,7 +950,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Refresh, Search } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
@@ -891,6 +965,7 @@ import {
 } from '@/utils/server-tag-filter'
 
 const route = useRoute()
+const router = useRouter()
 const dataStore = useDataStore()
 
 const filterDomainId = ref(null)
@@ -907,19 +982,53 @@ const statusChanging = ref(false)
 const renewing = ref(false)
 const currentSubdomain = ref(null)
 const batchResults = ref([])
+const batchJob = reactive({
+  job_id: '',
+  status: '',
+  message: '',
+  total: 0,
+  done: 0,
+  success: 0,
+  failed: 0,
+  percent: 0
+})
+let batchPollTimer = null
+const batchJobProgressStatus = computed(() => {
+  if (batchJob.status === 'completed') return 'success'
+  if (batchJob.status === 'error') return 'exception'
+  if (batchJob.status === 'completed_with_errors') return 'warning'
+  return undefined
+})
 const searchKeyword = ref('')
 const searchTimer = ref(null)
 const filterServerId = ref(null)
 const filterStatus = ref('')
 const filterExpiringSoon = ref(false)
 const filterExpired = ref(false)
-const trafficPeriod = ref('today')
 let trafficLoadToken = 0
 
 // 删除选项对话框
 const deleteDialogVisible = ref(false)
 const deleting = ref(false)
 const deployingScript = ref(false)
+const deployScriptDialogVisible = ref(false)
+const deployScriptJob = reactive({
+  job_id: '',
+  status: '',
+  message: '',
+  total: 0,
+  done: 0,
+  success: 0,
+  failed: 0,
+  percent: 0
+})
+let deployScriptPollTimer = null
+const deployScriptProgressStatus = computed(() => {
+  if (deployScriptJob.status === 'completed') return 'success'
+  if (deployScriptJob.status === 'error') return 'exception'
+  if (deployScriptJob.status === 'completed_with_errors') return 'warning'
+  return undefined
+})
 // 检测直传
 const checkDirectDialogVisible = ref(false)
 const checkingDirect = ref(false)
@@ -1046,7 +1155,8 @@ async function handleStatusChange() {
     await api.put(`/dns/subdomains/${statusForm.id}/status`, { use_status: statusForm.new_status })
     ElMessage.success('状态已更新')
     statusDialogVisible.value = false
-    loadData()
+    const touchedNginx = statusForm.new_status === 'disabled' || statusForm.use_status === 'disabled'
+    loadData({ skipTraffic: !touchedNginx })
   } finally {
     statusChanging.value = false
   }
@@ -1152,7 +1262,7 @@ async function handleRenewAdjust(duration) {
     renewForm.expire_at = res.expire_at
     renewForm.quickDuration = null
     renewDialogVisible.value = false
-    loadData()
+    loadData({ skipTraffic: true })
   } finally {
     renewing.value = false
   }
@@ -1162,14 +1272,14 @@ async function handleDisable(row) {
   await ElMessageBox.confirm('停用将立即禁用 Nginx 访问（DNS 解析保留，恢复更快），确定？', '提示')
   const res = await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'disabled' })
   ElMessage.success(res.message || '已停用')
-  loadData()
+  loadData({ skipTraffic: true })
 }
 
 async function handleEnable(row) {
   // 启用时恢复 Nginx，DNS 未删除故可立即访问
   const res = await api.put(`/dns/subdomains/${row.id}/status`, { use_status: 'used' })
   ElMessage.success(res.message || '已启用')
-  loadData()
+  loadData({ skipTraffic: true })
 }
 
 // 批量操作
@@ -1269,7 +1379,7 @@ async function handleRemarkSave() {
     await api.put(`/dns/subdomains/${remarkForm.id}/remark`, { remark: remarkForm.remark })
     ElMessage.success('备注已更新')
     remarkDialogVisible.value = false
-    loadData()
+    loadData({ skipTraffic: true })
   } finally {
     remarkSaving.value = false
   }
@@ -1279,22 +1389,21 @@ async function batchSetStatus(status) {
   if (selectedRows.value.length === 0) return
   const statusText = { used: '已使用', unused: '未使用', disabled: '停用' }
   const hint = status === 'disabled'
-    ? `确定停用 ${selectedRows.value.length} 个子域名？将立即禁用 Nginx（DNS 保留）。`
-    : `确定将 ${selectedRows.value.length} 个子域名设为${statusText[status]}？`
+    ? `确定停用 ${selectedRows.value.length} 个子域名？将按服务器并行同步 Nginx（DNS 保留）；失败则统一回退。`
+    : `确定将 ${selectedRows.value.length} 个子域名设为${statusText[status]}？失败则统一回退。`
   await ElMessageBox.confirm(hint, '批量操作')
-  
-  let success = 0, failed = 0
-  for (const row of selectedRows.value) {
-    try {
-      await api.put(`/dns/subdomains/${row.id}/status`, { use_status: status })
-      success++
-    } catch (e) {
-      failed++
-    }
+
+  try {
+    const res = await api.post('/dns/subdomains/batch-status', {
+      ids: selectedRows.value.map((r) => r.id),
+      use_status: status
+    })
+    ElMessage.success(res.message || `操作完成: ${res.total || selectedRows.value.length} 个`)
+    selectedRows.value = []
+    loadData({ skipTraffic: true })
+  } catch (err) {
+    ElMessage.error(err?.data?.message || err.message || '批量状态更新失败，已回退')
   }
-  ElMessage.success(`操作完成: 成功${success}个, 失败${failed}个`)
-  selectedRows.value = []
-  loadData()
 }
 
 function openBatchRenewDialog() {
@@ -1363,19 +1472,21 @@ async function handleBatchAdjustDuration(duration) {
 
   batchRenewing.value = true
   try {
-    let success = 0, failed = 0
-    for (const row of selectedRows.value) {
-      try {
-        await api.post(`/dns/subdomains/${row.id}/renew`, { duration_months: targetDuration })
-        success++
-      } catch (e) {
-        failed++
-      }
-    }
-    ElMessage.success(`${getDurationActionText(targetDuration)}完成: 成功${success}个, 失败${failed}个`)
+    const res = await api.post('/dns/subdomains/batch-renew', {
+      ids: selectedRows.value.map((r) => r.id),
+      duration_months: targetDuration
+    })
+    const failed = res.failed_count || 0
+    ElMessage.success(
+      `${res.message || getDurationActionText(targetDuration) + '完成'}: 成功${res.success_count || 0}个` +
+        (failed ? `, 失败${failed}个` : '') +
+        (res.enabled_count ? `, 恢复启用${res.enabled_count}个` : '')
+    )
     batchRenewDialogVisible.value = false
     selectedRows.value = []
-    loadData()
+    loadData({ skipTraffic: true })
+  } catch (err) {
+    ElMessage.error(err?.data?.message || err.message || '批量时长调整失败，已回退')
   } finally {
     batchRenewing.value = false
   }
@@ -1386,8 +1497,9 @@ function batchDelete() {
   openDeleteDialog(selectedRows.value)
 }
 
-// 批量补发 PHP 直传脚本（选中的则只补选中的，否则全部）
+// 批量补发 PHP 直传脚本（异步队列；选中则只补选中，否则全部）
 async function batchDeployUploadScript() {
+  if (deployingScript.value) return
   const ids = selectedRows.value.map(r => r.id)
   const scope = ids.length > 0 ? `选中的 ${ids.length} 个` : '所有'
   try {
@@ -1395,14 +1507,87 @@ async function batchDeployUploadScript() {
   } catch (e) {
     return
   }
+
   deployingScript.value = true
+  Object.assign(deployScriptJob, {
+    job_id: '', status: 'pending', message: '提交任务...', total: ids.length || 0, done: 0, success: 0, failed: 0, percent: 0
+  })
+  deployScriptDialogVisible.value = true
+  if (deployScriptPollTimer) {
+    clearInterval(deployScriptPollTimer)
+    deployScriptPollTimer = null
+  }
+
   try {
     const res = await api.post('/dns/subdomains/batch-deploy-upload-script', { ids })
-    ElMessage.success(`补发完成: 成功 ${res.success} 个, 失败 ${res.failed} 个`)
+
+    // 兼容旧同步响应 / 无可下发
+    if (!res.async) {
+      deployingScript.value = false
+      deployScriptJob.status = (res.failed > 0 && !(res.success > 0)) ? 'error' : 'completed'
+      deployScriptJob.message = res.message || `补发完成: 成功 ${res.success || 0} 个, 失败 ${res.failed || 0} 个`
+      deployScriptJob.total = res.total || 0
+      deployScriptJob.done = res.total || 0
+      deployScriptJob.success = res.success || 0
+      deployScriptJob.failed = res.failed || 0
+      deployScriptJob.percent = 100
+      if (res.total === 0) {
+        ElMessage.info(res.message || '没有可下发的子域名')
+      } else if (deployScriptJob.status === 'error') {
+        ElMessage.error(deployScriptJob.message)
+      } else {
+        ElMessage.success(deployScriptJob.message)
+      }
+      return
+    }
+
+    Object.assign(deployScriptJob, {
+      job_id: res.job_id,
+      status: res.status || 'pending',
+      message: res.message || '任务已创建',
+      total: res.total || 0,
+      done: res.done || 0,
+      success: res.success || 0,
+      failed: res.failed || 0,
+      percent: res.percent || 0
+    })
+
+    deployScriptPollTimer = setInterval(async () => {
+      try {
+        const job = await api.get(`/dns/batch-jobs/${deployScriptJob.job_id}`)
+        Object.assign(deployScriptJob, {
+          status: job.status,
+          message: job.message,
+          total: job.total,
+          done: job.done,
+          success: job.success,
+          failed: job.failed,
+          percent: job.percent
+        })
+        if (['completed', 'completed_with_errors', 'error'].includes(job.status)) {
+          clearInterval(deployScriptPollTimer)
+          deployScriptPollTimer = null
+          deployingScript.value = false
+          if (job.status === 'error' && !(job.success > 0)) {
+            ElMessage.error(job.message || '批量补发失败')
+          } else {
+            ElMessage.success(job.message || `补发完成: 成功${job.success}个, 失败${job.failed}个`)
+          }
+        }
+      } catch (err) {
+        clearInterval(deployScriptPollTimer)
+        deployScriptPollTimer = null
+        deployingScript.value = false
+        deployScriptJob.status = 'error'
+        deployScriptJob.message = err.message || '查询任务进度失败'
+        ElMessage.error(deployScriptJob.message)
+      }
+    }, 1000)
   } catch (e) {
-    ElMessage.error(e.message || '补发失败')
-  } finally {
     deployingScript.value = false
+    deployScriptJob.status = 'error'
+    deployScriptJob.message = e.message || '补发失败'
+    ElMessage.error(deployScriptJob.message)
   }
 }
 
@@ -1520,6 +1705,11 @@ const currentDomain = computed(() => {
   return dataStore.domains.find(d => d.id === filterDomainId.value)
 })
 
+const currentServerFilter = computed(() => {
+  if (!filterServerId.value) return null
+  return dataStore.servers.find(s => s.id === filterServerId.value)
+})
+
 const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
 const activeDomains = computed(() => dataStore.domains.filter(d => d.status !== 'disabled'))
 
@@ -1570,6 +1760,10 @@ onMounted(async () => {
   if (route.query.domain_id) {
     filterDomainId.value = parseInt(route.query.domain_id)
   }
+  if (route.query.server_id) {
+    const serverId = parseInt(route.query.server_id, 10)
+    if (!Number.isNaN(serverId)) filterServerId.value = serverId
+  }
   loadData()
 })
 
@@ -1590,7 +1784,8 @@ watch(searchKeyword, () => {
   }, 300)
 })
 
-async function loadData() {
+async function loadData(options = {}) {
+  const skipTraffic = !!options.skipTraffic
   loading.value = true
   try {
     await dataStore.loadSubdomains(filterDomainId.value, currentPage.value, pageSize.value, {
@@ -1600,7 +1795,7 @@ async function loadData() {
       expired: filterExpired.value,
       keyword: searchKeyword.value.trim()
     })
-    loadTrafficForCurrentPage()
+    if (!skipTraffic) loadTrafficForCurrentPage()
   } finally {
     loading.value = false
   }
@@ -1621,22 +1816,45 @@ function formatRequestCount(count) {
   return (n / 100000000).toFixed(2) + '亿'
 }
 
+function padDatePart(n) {
+  return String(n).padStart(2, '0')
+}
+
+function todayIsoDate() {
+  const d = new Date()
+  return `${d.getFullYear()}-${padDatePart(d.getMonth() + 1)}-${padDatePart(d.getDate())}`
+}
+
+function isTodayDate(date) {
+  return String(date || '') === todayIsoDate()
+}
+
+function formatWeekDate(date) {
+  const s = String(date || '')
+  if (isTodayDate(s)) return '今天'
+  const m = s.match(/^\d{4}-(\d{2})-(\d{2})$/)
+  return m ? `${m[1]}-${m[2]}` : s
+}
+
+function weekBarWidth(bytes, days) {
+  const max = Math.max(0, ...(days || []).map((d) => Number(d.bytes) || 0))
+  if (max <= 0) return '0%'
+  return `${Math.max(4, Math.round((Number(bytes) || 0) / max * 100))}%`
+}
+
 async function loadTrafficForRow(row) {
   if (!row?.id) return
   row.trafficLoading = true
   row.trafficError = ''
-  row.trafficHint = ''
   try {
     const res = await api.get(`/dns/subdomains/${row.id}/traffic`, {
-      params: { period: trafficPeriod.value }
+      params: { period: 'today' }
     })
     row.traffic = {
       requests: res.requests || 0,
       bytes: res.bytes || 0,
-      accurate: !!res.accurate,
-      period: res.period
+      accurate: !!res.accurate
     }
-    if (res.error) row.trafficHint = res.error
   } catch (err) {
     row.traffic = null
     row.trafficError = err?.data?.error || err.message || '加载失败'
@@ -1645,26 +1863,84 @@ async function loadTrafficForRow(row) {
   }
 }
 
+async function loadWeekTraffic(row) {
+  if (!row?.id || row.trafficWeekLoading || row.trafficWeek) return
+  row.trafficWeekLoading = true
+  row.trafficWeekError = ''
+  try {
+    const res = await api.get(`/dns/subdomains/${row.id}/traffic`, {
+      params: { period: '7d' }
+    })
+    row.trafficWeek = {
+      requests: res.requests || 0,
+      bytes: res.bytes || 0,
+      accurate: !!res.accurate,
+      days: [...(res.days || [])].reverse().map((d) => ({
+        date: d.date,
+        bytes: Number(d.bytes) || 0,
+        requests: Number(d.requests) || 0
+      })),
+      error: res.error || ''
+    }
+    if (res.error) row.trafficWeekError = res.error
+  } catch (err) {
+    row.trafficWeek = null
+    row.trafficWeekError = err?.data?.error || err.message || '加载失败'
+  } finally {
+    row.trafficWeekLoading = false
+  }
+}
+
 async function loadTrafficForCurrentPage() {
   const token = ++trafficLoadToken
   const rows = [...dataStore.subdomains]
-  const concurrency = 3
-  let cursor = 0
+  if (!rows.length) return
 
-  async function worker() {
-    while (cursor < rows.length) {
-      if (token !== trafficLoadToken) return
-      const row = rows[cursor]
-      cursor += 1
-      await loadTrafficForRow(row)
-    }
+  for (const row of rows) {
+    row.trafficLoading = true
+    row.trafficError = ''
   }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, worker))
+  try {
+    const res = await api.post('/dns/subdomains/traffic', {
+      ids: rows.map((r) => r.id),
+      period: 'today'
+    })
+    if (token !== trafficLoadToken) return
+
+    const map = new Map((res.items || []).map((item) => [item.id, item]))
+    for (const row of rows) {
+      const item = map.get(row.id)
+      if (!item) {
+        row.traffic = null
+        row.trafficError = '无数据'
+      } else {
+        row.traffic = {
+          requests: item.requests || 0,
+          bytes: item.bytes || 0,
+          accurate: !!item.accurate
+        }
+        if (item.error) row.trafficError = item.error
+      }
+      row.trafficLoading = false
+    }
+  } catch (err) {
+    if (token !== trafficLoadToken) return
+    for (const row of rows) {
+      row.traffic = null
+      row.trafficError = err?.data?.error || err.message || '加载失败'
+      row.trafficLoading = false
+    }
+  }
 }
 
-function onTrafficPeriodChange() {
-  loadTrafficForCurrentPage()
+function openTrafficPage(row) {
+  if (!row?.id) return
+  const fullDomain = row.subdomain === '@' ? row.main_domain : `${row.subdomain}.${row.main_domain}`
+  router.push({
+    name: 'Traffic',
+    query: { id: String(row.id), domain: fullDomain }
+  })
 }
 
 function onFilterChange() {
@@ -1730,6 +2006,13 @@ function openBatchDialog() {
   batchForm.duration_value = 1
   batchForm.duration_unit = 'month'
   batchResults.value = []
+  Object.assign(batchJob, {
+    job_id: '', status: '', message: '', total: 0, done: 0, success: 0, failed: 0, percent: 0
+  })
+  if (batchPollTimer) {
+    clearInterval(batchPollTimer)
+    batchPollTimer = null
+  }
   batchDialogVisible.value = true
 }
 
@@ -1786,8 +2069,17 @@ function handleDelete(row) {
 }
 
 async function handleBatchCreate() {
+  if (batchCreating.value) return
   batchCreating.value = true
   batchResults.value = []
+  Object.assign(batchJob, {
+    job_id: '', status: 'pending', message: '提交任务...', total: batchForm.count, done: 0, success: 0, failed: 0, percent: 0
+  })
+  if (batchPollTimer) {
+    clearInterval(batchPollTimer)
+    batchPollTimer = null
+  }
+
   try {
     const data = {
       ...batchForm,
@@ -1795,11 +2087,62 @@ async function handleBatchCreate() {
       max_upload_size: calcFtpMaxUploadSize(batchForm)
     }
     const res = await api.post('/dns/batch-create', data)
-    batchResults.value = res.results
-    ElMessage.success(`生成完成: 成功${res.success}个, 失败${res.failed}个`)
-    loadData()
-  } finally {
+
+    // 兼容旧同步响应
+    if (!res.async && Array.isArray(res.results)) {
+      batchResults.value = res.results
+      ElMessage.success(`生成完成: 成功${res.success}个, 失败${res.failed}个`)
+      loadData({ skipTraffic: true })
+      batchCreating.value = false
+      return
+    }
+
+    Object.assign(batchJob, {
+      job_id: res.job_id,
+      status: res.status || 'pending',
+      message: res.message || '任务已创建',
+      total: res.total || batchForm.count,
+      done: res.done || 0,
+      success: res.success || 0,
+      failed: res.failed || 0,
+      percent: res.percent || 0
+    })
+
+    batchPollTimer = setInterval(async () => {
+      try {
+        const job = await api.get(`/dns/batch-jobs/${batchJob.job_id}`)
+        Object.assign(batchJob, {
+          status: job.status,
+          message: job.message,
+          total: job.total,
+          done: job.done,
+          success: job.success,
+          failed: job.failed,
+          percent: job.percent
+        })
+        if (['completed', 'completed_with_errors', 'error'].includes(job.status)) {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          batchCreating.value = false
+          batchResults.value = Array.isArray(job.results) ? job.results : []
+          if (job.status === 'error' && !(job.success > 0)) {
+            ElMessage.error(job.message || '批量生成失败')
+          } else {
+            ElMessage.success(job.message || `生成完成: 成功${job.success}个, 失败${job.failed}个`)
+          }
+          loadData({ skipTraffic: true })
+        }
+      } catch (err) {
+        clearInterval(batchPollTimer)
+        batchPollTimer = null
+        batchCreating.value = false
+        ElMessage.error(err.message || '查询任务进度失败')
+      }
+    }, 1000)
+  } catch (err) {
     batchCreating.value = false
+    batchJob.message = err.message || '提交失败'
+    batchJob.status = 'error'
   }
 }
 
@@ -1990,23 +2333,39 @@ async function handleRateLimitSave() {
   background: #fff;
 }
 
-.traffic-period {
-  margin-right: 4px;
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .traffic-cell {
-  line-height: 1.35;
+  line-height: 1.2;
+}
+
+.traffic-cell-inner {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .traffic-main {
   font-size: 13px;
-  color: #303133;
+  color: #409eff;
   font-variant-numeric: tabular-nums;
+}
+
+.traffic-cell-inner:hover .traffic-main {
+  text-decoration: underline;
 }
 
 .traffic-sub {
   font-size: 12px;
   color: #909399;
+  font-variant-numeric: tabular-nums;
 }
 
 .traffic-approx {
@@ -2024,11 +2383,94 @@ async function handleRateLimitSave() {
   color: #409eff;
 }
 
-.toolbar {
+.traffic-week {
+  font-size: 12px;
+  color: #606266;
+}
+
+.traffic-week-head {
   display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.traffic-week-head span:last-child {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: #606266;
+}
+
+.traffic-week-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 64px;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.traffic-week-row.today {
+  color: #303133;
+  font-weight: 600;
+}
+
+.traffic-week-date {
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-week-track {
+  height: 6px;
+  background: #ebeef5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.traffic-week-fill {
+  height: 100%;
+  background: #409eff;
+  border-radius: 3px;
+}
+
+.traffic-week-row.today .traffic-week-fill {
+  background: #e6a23c;
+}
+
+.traffic-week-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-week-bytes {
+  color: #909399;
+}
+
+.traffic-week-count {
+  color: #c0c4cc;
+  font-weight: 400;
+}
+
+.traffic-week-row.today .traffic-week-bytes,
+.traffic-week-row.today .traffic-week-count {
+  color: #303133;
+}
+
+.traffic-week-foot {
+  margin-top: 8px;
+  color: #c0c4cc;
+}
+
+.traffic-week-status {
+  color: #909399;
+}
+
+.traffic-week-status.is-error {
+  color: #f56c6c;
 }
 
 .domain-option {

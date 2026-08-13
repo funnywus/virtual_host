@@ -1,6 +1,18 @@
 const { Client } = require('ssh2');
 const sshPool = require('../utils/ssh-connection-pool');
 
+/** 同主机 FTP 类型探测缓存，避免批建时反复 which/systemctl */
+const ftpTypeCache = new Map(); // key -> { type, expireAt }
+const FTP_TYPE_TTL_MS = 10 * 60 * 1000;
+
+function hostCacheKey(server) {
+  return `${server.ip || ''}:${server.port || 22}:${server.username || ''}`;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 class SshFtpService {
   constructor(server) {
     this.server = server;
@@ -79,27 +91,38 @@ class SshFtpService {
     });
   }
 
-  // 检测FTP服务类型
+  // 检测FTP服务类型（同主机短时缓存）
   async detectFtpService() {
-    // 检查vsftpd
-    const vsftpd = await this.exec('which vsftpd 2>/dev/null || systemctl status vsftpd 2>/dev/null | head -1');
-    if (vsftpd.success && vsftpd.output && !vsftpd.output.includes('not found')) {
-      return 'vsftpd';
+    const key = hostCacheKey(this.server);
+    const cached = ftpTypeCache.get(key);
+    if (cached && cached.expireAt > Date.now()) {
+      return cached.type;
     }
 
-    // 检查pure-ftpd
-    const pureftpd = await this.exec('which pure-pw 2>/dev/null || systemctl status pure-ftpd 2>/dev/null | head -1');
-    if (pureftpd.success && pureftpd.output && !pureftpd.output.includes('not found')) {
-      return 'pure-ftpd';
-    }
+    // 单次 SSH 探测三种常见 FTP
+    const probe = await this.exec(`
+TYPE=""
+if command -v vsftpd >/dev/null 2>&1 || systemctl is-active vsftpd >/dev/null 2>&1; then TYPE=vsftpd
+elif command -v pure-pw >/dev/null 2>&1 || systemctl is-active pure-ftpd >/dev/null 2>&1; then TYPE=pure-ftpd
+elif command -v proftpd >/dev/null 2>&1 || systemctl is-active proftpd >/dev/null 2>&1; then TYPE=proftpd
+fi
+echo "FTP_TYPE:$TYPE"
+`.trim());
 
-    // 检查proftpd
-    const proftpd = await this.exec('which proftpd 2>/dev/null || systemctl status proftpd 2>/dev/null | head -1');
-    if (proftpd.success && proftpd.output && !proftpd.output.includes('not found')) {
-      return 'proftpd';
-    }
+    let type = null;
+    const m = String(probe.output || '').match(/FTP_TYPE:(\S*)/);
+    if (m && m[1]) type = m[1];
 
-    return null;
+    ftpTypeCache.set(key, { type, expireAt: Date.now() + FTP_TYPE_TTL_MS });
+    return type;
+  }
+
+  /** 安装成功后写入缓存，避免紧接着再探测 */
+  rememberFtpType(type) {
+    ftpTypeCache.set(hostCacheKey(this.server), {
+      type: type || 'vsftpd',
+      expireAt: Date.now() + FTP_TYPE_TTL_MS
+    });
   }
 
   // 自动安装FTP服务 (vsftpd)
@@ -151,21 +174,20 @@ pasv_max_port=40100
 userlist_enable=NO
 `;
     
-    // 备份原配置并写入新配置
-    await this.exec('sudo cp /etc/vsftpd.conf /etc/vsftpd.conf.bak 2>/dev/null');
-    await this.exec(`echo '${vsftpdConfig}' | sudo tee /etc/vsftpd.conf`);
-    
-    // 创建必要目录
-    await this.exec('sudo mkdir -p /var/run/vsftpd/empty');
-    
-    // 启动并设置开机自启
-    await this.exec('sudo systemctl enable vsftpd');
-    await this.exec('sudo systemctl restart vsftpd');
-    
+    // 备份/写配置/启动合并为少量命令
+    await this.exec(`
+sudo cp /etc/vsftpd.conf /etc/vsftpd.conf.bak 2>/dev/null || true
+printf %s ${shellQuote(vsftpdConfig)} | sudo tee /etc/vsftpd.conf >/dev/null
+sudo mkdir -p /var/run/vsftpd/empty
+sudo systemctl enable vsftpd
+sudo systemctl restart vsftpd
+`.trim());
+
     // 验证安装
     const checkResult = await this.exec('systemctl is-active vsftpd');
     if (checkResult.output?.trim() === 'active') {
       console.log('[FTP] vsftpd安装并启动成功');
+      this.rememberFtpType('vsftpd');
       return { success: true, message: 'FTP服务(vsftpd)安装成功' };
     } else {
       return { success: false, message: 'FTP服务安装后启动失败' };
@@ -184,39 +206,7 @@ userlist_enable=NO
         }
       }
 
-      // 创建用户目录
-      await this.exec(`sudo mkdir -p ${homeDir}`);
-
-      // 检查用户是否存在
-      const userExists = await this.exec(`id ${username} 2>/dev/null`);
-      
-      if (userExists.success) {
-        // 用户已存在，更新密码
-        const updatePwd = await this.exec(`echo "${username}:${password}" | sudo chpasswd`);
-        if (!updatePwd.success) {
-          return { success: false, message: '更新密码失败: ' + updatePwd.output };
-        }
-      } else {
-        // 创建新用户
-        const createUser = await this.exec(
-          `sudo useradd -m -d ${homeDir} -s /bin/false ${username} 2>/dev/null || ` +
-          `sudo useradd -m -d ${homeDir} -s /sbin/nologin ${username}`
-        );
-        
-        // 设置密码
-        const setPwd = await this.exec(`echo "${username}:${password}" | sudo chpasswd`);
-        if (!setPwd.success) {
-          return { success: false, message: '设置密码失败: ' + setPwd.output };
-        }
-      }
-
-      // 设置目录权限
-      await this.exec(`sudo chown ${username}:${username} ${homeDir}`);
-      await this.exec(`sudo chmod 755 ${homeDir}`);
-
-      // 创建默认 index.html
-      await this.exec(`sudo bash -c 'cat > ${homeDir}/index.html << EOF
-<!DOCTYPE html>
+      const indexHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -235,8 +225,34 @@ userlist_enable=NO
     </div>
 </body>
 </html>
-EOF'`);
-      await this.exec(`sudo chown ${username}:${username} ${homeDir}/index.html`);
+`;
+
+      // 单次 SSH：建目录/建用户/设密/权限/默认页
+      const result = await this.exec(`
+set -e
+USER=${shellQuote(username)}
+PASS=${shellQuote(password)}
+HOME_DIR=${shellQuote(homeDir)}
+sudo mkdir -p "$HOME_DIR"
+if id "$USER" >/dev/null 2>&1; then
+  echo "$USER:$PASS" | sudo chpasswd
+else
+  sudo useradd -m -d "$HOME_DIR" -s /bin/false "$USER" 2>/dev/null \\
+    || sudo useradd -m -d "$HOME_DIR" -s /sbin/nologin "$USER"
+  echo "$USER:$PASS" | sudo chpasswd
+fi
+sudo chown "$USER:$USER" "$HOME_DIR"
+sudo chmod 755 "$HOME_DIR"
+if [ ! -f "$HOME_DIR/index.html" ]; then
+  printf %s ${shellQuote(indexHtml)} | sudo tee "$HOME_DIR/index.html" >/dev/null
+  sudo chown "$USER:$USER" "$HOME_DIR/index.html"
+fi
+echo FTP_USER_OK
+`.trim());
+
+      if (!result.success || !(result.output || '').includes('FTP_USER_OK')) {
+        return { success: false, message: result.output || 'FTP用户创建失败' };
+      }
 
       return { success: true, message: 'FTP用户创建成功' };
     } catch (err) {

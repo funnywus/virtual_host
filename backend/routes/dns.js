@@ -404,146 +404,314 @@ router.post('/batch-create', async (req, res) => {
       }
     }
 
-    const results = [];
-    const SshFtpService = require('../services/ssh-ftp');
-    const nginxConfigService = require('../services/nginx-config');
-    
-    let sshService = null;
-    if (server) {
-      sshService = new SshFtpService({
-        ip: server.ip,
-        port: server.port,
-        username: server.username,
-        password: decryptSecret(server.password)
-      });
-    }
+    const batchJobService = require('../services/batch-job');
+    const jobRecord = await batchJobService.createJob({
+      userId: req.user.id,
+      jobType: 'batch-create',
+      total: count,
+      message: '任务已创建，等待执行',
+      payload: { domain_id, server_id, count }
+    });
 
-    for (let i = 0; i < count; i++) {
+    // 立即返回 job_id，后台异步执行
+    res.json({
+      async: true,
+      job_id: jobRecord.job_id,
+      ...batchJobService.toPublic(jobRecord)
+    });
+
+    setImmediate(() => {
+      runBatchCreateJob(jobRecord, {
+        domain,
+        server,
+        count,
+        record_type,
+        ttl,
+        auto_ftp,
+        auto_nginx,
+        nginx_type,
+        prefix,
+        suffix,
+        subdomain_length,
+        duration_days,
+        ftpMaxUploadSize
+      }).catch(async (err) => {
+        console.error('[batch-create] 任务失败:', err);
+        try {
+          await batchJobService.finishJob(jobRecord, {
+            status: 'error',
+            message: err.message || '批量生成失败'
+          });
+        } catch (e) {
+          console.error('[batch-create] 更新失败状态出错:', e.message);
+        }
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 查询长任务进度
+router.get('/batch-jobs/:job_id', async (req, res) => {
+  try {
+    const batchJobService = require('../services/batch-job');
+    const job = await batchJobService.getJob(req.params.job_id, req.user);
+    if (!job) return notFound(res, 'Job not found');
+    res.json(batchJobService.toPublic(job));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function runBatchCreateJob(jobRecord, ctx) {
+  const batchJobService = require('../services/batch-job');
+  const {
+    domain,
+    server,
+    count,
+    record_type,
+    ttl,
+    auto_ftp,
+    auto_nginx,
+    nginx_type,
+    prefix,
+    suffix,
+    subdomain_length,
+    duration_days,
+    ftpMaxUploadSize
+  } = ctx;
+
+  await batchJobService.startJob(jobRecord, '开始落库...');
+
+  const results = [];
+  const SshFtpService = require('../services/ssh-ftp');
+  const nginxConfigService = require('../services/nginx-config');
+  const { deployUploadScript, ensureSitePhpAfterDeploy, fixSitePhpSock } = require('../services/deploy-upload-script');
+  const { mapPool } = require('../services/subdomain-lifecycle');
+
+  let sshService = null;
+  if (server) {
+    sshService = new SshFtpService({
+      ip: server.ip,
+      port: server.port,
+      username: server.username,
+      password: decryptSecret(server.password)
+    });
+  }
+
+  // 阶段1：串行落库（保证子域名唯一）
+  const jobs = [];
+  for (let i = 0; i < count; i++) {
       try {
         const subdomain = await generateSubdomain({ prefix, suffix, totalLength: subdomain_length });
         const fullDomain = `${subdomain}.${domain.domain}`;
         const finalValue = server ? server.ip : '';
         const ftpHomeDir = `/www/wwwroot/ftp/${fullDomain}`;
 
-        // 创建子域名记录（包含有效期天数）
         const result = await db.run(
           `INSERT INTO subdomains (domain_id, subdomain, server_id, record_type, record_value, ttl, duration_days, created_at) 
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [domain_id, subdomain, server_id || null, record_type || 'A', finalValue, ttl || 600, duration_days || 31, formatTime()]
+          [domain.id, subdomain, server ? server.id : null, record_type || 'A', finalValue, ttl || 600, duration_days || 31, formatTime()]
         );
 
         const subdomainId = result.lastID;
         let ftpInfo = null;
-
-        // 自动创建FTP账号
         if (auto_ftp !== false && server) {
           const ftpUsername = generateUsername(subdomain, domain.domain);
           const ftpPassword = generatePassword();
           const ftpAuthCode = randomAuthCode();
-          
           await db.run(
             'INSERT INTO ftp_accounts (subdomain_id, username, password, port, home_dir, auth_code, status, sync_status, max_upload_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [subdomainId, ftpUsername, encryptSecret(ftpPassword), 21, ftpHomeDir, ftpAuthCode, 'active', 'pending', ftpMaxUploadSize]
           );
-          
-          ftpInfo = { username: ftpUsername, password: ftpPassword, auth_code: ftpAuthCode, home_dir: ftpHomeDir, max_upload_size: ftpMaxUploadSize };
-
-          // 同步FTP到服务器
-          if (sshService) {
-            try {
-              const ftpResult = await sshService.createFtpUser(ftpUsername, ftpPassword, ftpHomeDir);
-              await db.run(
-                'UPDATE ftp_accounts SET sync_status = ?, sync_message = ? WHERE subdomain_id = ?',
-                [ftpResult.success ? 'synced' : 'error', ftpResult.message, subdomainId]
-              );
-              ftpInfo.sync_status = ftpResult.success ? 'synced' : 'error';
-
-              if (ftpResult.success) {
-                try {
-                  const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
-                  await deployUploadScript(sshService, ftpHomeDir);
-                  await ensureSitePhpAfterDeploy(sshService, fullDomain, server.nginx_path);
-                } catch (deployErr) {
-                  console.error('下发直传脚本失败:', deployErr.message);
-                }
-              }
-            } catch (err) {
-              ftpInfo.sync_status = 'error';
-            }
-          }
+          ftpInfo = {
+            username: ftpUsername,
+            password: ftpPassword,
+            auth_code: ftpAuthCode,
+            home_dir: ftpHomeDir,
+            max_upload_size: ftpMaxUploadSize,
+            sync_status: 'pending'
+          };
         }
 
-        // 自动生成并同步Nginx配置
-        if (auto_nginx !== false && server && sshService) {
-          try {
-            const configType = nginx_type || 'https';
-            const config = nginxConfigService.generateConfig(configType, fullDomain, { 
-              rootPath: ftpHomeDir,
-              mainDomain: domain.domain
-            });
-            await db.run('UPDATE subdomains SET nginx_config = ? WHERE id = ?', [config, subdomainId]);
-
-            const configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
-            try {
-              await nginxConfigService.ensureTrafficLogFormat(sshService);
-            } catch (e) {
-              console.error('下发流量日志格式失败:', e.message);
-            }
-            const escapedConfig = config.replace(/'/g, "'\\''");
-            await sshService.exec(`echo '${escapedConfig}' | sudo tee ${configPath}`);
-            await db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [subdomainId]);
-
-            try {
-              const { fixSitePhpSock } = require('../services/deploy-upload-script');
-              await fixSitePhpSock(sshService, configPath);
-            } catch (e) {
-              console.error('修正 PHP sock 失败:', e.message);
-            }
-          } catch (err) {}
+        let nginxConfigText = null;
+        let configPath = null;
+        if (auto_nginx !== false && server) {
+          const configType = nginx_type || 'https';
+          nginxConfigText = nginxConfigService.generateConfig(configType, fullDomain, {
+            rootPath: ftpHomeDir,
+            mainDomain: domain.domain
+          });
+          configPath = `/www/server/panel/vhost/nginx/${fullDomain}.conf`;
+          await db.run('UPDATE subdomains SET nginx_config = ? WHERE id = ?', [nginxConfigText, subdomainId]);
         }
 
-        // 解析DNS
-        if (domain.access_key && domain.secret_key && finalValue) {
-          try {
-            const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
-            const recordId = await dns.addRecord(domain.domain, subdomain, finalValue, record_type || 'A', ttl || 600);
-            await db.run('UPDATE subdomains SET aliyun_record_id = ?, status = ? WHERE id = ?', [recordId, 'active', subdomainId]);
-          } catch (dnsErr) {
-            await db.run('UPDATE subdomains SET status = ? WHERE id = ?', ['dns_error', subdomainId]);
-          }
-        }
-
-        results.push({
-          subdomain: fullDomain,
-          ftp: ftpInfo,
+        const job = {
+          subdomainId,
+          subdomain,
+          fullDomain,
+          finalValue,
+          ftpHomeDir,
+          ftpInfo,
+          nginxConfigText,
+          configPath,
           success: true
-        });
+        };
+        jobs.push(job);
+        results.push({ subdomain: fullDomain, ftp: ftpInfo, success: true, _job: job });
+        if ((i + 1) % 5 === 0 || i + 1 === count) {
+          await batchJobService.progressJob(jobRecord, {
+            message: `落库中 ${i + 1}/${count}`
+          });
+        }
       } catch (err) {
-        results.push({
-          subdomain: '',
-          error: err.message,
-          success: false
-        });
+        results.push({ subdomain: '', error: err.message, success: false });
+        jobRecord.failed_count += 1;
       }
     }
 
-    // 重载Nginx
-    if (sshService) {
+    await batchJobService.progressJob(jobRecord, {
+      message: `落库完成 ${jobs.length} 条，开始同步服务器...`,
+      failed_count: results.filter((r) => !r.success).length
+    });
+
+    // 阶段2：同服并行 SSH（FTP + 脚本 + 写 Nginx），统一末尾 -t/reload
+    const writtenConfigs = [];
+    let sshDone = 0;
+    if (sshService && jobs.length) {
       try {
-        await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx');
-      } catch (err) {}
+        await nginxConfigService.ensureTrafficLogFormat(sshService);
+      } catch (e) {
+        console.error('下发流量日志格式失败:', e.message);
+      }
+
+      await mapPool(jobs, 3, async (job) => {
+        if (job.ftpInfo) {
+          try {
+            const ftpResult = await sshService.createFtpUser(
+              job.ftpInfo.username,
+              job.ftpInfo.password,
+              job.ftpHomeDir
+            );
+            job.ftpInfo.sync_status = ftpResult.success ? 'synced' : 'error';
+            await db.run(
+              'UPDATE ftp_accounts SET sync_status = ?, sync_message = ? WHERE subdomain_id = ?',
+              [job.ftpInfo.sync_status, ftpResult.message, job.subdomainId]
+            );
+            if (ftpResult.success) {
+              try {
+                await deployUploadScript(sshService, job.ftpHomeDir);
+              } catch (deployErr) {
+                console.error('下发直传脚本失败:', deployErr.message);
+              }
+            }
+          } catch (err) {
+            job.ftpInfo.sync_status = 'error';
+          }
+        }
+
+        if (job.nginxConfigText && job.configPath) {
+          try {
+            const writeResult = await sshService.exec(
+              `printf %s ${shellQuote(job.nginxConfigText)} | sudo tee ${shellQuote(job.configPath)} >/dev/null`
+            );
+            if (writeResult.success) {
+              writtenConfigs.push(job.configPath);
+              try {
+                // 配置写入后再补 PHP（避免 conf 尚不存在）
+                await fixSitePhpSock(sshService, job.configPath, { reload: false });
+              } catch (e) {
+                console.error('修正 PHP sock 失败:', e.message);
+              }
+            }
+          } catch (err) {
+            console.error('写 Nginx 配置失败:', err.message);
+          }
+        } else if (job.ftpInfo?.sync_status === 'synced') {
+          // 未自动写 Nginx 时，仍尝试按域名补齐 PHP
+          try {
+            await ensureSitePhpAfterDeploy(sshService, job.fullDomain, server.nginx_path, { reload: false });
+          } catch (e) {
+            console.error('补齐 PHP 失败:', e.message);
+          }
+        }
+        sshDone += 1;
+        if (sshDone % 3 === 0 || sshDone === jobs.length) {
+          await batchJobService.progressJob(jobRecord, {
+            done: sshDone,
+            message: `服务器同步 ${sshDone}/${jobs.length}`
+          });
+        }
+      });
+
+      // 统一校验；失败则删除本批写入的 conf（回退）并标记未同步
+      if (writtenConfigs.length) {
+        const testResult = await sshService.exec('sudo nginx -t 2>&1');
+        const testOk = testResult.success || (testResult.output || '').includes('successful');
+        if (!testOk) {
+          await mapPool(writtenConfigs, 5, async (p) => {
+            await sshService.exec(`sudo rm -f ${shellQuote(p)}`);
+          });
+          await Promise.all(jobs.map((j) =>
+            db.run('UPDATE subdomains SET nginx_synced = 0 WHERE id = ?', [j.subdomainId])
+          ));
+          console.error('批建 Nginx 测试失败，已回退配置:', testResult.output || '');
+          await batchJobService.progressJob(jobRecord, {
+            message: 'Nginx 测试失败，已回退本批配置'
+          });
+        } else {
+          await sshService.exec('sudo nginx -s reload 2>&1 || sudo systemctl reload nginx 2>&1');
+          await Promise.all(jobs.filter((j) => j.configPath).map((j) =>
+            db.run('UPDATE subdomains SET nginx_synced = 1 WHERE id = ?', [j.subdomainId])
+          ));
+        }
+      }
     }
 
-    res.json({ 
-      total: count,
-      success: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
-      results 
+    // 阶段3：DNS 并行解析
+    await batchJobService.progressJob(jobRecord, { message: '解析 DNS...' });
+    if (domain.access_key && domain.secret_key) {
+      const dns = getDnsService(domain.platform, domain.access_key, domain.secret_key);
+      await mapPool(jobs.filter((j) => j.finalValue), 5, async (job) => {
+        try {
+          const recordId = await dns.addRecord(
+            domain.domain,
+            job.subdomain,
+            job.finalValue,
+            record_type || 'A',
+            ttl || 600
+          );
+          await db.run(
+            'UPDATE subdomains SET aliyun_record_id = ?, status = ? WHERE id = ?',
+            [recordId, 'active', job.subdomainId]
+          );
+        } catch (dnsErr) {
+          await db.run('UPDATE subdomains SET status = ? WHERE id = ?', ['dns_error', job.subdomainId]);
+        }
+      });
+    }
+
+    for (const row of results) {
+      if (row._job) {
+        row.ftp = row._job.ftpInfo;
+        delete row._job;
+      }
+    }
+
+    const successCount = results.filter((r) => r.success).length;
+    const failedCount = results.filter((r) => !r.success).length;
+    jobRecord.results = results;
+    jobRecord.success_count = successCount;
+    jobRecord.failed_count = failedCount;
+    jobRecord.done = count;
+    await batchJobService.finishJob(jobRecord, {
+      status: failedCount > 0 && successCount > 0
+        ? 'completed_with_errors'
+        : (failedCount > 0 && successCount === 0 ? 'error' : 'completed'),
+      message: `完成：成功 ${successCount}，失败 ${failedCount}`
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+}
 
 // 获取子域名列表
 router.get('/subdomains', async (req, res) => {
@@ -692,6 +860,7 @@ router.get('/subdomains/:id/traffic', async (req, res) => {
     if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
 
     const period = req.query.period === '7d' ? '7d' : 'today';
+    const { fetchSiteTraffic, emptyTraffic } = require('../services/site-traffic');
     const sub = await db.get(`
       SELECT s.subdomain, d.domain as main_domain,
              sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
@@ -711,16 +880,11 @@ router.get('/subdomains/:id/traffic', async (req, res) => {
       return res.json({
         id: Number(req.params.id),
         full_domain: fullDomain,
-        requests: 0,
-        bytes: 0,
-        period,
-        accurate: false,
-        error: '未绑定服务器'
+        ...emptyTraffic(period, { error: '未绑定服务器' })
       });
     }
 
     const SshFtpService = require('../services/ssh-ftp');
-    const { fetchSiteTraffic } = require('../services/site-traffic');
     const sshService = new SshFtpService({
       ip: sub.server_ip,
       port: sub.server_port,
@@ -733,6 +897,277 @@ router.get('/subdomains/:id/traffic', async (req, res) => {
       id: Number(req.params.id),
       full_domain: fullDomain,
       ...traffic
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 单站分时流量：按天 / 小时 / 分钟，仅点击统计时调用
+router.get('/subdomains/:id/traffic-series', async (req, res) => {
+  try {
+    if (!(await getAccessibleSubdomain(req, req.params.id))) return notFound(res, 'Subdomain not found');
+
+    const granularity = ['day', 'hour', 'minute'].includes(req.query.granularity)
+      ? req.query.granularity
+      : 'hour';
+    const range = req.query.range || 'today';
+    const { fetchSiteTrafficSeries } = require('../services/site-traffic');
+    const sub = await db.get(`
+      SELECT s.subdomain, d.domain as main_domain,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!sub) {
+      return res.status(404).json({ error: '子域名不存在' });
+    }
+
+    const fullDomain = sub.subdomain === '@' ? sub.main_domain : `${sub.subdomain}.${sub.main_domain}`;
+    const emptyPoints = {
+      id: Number(req.params.id),
+      full_domain: fullDomain,
+      granularity,
+      range,
+      accurate: false,
+      requests: 0,
+      bytes: 0,
+      points: []
+    };
+
+    if (!sub.server_ip) {
+      return res.json({ ...emptyPoints, error: '未绑定服务器' });
+    }
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const sshService = new SshFtpService({
+      ip: sub.server_ip,
+      port: sub.server_port,
+      username: sub.server_user,
+      password: decryptSecret(sub.server_pass)
+    });
+
+    const traffic = await fetchSiteTrafficSeries(sshService, fullDomain, granularity, range);
+    res.json({
+      id: Number(req.params.id),
+      full_domain: fullDomain,
+      ...traffic
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量流量：按服务器并行，同服一次 SSH 扫多域名
+// body: { ids: number[], period?: 'today'|'7d' }
+router.post('/subdomains/traffic', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const period = req.body?.period === '7d' ? '7d' : 'today';
+    const ownedIds = await filterOwnedSubdomainIds(req, ids);
+    if (!ownedIds.length) {
+      return res.json({ period, items: [] });
+    }
+
+    const placeholders = ownedIds.map(() => '?').join(',');
+    const rows = await db.all(`
+      SELECT s.id, s.subdomain, d.domain as main_domain, s.server_id,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
+      FROM subdomains s
+      LEFT JOIN domains d ON s.domain_id = d.id
+      LEFT JOIN servers sv ON s.server_id = sv.id
+      WHERE s.id IN (${placeholders})
+    `, ownedIds);
+
+    const SshFtpService = require('../services/ssh-ftp');
+    const { fetchSitesTraffic, emptyTraffic } = require('../services/site-traffic');
+    const { mapPool } = require('../services/subdomain-lifecycle');
+
+    const byServer = new Map();
+    const unbound = [];
+    for (const row of rows) {
+      const fullDomain = row.subdomain === '@' ? row.main_domain : `${row.subdomain}.${row.main_domain}`;
+      row.full_domain = fullDomain;
+      if (!row.server_ip) {
+        unbound.push(row);
+        continue;
+      }
+      const key = row.server_id || row.server_ip;
+      if (!byServer.has(key)) byServer.set(key, []);
+      byServer.get(key).push(row);
+    }
+
+    const serverGroups = [...byServer.values()];
+    const groupResults = await mapPool(serverGroups, 4, async (group) => {
+      const sample = group[0];
+      const sshService = new SshFtpService({
+        ip: sample.server_ip,
+        port: sample.server_port,
+        username: sample.server_user,
+        password: decryptSecret(sample.server_pass)
+      });
+      try {
+        const trafficMap = await fetchSitesTraffic(
+          sshService,
+          group.map((g) => g.full_domain),
+          period
+        );
+        return group.map((g) => ({
+          id: g.id,
+          full_domain: g.full_domain,
+          ...(trafficMap[g.full_domain] || emptyTraffic(period))
+        }));
+      } catch (err) {
+        return group.map((g) => ({
+          id: g.id,
+          full_domain: g.full_domain,
+          ...emptyTraffic(period, { error: err.message })
+        }));
+      }
+    });
+
+    const items = [
+      ...unbound.map((g) => ({
+        id: g.id,
+        full_domain: g.full_domain,
+        ...emptyTraffic(period, { error: '未绑定服务器' })
+      })),
+      ...groupResults.flat()
+    ];
+
+    res.json({ period, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量改状态：多服并行同步，失败统一回退
+// body: { ids: number[], use_status: 'unused'|'used'|'disabled' }
+router.post('/subdomains/batch-status', async (req, res) => {
+  try {
+    const { ids, use_status } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请选择子域名' });
+    }
+    if (!['unused', 'used', 'disabled'].includes(use_status)) {
+      return res.status(400).json({ error: '无效状态' });
+    }
+
+    const ownedIds = await filterOwnedSubdomainIds(req, ids);
+    if (!ownedIds.length) return notFound(res, 'Subdomain not found');
+
+    const lifecycle = require('../services/subdomain-lifecycle');
+    const result = await lifecycle.batchSetUseStatus(ownedIds, use_status);
+    if (!result.success) {
+      return res.status(500).json({ error: result.message, ...result });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 批量续费/扣时长：DB 并行更新；需恢复启用的走批量状态（失败回退）
+// body: { ids: number[], duration_months: number }
+router.post('/subdomains/batch-renew', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    const durationMonths = Number(req.body?.duration_months);
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: '请选择子域名' });
+    }
+    if (!Number.isInteger(durationMonths) || durationMonths === 0) {
+      return res.status(400).json({ error: '请选择调整时长' });
+    }
+
+    const ownedIds = await filterOwnedSubdomainIds(req, ids);
+    if (!ownedIds.length) return notFound(res, 'Subdomain not found');
+
+    const placeholders = ownedIds.map(() => '?').join(',');
+    const subs = await db.all(`SELECT * FROM subdomains WHERE id IN (${placeholders})`, ownedIds);
+
+    const plans = [];
+    for (const sub of subs) {
+      if (durationMonths < 0 && !sub.expire_at) {
+        plans.push({ id: sub.id, success: false, error: '未设置到期时间，无法扣减' });
+        continue;
+      }
+      let baseDate;
+      if (durationMonths > 0) {
+        baseDate = new Date();
+        if (sub.expire_at && new Date(sub.expire_at) > baseDate) {
+          baseDate = new Date(sub.expire_at);
+        }
+      } else {
+        baseDate = new Date(sub.expire_at);
+        if (Number.isNaN(baseDate.getTime())) {
+          plans.push({ id: sub.id, success: false, error: '到期时间无效' });
+          continue;
+        }
+      }
+      baseDate.setMonth(baseDate.getMonth() + durationMonths);
+      const expireStr = baseDate.toISOString().slice(0, 19).replace('T', ' ');
+      plans.push({
+        id: sub.id,
+        success: true,
+        expire_at: expireStr,
+        was_disabled: sub.use_status === 'disabled',
+        prev_expire_at: sub.expire_at,
+        prev_use_status: sub.use_status
+      });
+    }
+
+    const okPlans = plans.filter((p) => p.success);
+    if (!okPlans.length) {
+      return res.status(400).json({
+        success: false,
+        message: '全部失败',
+        results: plans
+      });
+    }
+
+    // 先改到期时间
+    await Promise.all(okPlans.map((p) =>
+      db.run('UPDATE subdomains SET expire_at = ? WHERE id = ?', [p.expire_at, p.id])
+    ));
+
+    const needEnable = durationMonths > 0
+      ? okPlans.filter((p) => p.was_disabled).map((p) => p.id)
+      : [];
+
+    let enableResult = null;
+    if (needEnable.length) {
+      const lifecycle = require('../services/subdomain-lifecycle');
+      enableResult = await lifecycle.batchSetUseStatus(needEnable, 'unused');
+      if (!enableResult.success) {
+        // 统一回退到期时间
+        await Promise.all(okPlans.map((p) =>
+          db.run('UPDATE subdomains SET expire_at = ? WHERE id = ?', [p.prev_expire_at, p.id])
+        ));
+        const msg = `续费后启用失败，已回退到期时间：${enableResult.message}`;
+        return res.status(500).json({
+          success: false,
+          rolled_back: true,
+          error: msg,
+          message: msg,
+          enable: enableResult,
+          results: plans
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: durationMonths > 0 ? '批量续费成功' : '批量扣减成功',
+      total: ownedIds.length,
+      success_count: okPlans.length,
+      failed_count: plans.length - okPlans.length,
+      enabled_count: needEnable.length,
+      enable: enableResult,
+      results: plans
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -754,14 +1189,16 @@ router.put('/subdomains/:id/status', async (req, res) => {
     const lifecycle = require('../services/subdomain-lifecycle');
     let resultMessage = 'Status updated';
 
-    // 停用：禁用 Nginx，保留 DNS，即时生效
+    // 停用：禁用 Nginx，保留 DNS，即时生效（失败不改库）
     if (use_status === 'disabled') {
       const result = await lifecycle.disableSubdomain(req.params.id);
+      if (!result.success) return res.status(500).json({ error: result.message, rolled_back: true });
       resultMessage = result.message;
     }
-    // 从停用恢复：恢复 Nginx，DNS 原样保留
+    // 从停用恢复：恢复 Nginx，DNS 原样保留（失败不改库）
     else if ((use_status === 'unused' || use_status === 'used') && sub.use_status === 'disabled') {
       const result = await lifecycle.enableSubdomain(req.params.id, use_status);
+      if (!result.success) return res.status(500).json({ error: result.message, rolled_back: true });
       resultMessage = result.message;
 
       // 已过期仍手动启用时，临时顺延 7 天，避免小时任务立刻再次停用
@@ -865,12 +1302,12 @@ router.post('/subdomains/check-expire', async (req, res) => {
 
     const lifecycle = require('../services/subdomain-lifecycle');
     let disabled = 0;
-    for (const sub of expiredSubs) {
-      try {
-        await lifecycle.disableSubdomain(sub.id);
-        disabled++;
-      } catch (e) {
-        console.error(`[Expire Check] 停用子域名 ${sub.id} 失败:`, e.message);
+    if (expiredSubs.length) {
+      const result = await lifecycle.batchSetUseStatus(expiredSubs.map((s) => s.id), 'disabled');
+      if (result.success) {
+        disabled = result.total || expiredSubs.length;
+      } else {
+        console.error('[Expire Check] 批量停用失败:', result.message);
       }
     }
 
@@ -880,15 +1317,16 @@ router.post('/subdomains/check-expire', async (req, res) => {
   }
 });
 
-// 批量给所有现有子域名补发 PHP 直传脚本（按服务器分组复用连接）
+// 批量给所有现有子域名补发 PHP 直传脚本（异步，与 batch-deploy-upload-script 同队列）
 router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
   try {
     const userClause = req.user.role === 'admin' ? '' : ' AND d.user_id = ?';
     const userParams = req.user.role === 'admin' ? [] : [req.user.id];
 
     const rows = await db.all(`
-      SELECT s.id as subdomain_id, f.home_dir,
-             sv.id as server_id, sv.ip, sv.port, sv.username, sv.password, sv.nginx_path,
+      SELECT s.id, s.subdomain, d.domain as main_domain, f.home_dir,
+             sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
+             sv.nginx_path,
              CASE WHEN s.subdomain = '@' THEN d.domain ELSE ${db.concat('s.subdomain', `'.'`, 'd.domain')} END as full_domain
       FROM subdomains s
       JOIN ftp_accounts f ON f.subdomain_id = s.id
@@ -902,48 +1340,34 @@ router.post('/subdomains/deploy-upload-script-all', async (req, res) => {
       return res.json({ total: 0, success: 0, failed: 0, results: [], message: '没有可下发的子域名' });
     }
 
-    const SshFtpService = require('../services/ssh-ftp');
-    const { deployUploadScript, ensureSitePhpAfterDeploy } = require('../services/deploy-upload-script');
+    const batchJobService = require('../services/batch-job');
+    const jobRecord = await batchJobService.createJob({
+      userId: req.user.id,
+      jobType: 'batch-deploy-script',
+      total: rows.length,
+      message: '任务已创建，等待执行',
+      payload: { scope: 'all' }
+    });
 
-    // 按服务器分组，复用同一个 SSH 连接
-    const byServer = new Map();
-    for (const row of rows) {
-      if (!byServer.has(row.server_id)) byServer.set(row.server_id, []);
-      byServer.get(row.server_id).push(row);
-    }
+    res.json({
+      async: true,
+      job_id: jobRecord.job_id,
+      ...batchJobService.toPublic(jobRecord)
+    });
 
-    let success = 0;
-    let failed = 0;
-    const results = [];
-
-    for (const [, items] of byServer) {
-      const first = items[0];
-      const sshService = new SshFtpService({
-        ip: first.ip,
-        port: first.port,
-        username: first.username,
-        password: decryptSecret(first.password)
-      });
-
-      for (const item of items) {
+    setImmediate(() => {
+      runBatchDeployScriptJob(jobRecord, rows).catch(async (err) => {
+        console.error('[deploy-upload-script-all] 任务失败:', err);
         try {
-          const r = await deployUploadScript(sshService, item.home_dir);
-          if (r.success) {
-            const phpFix = await ensureSitePhpAfterDeploy(sshService, item.full_domain, item.nginx_path);
-            success++;
-            results.push({ domain: item.full_domain, success: true, php_fix: phpFix.message });
-          } else {
-            failed++;
-            results.push({ domain: item.full_domain, success: false, error: r.message });
-          }
+          await batchJobService.finishJob(jobRecord, {
+            status: 'error',
+            message: err.message || '批量补发失败'
+          });
         } catch (e) {
-          failed++;
-          results.push({ domain: item.full_domain, success: false, error: e.message });
+          console.error('[deploy-upload-script-all] 更新失败状态出错:', e.message);
         }
-      }
-    }
-
-    res.json({ total: rows.length, success, failed, results });
+      });
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1130,12 +1554,14 @@ router.get('/subdomains/:id/check-direct-upload', async (req, res) => {
   }
 });
 
-// 批量为现有子域名补发 PHP 直传脚本（给所有绑定了服务器+FTP的子域名）
+// 批量为现有子域名补发 PHP 直传脚本（异步任务）
 router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
   try {
     const { ids } = req.body || {};
+    const ownedIds = Array.isArray(ids) && ids.length > 0
+      ? await filterOwnedSubdomainIds(req, ids)
+      : null;
 
-    // 指定 ids 则只处理这些，否则处理全部（管理员全部，普通用户自己的）
     let sql = `
       SELECT s.id, s.subdomain, d.domain as main_domain,
              sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass,
@@ -1147,11 +1573,13 @@ router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
       WHERE sv.ip IS NOT NULL AND f.home_dir IS NOT NULL
     `;
     const params = [];
-    if (Array.isArray(ids) && ids.length > 0) {
-      sql += ` AND s.id IN (${ids.map(() => '?').join(',')})`;
-      params.push(...ids);
-    }
-    if (req.user.role !== 'admin') {
+    if (ownedIds) {
+      if (ownedIds.length === 0) {
+        return res.json({ total: 0, success: 0, failed: 0, message: '没有可下发的子域名' });
+      }
+      sql += ` AND s.id IN (${ownedIds.map(() => '?').join(',')})`;
+      params.push(...ownedIds);
+    } else if (req.user.role !== 'admin') {
       sql += ' AND d.user_id = ?';
       params.push(req.user.id);
     }
@@ -1161,55 +1589,121 @@ router.post('/subdomains/batch-deploy-upload-script', async (req, res) => {
       return res.json({ total: 0, success: 0, failed: 0, message: '没有可下发的子域名' });
     }
 
-    const SshFtpService = require('../services/ssh-ftp');
-    const { deployUploadScript, fixSitePhpSock } = require('../services/deploy-upload-script');
+    const batchJobService = require('../services/batch-job');
+    const jobRecord = await batchJobService.createJob({
+      userId: req.user.id,
+      jobType: 'batch-deploy-script',
+      total: subs.length,
+      message: '任务已创建，等待执行',
+      payload: { ids: ownedIds || [] }
+    });
 
-    // 按服务器复用 SSH 连接，减少连接开销
-    const byServer = {};
-    for (const s of subs) {
-      const key = `${s.server_ip}:${s.server_port}`;
-      if (!byServer[key]) byServer[key] = { server: s, items: [] };
-      byServer[key].items.push(s);
-    }
+    res.json({
+      async: true,
+      job_id: jobRecord.job_id,
+      ...batchJobService.toPublic(jobRecord)
+    });
 
-    let success = 0;
-    let failed = 0;
-    const results = [];
-
-    for (const key of Object.keys(byServer)) {
-      const { server, items } = byServer[key];
-      const sshService = new SshFtpService({
-        ip: server.server_ip,
-        port: server.server_port,
-        username: server.server_user,
-        password: decryptSecret(server.server_pass)
-      });
-      const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
-      for (const item of items) {
-        const fullDomain = item.subdomain === '@' ? item.main_domain : `${item.subdomain}.${item.main_domain}`;
+    setImmediate(() => {
+      runBatchDeployScriptJob(jobRecord, subs).catch(async (err) => {
+        console.error('[batch-deploy-script] 任务失败:', err);
         try {
-          const r = await deployUploadScript(sshService, item.home_dir);
-          if (r.success) {
-            // 顺带修正 PHP sock，解决 502
-            const phpFix = await fixSitePhpSock(sshService, `${nginxPath}/${fullDomain}.conf`);
-            success++;
-            results.push({ id: item.id, domain: fullDomain, success: true, php_fix: phpFix.message });
-          } else {
-            failed++;
-            results.push({ id: item.id, domain: fullDomain, success: false, error: r.message });
-          }
+          await batchJobService.finishJob(jobRecord, {
+            status: 'error',
+            message: err.message || '批量补发失败'
+          });
         } catch (e) {
-          failed++;
-          results.push({ id: item.id, domain: fullDomain, success: false, error: e.message });
+          console.error('[batch-deploy-script] 更新失败状态出错:', e.message);
         }
-      }
-    }
-
-    res.json({ total: subs.length, success, failed, results });
+      });
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+async function runBatchDeployScriptJob(jobRecord, subs) {
+  const batchJobService = require('../services/batch-job');
+  const SshFtpService = require('../services/ssh-ftp');
+  const { deployUploadScript, fixSitePhpSock } = require('../services/deploy-upload-script');
+
+  await batchJobService.startJob(jobRecord, '开始补发直传脚本...');
+
+  const byServer = {};
+  for (const s of subs) {
+    const key = `${s.server_ip}:${s.server_port}`;
+    if (!byServer[key]) byServer[key] = { server: s, items: [] };
+    byServer[key].items.push(s);
+  }
+
+  let success = 0;
+  let failed = 0;
+  let done = 0;
+  const results = [];
+  const serverKeys = Object.keys(byServer);
+  let serverIndex = 0;
+
+  for (const key of serverKeys) {
+    serverIndex += 1;
+    const { server, items } = byServer[key];
+    await batchJobService.progressJob(jobRecord, {
+      message: `服务器 ${serverIndex}/${serverKeys.length}（${server.server_ip}）同步中...`
+    });
+
+    const sshService = new SshFtpService({
+      ip: server.server_ip,
+      port: server.server_port,
+      username: server.server_user,
+      password: decryptSecret(server.server_pass)
+    });
+    const nginxPath = (server.nginx_path || '/www/server/panel/vhost/nginx').replace(/\/$/, '');
+    let needReload = false;
+
+    for (const item of items) {
+      const fullDomain = item.full_domain
+        || (item.subdomain === '@' ? item.main_domain : `${item.subdomain}.${item.main_domain}`);
+      try {
+        const r = await deployUploadScript(sshService, item.home_dir);
+        if (r.success) {
+          const phpFix = await fixSitePhpSock(sshService, `${nginxPath}/${fullDomain}.conf`, { reload: false });
+          if (phpFix.success) needReload = true;
+          success += 1;
+          results.push({ id: item.id, domain: fullDomain, success: true, php_fix: phpFix.message });
+        } else {
+          failed += 1;
+          results.push({ id: item.id, domain: fullDomain, success: false, error: r.message });
+        }
+      } catch (e) {
+        failed += 1;
+        results.push({ id: item.id, domain: fullDomain, success: false, error: e.message });
+      }
+      done += 1;
+      if (done % 3 === 0 || done === subs.length) {
+        await batchJobService.progressJob(jobRecord, {
+          done,
+          success_count: success,
+          failed_count: failed,
+          message: `补发进度 ${done}/${subs.length}`
+        });
+      }
+    }
+
+    if (needReload) {
+      await sshService.exec('sudo nginx -t 2>&1 && (sudo nginx -s reload 2>&1 || sudo systemctl reload nginx 2>&1)');
+    }
+  }
+
+  jobRecord.results = results;
+  jobRecord.success_count = success;
+  jobRecord.failed_count = failed;
+  jobRecord.done = subs.length;
+  await batchJobService.finishJob(jobRecord, {
+    status: failed > 0 && success > 0
+      ? 'completed_with_errors'
+      : (failed > 0 && success === 0 ? 'error' : 'completed'),
+    message: `补发完成：成功 ${success}，失败 ${failed}`
+  });
+}
 
 // 添加子域名并解析DNS
 router.post('/subdomains', async (req, res) => {
@@ -1574,112 +2068,156 @@ router.post('/subdomains/batch-delete', async (req, res) => {
       return notFound(res, 'Subdomain not found');
     }
 
-    let success = 0;
-    let failed = 0;
-    const results = [];
-
-    for (const id of ownedIds) {
-      try {
-        const result = await deleteSubdomainWithResources(id, { delete_ftp, delete_files });
-        success++;
-        results.push({ id, success: true, ...result });
-      } catch (e) {
-        failed++;
-        results.push({ id, success: false, error: e.message });
-      }
-    }
-
-    res.json({ total: ids.length, success, failed, results });
+    const result = await batchDeleteSubdomains(ownedIds, { delete_ftp, delete_files });
+    res.json({ total: ids.length, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 删除子域名及其资源的核心逻辑（供单个/批量复用）
-async function deleteSubdomainWithResources(subdomainId, options = {}) {
-  const { delete_ftp = false, delete_files = false } = options;
-  const cleanup = { dns: false, ftp: false, files: false };
-  const warnings = [];
+async function deleteDnsForSub(sub) {
+  if (!sub.aliyun_record_id || !sub.access_key || !sub.secret_key) {
+    return { ok: false, skipped: true };
+  }
+  const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
+  if (sub.platform === 'tencent') {
+    await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
+  } else {
+    await dns.deleteRecord(sub.aliyun_record_id);
+  }
+  return { ok: true };
+}
 
-  // 获取子域名 + 域名DNS配置 + 服务器信息
-  const sub = await db.get(`
+async function cleanupServerResources(sshService, ftp, { delete_ftp, delete_files }) {
+  const cleanup = { ftp: false, files: false };
+  const warnings = [];
+  if (delete_ftp && ftp?.username) {
+    try {
+      await sshService.deleteFtpUser(ftp.username);
+      cleanup.ftp = true;
+    } catch (e) {
+      warnings.push(`FTP用户删除失败: ${e.message}`);
+    }
+  }
+  if (delete_files && ftp?.home_dir) {
+    const homeDir = String(ftp.home_dir).trim();
+    const isSafePath = homeDir.startsWith('/www/wwwroot/') && homeDir.length > '/www/wwwroot/'.length;
+    if (!isSafePath) {
+      warnings.push(`网站文件未删除: 目录路径不安全 (${homeDir})`);
+    } else {
+      try {
+        const rmResult = await sshService.exec(`rm -rf ${shellQuote(homeDir)}`);
+        if (rmResult.success) cleanup.files = true;
+        else warnings.push(`网站文件删除失败: ${rmResult.output || '未知错误'}`);
+      } catch (e) {
+        warnings.push(`网站文件删除失败: ${e.message}`);
+      }
+    }
+  }
+  return { cleanup, warnings };
+}
+
+/** 批量删除：DNS 并行 + 按服复用 SSH 清理 + 并行删库 */
+async function batchDeleteSubdomains(ownedIds, options = {}) {
+  const { delete_ftp = false, delete_files = false } = options;
+  const { mapPool } = require('../services/subdomain-lifecycle');
+  const SshFtpService = require('../services/ssh-ftp');
+
+  const placeholders = ownedIds.map(() => '?').join(',');
+  const subs = await db.all(`
     SELECT s.*, d.domain as main_domain,
            ac.access_key, ac.secret_key, ac.platform,
-           sv.ip as server_ip, sv.port as server_port, sv.username as server_user, sv.password as server_pass
+           sv.id as server_db_id, sv.ip as server_ip, sv.port as server_port,
+           sv.username as server_user, sv.password as server_pass
     FROM subdomains s
     LEFT JOIN domains d ON s.domain_id = d.id
     LEFT JOIN aliyun_config ac ON d.aliyun_config_id = ac.id
     LEFT JOIN servers sv ON s.server_id = sv.id
-    WHERE s.id = ?
-  `, [subdomainId]);
+    WHERE s.id IN (${placeholders})
+  `, ownedIds);
 
-  if (!sub) {
-    throw new Error('子域名不存在');
-  }
+  const ftps = await db.all(
+    `SELECT subdomain_id, username, home_dir FROM ftp_accounts WHERE subdomain_id IN (${placeholders})`,
+    ownedIds
+  );
+  const ftpBySub = new Map(ftps.map((f) => [f.subdomain_id, f]));
 
-  // 获取 FTP 账号信息
-  const ftp = await db.get('SELECT username, home_dir FROM ftp_accounts WHERE subdomain_id = ?', [subdomainId]);
+  const results = [];
+  const byId = new Map(subs.map((s) => [s.id, s]));
 
-  // 1. 删除 DNS 解析记录（必做）
-  if (sub.aliyun_record_id && sub.access_key && sub.secret_key) {
+  // 1) DNS 并行
+  await mapPool(subs, 5, async (sub) => {
+    const warnings = [];
+    let dnsOk = false;
     try {
-      const dns = getDnsService(sub.platform, sub.access_key, sub.secret_key);
-      if (sub.platform === 'tencent') {
-        await dns.deleteRecord(sub.main_domain, sub.aliyun_record_id);
-      } else {
-        await dns.deleteRecord(sub.aliyun_record_id);
-      }
-      cleanup.dns = true;
+      const r = await deleteDnsForSub(sub);
+      dnsOk = !!r.ok;
+      if (r.skipped) { /* no dns */ }
     } catch (e) {
       warnings.push(`DNS记录删除失败: ${e.message}`);
     }
-  }
-
-  // 2. 可选：删除服务器上的 FTP 用户 / 网站文件
-  if ((delete_ftp || delete_files) && sub.server_ip) {
-    const SshFtpService = require('../services/ssh-ftp');
-    const sshService = new SshFtpService({
-      ip: sub.server_ip,
-      port: sub.server_port,
-      username: sub.server_user,
-      password: decryptSecret(sub.server_pass)
+    results.push({
+      id: sub.id,
+      success: true,
+      cleanup: { dns: dnsOk, ftp: false, files: false },
+      warnings
     });
+  });
 
-    if (delete_ftp && ftp?.username) {
-      try {
-        await sshService.deleteFtpUser(ftp.username);
-        cleanup.ftp = true;
-      } catch (e) {
-        warnings.push(`FTP用户删除失败: ${e.message}`);
-      }
+  // 2) 按服清理 FTP/文件
+  if (delete_ftp || delete_files) {
+    const byServer = new Map();
+    for (const sub of subs) {
+      if (!sub.server_ip) continue;
+      const key = `${sub.server_ip}:${sub.server_port || 22}`;
+      if (!byServer.has(key)) byServer.set(key, []);
+      byServer.get(key).push(sub);
     }
 
-    if (delete_files && ftp?.home_dir) {
-      // 安全校验：只允许删除预期的网站目录，避免误删系统目录
-      const homeDir = String(ftp.home_dir).trim();
-      const isSafePath = homeDir.startsWith('/www/wwwroot/') && homeDir.length > '/www/wwwroot/'.length;
-      if (!isSafePath) {
-        warnings.push(`网站文件未删除: 目录路径不安全 (${homeDir})`);
-      } else {
-        try {
-          const rmResult = await sshService.exec(`rm -rf ${shellQuote(homeDir)}`);
-          if (rmResult.success) {
-            cleanup.files = true;
-          } else {
-            warnings.push(`网站文件删除失败: ${rmResult.output || '未知错误'}`);
-          }
-        } catch (e) {
-          warnings.push(`网站文件删除失败: ${e.message}`);
+    await mapPool([...byServer.values()], 3, async (group) => {
+      const sample = group[0];
+      const sshService = new SshFtpService({
+        ip: sample.server_ip,
+        port: sample.server_port,
+        username: sample.server_user,
+        password: decryptSecret(sample.server_pass)
+      });
+      await mapPool(group, 3, async (sub) => {
+        const row = results.find((r) => r.id === sub.id);
+        const ftp = ftpBySub.get(sub.id);
+        const cleaned = await cleanupServerResources(sshService, ftp, { delete_ftp, delete_files });
+        if (row) {
+          row.cleanup.ftp = cleaned.cleanup.ftp;
+          row.cleanup.files = cleaned.cleanup.files;
+          row.warnings.push(...cleaned.warnings);
         }
-      }
-    }
+      });
+    });
   }
 
-  // 3. 删除数据库记录（必做）
-  await db.run('DELETE FROM ftp_accounts WHERE subdomain_id = ?', [subdomainId]);
-  await db.run('DELETE FROM subdomains WHERE id = ?', [subdomainId]);
+  // 3) 并行删库
+  await Promise.all(ownedIds.map(async (id) => {
+    if (!byId.has(id)) {
+      results.push({ id, success: false, error: '子域名不存在' });
+      return;
+    }
+    await db.run('DELETE FROM ftp_accounts WHERE subdomain_id = ?', [id]);
+    await db.run('DELETE FROM subdomains WHERE id = ?', [id]);
+  }));
 
-  return { cleanup, warnings };
+  const success = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success).length;
+  return { success, failed, results };
+}
+
+// 删除子域名及其资源的核心逻辑（供单个删除复用）
+async function deleteSubdomainWithResources(subdomainId, options = {}) {
+  const batch = await batchDeleteSubdomains([subdomainId], options);
+  const row = batch.results[0];
+  if (!row || !row.success) {
+    throw new Error(row?.error || '子域名不存在');
+  }
+  return { cleanup: row.cleanup, warnings: row.warnings };
 }
 
 // ========== DNS平台配置（多个厂商） ==========

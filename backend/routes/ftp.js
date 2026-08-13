@@ -105,7 +105,7 @@ router.get('/', async (req, res) => {
       }
       decryptFtpSecrets(acc);
       acc.auth_code_weak = isLegacyAuthCode(acc);
-      acc.used_size = null;
+      acc.used_size = acc.used_size == null ? null : Number(acc.used_size);
     }
     
     res.json({ 
@@ -157,12 +157,23 @@ router.get('/:id/usage', async (req, res) => {
       });
 
       const result = await sshService.exec(`du -sb ${shellQuote(ftp.home_dir)} 2>/dev/null | cut -f1`, 15000);
-      if (result.success && result.output) {
-        usedSize = parseInt(result.output.trim(), 10) || 0;
+      if (!result.success) {
+        return res.status(500).json({ error: result.output || '统计已使用空间失败' });
       }
+      usedSize = parseInt(String(result.output || '').trim(), 10) || 0;
     }
 
-    res.json({ id: ftp.id, used_size: usedSize });
+    await db.run(
+      'UPDATE ftp_accounts SET used_size = ?, used_size_at = NOW() WHERE id = ?',
+      [usedSize, ftp.id]
+    );
+    const updated = await db.get('SELECT used_size_at FROM ftp_accounts WHERE id = ?', [ftp.id]);
+
+    res.json({
+      id: ftp.id,
+      used_size: usedSize,
+      used_size_at: updated?.used_size_at || new Date()
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

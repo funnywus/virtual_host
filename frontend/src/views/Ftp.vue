@@ -39,13 +39,15 @@
           <el-tag v-if="row.auth_code_weak" type="danger" size="small" style="margin-left:4px">弱码</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="password" label="密码">
+      <el-table-column prop="password" label="密码" min-width="200">
         <template #default="{ row }">
-          <span>{{ showPassword[row.id] ? row.password : '••••••••' }}</span>
-          <el-icon class="copy-btn" @click="showPassword[row.id] = !showPassword[row.id]" style="margin-left:5px">
-            <View v-if="!showPassword[row.id]" /><Hide v-else />
-          </el-icon>
-          <el-icon class="copy-btn" @click="copyText(row.password)"><DocumentCopy /></el-icon>
+          <div class="password-cell">
+            <span class="password-text">{{ showPassword[row.id] ? row.password : '••••••••' }}</span>
+            <el-icon class="copy-btn" @click="showPassword[row.id] = !showPassword[row.id]">
+              <View v-if="!showPassword[row.id]" /><Hide v-else />
+            </el-icon>
+            <el-icon class="copy-btn" @click="copyText(row.password)"><DocumentCopy /></el-icon>
+          </div>
         </template>
       </el-table-column>
       <el-table-column prop="home_dir" label="目录" width="150">
@@ -58,21 +60,50 @@
       <el-table-column prop="max_upload_size" label="空间限制" width="100">
         <template #default="{ row }"><el-tag type="warning" size="small">{{ formatUploadSize(row.max_upload_size) }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="已使用" width="120">
+      <el-table-column width="160">
+        <template #header>
+          <span>已使用</span>
+          <el-tooltip content="刷新本页已使用空间" placement="top">
+            <el-button
+              link
+              size="small"
+              :loading="usageRefreshing"
+              style="margin-left:2px;padding:0 4px;vertical-align:middle"
+              @click.stop="loadUsageForCurrentPage"
+            >
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </template>
         <template #default="{ row }">
-          <div style="display:flex;flex-direction:column;gap:4px">
-            <el-tag v-if="row.used_size === null || row.usageLoading" type="info" size="small">
-              统计中
-            </el-tag>
-            <el-tag v-else :type="getUsageType(row.used_size, row.max_upload_size)" size="small">
-              {{ formatUploadSize(row.used_size) }}
-            </el-tag>
-            <el-progress 
-              :percentage="getUsagePercentage(row.used_size, row.max_upload_size)" 
+          <div class="usage-cell">
+            <div class="usage-row">
+              <el-tag v-if="row.usageLoading" type="info" size="small">统计中</el-tag>
+              <el-tag v-else-if="hasRecordedUsage(row)" :type="getUsageType(row.used_size, row.max_upload_size)" size="small">
+                {{ formatUsedSize(row.used_size) }}
+              </el-tag>
+              <span v-else class="usage-empty">未统计</span>
+              <el-tooltip content="刷新并记录当前已使用空间" placement="top">
+                <el-button
+                  link
+                  size="small"
+                  class="usage-refresh"
+                  :loading="row.usageLoading"
+                  :disabled="usageRefreshing"
+                  @click.stop="refreshUsage(row)"
+                >
+                  <el-icon><Refresh /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+            <el-progress
+              v-if="hasRecordedUsage(row) && !row.usageLoading"
+              :percentage="getUsagePercentage(row.used_size, row.max_upload_size)"
               :stroke-width="4"
               :show-text="false"
               :color="getUsageColor(row.used_size, row.max_upload_size)"
             />
+            <span v-if="row.used_size_at && !row.usageLoading" class="usage-time">{{ formatUsageTime(row.used_size_at) }}</span>
           </div>
         </template>
       </el-table-column>
@@ -163,6 +194,7 @@ const availableSubdomains = ref([])
 const searchKeyword = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
+const usageRefreshing = ref(false)
 const form = reactive({ id: null, subdomain_id: '', username: '', password: '', home_dir: '', max_upload_size: 524288000, upload_size_value: 500, upload_size_unit: 'MB' })
 
 // 计算实际字节数
@@ -200,7 +232,6 @@ async function loadData() {
   loading.value = true
   try {
     await dataStore.loadFtpAccounts(currentPage.value, pageSize.value, searchKeyword.value.trim())
-    loadUsageForCurrentPage()
   } finally {
     loading.value = false
   }
@@ -211,28 +242,44 @@ function onSearch() {
   loadData()
 }
 
+function hasRecordedUsage(row) {
+  return row.used_size !== null && row.used_size !== undefined && row.used_size !== ''
+}
+
+async function refreshUsage(account) {
+  if (!account || account.usageLoading) return
+  account.usageLoading = true
+  try {
+    const res = await api.get(`/ftp/${account.id}/usage`)
+    account.used_size = res.used_size ?? 0
+    account.used_size_at = res.used_size_at
+  } catch {
+    // 错误已由 API 拦截器提示，保留上次记录值
+  } finally {
+    account.usageLoading = false
+  }
+}
+
 async function loadUsageForCurrentPage() {
   const accounts = [...dataStore.ftpAccounts]
-  const concurrency = 3
-  let cursor = 0
+  if (!accounts.length) return
+  usageRefreshing.value = true
+  try {
+    const concurrency = 3
+    let cursor = 0
 
-  async function worker() {
-    while (cursor < accounts.length) {
-      const account = accounts[cursor]
-      cursor += 1
-      account.usageLoading = true
-      try {
-        const res = await api.get(`/ftp/${account.id}/usage`)
-        account.used_size = res.used_size || 0
-      } catch (err) {
-        account.used_size = 0
-      } finally {
-        account.usageLoading = false
+    async function worker() {
+      while (cursor < accounts.length) {
+        const account = accounts[cursor]
+        cursor += 1
+        await refreshUsage(account)
       }
     }
-  }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, accounts.length) }, worker))
+    await Promise.all(Array.from({ length: Math.min(concurrency, accounts.length) }, worker))
+  } finally {
+    usageRefreshing.value = false
+  }
 }
 
 function onPageChange(page) {
@@ -325,11 +372,28 @@ function copyUploadLink(row) {
   ElMessage.success('上传链接已复制')
 }
 
-// 计算使用百分比
+function formatUsedSize(bytes) {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n < 0) return '-'
+  if (n === 0) return '0B'
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`
+  if (n < 1024 * 1024 * 1024) return `${Math.round(n / 1024 / 1024)}MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)}GB`
+}
+
+function formatUsageTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 function getUsagePercentage(used, max) {
-  if (used === null || used === undefined) return 0
+  if (used === null || used === undefined || used === '') return 0
   if (!max || max === 0) return 0
-  const percentage = (used / max) * 100
+  const percentage = (Number(used) / max) * 100
   return Math.min(Math.round(percentage), 100)
 }
 
@@ -375,6 +439,27 @@ function getUsageColor(used, max) {
   font-weight: 600;
 }
 
+.password-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.password-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.password-cell .copy-btn {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
 .copy-btn {
   cursor: pointer;
   color: #409eff;
@@ -401,6 +486,33 @@ function getUsageColor(used, max) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.usage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.usage-empty {
+  font-size: 12px;
+  color: #909399;
+}
+
+.usage-refresh {
+  padding: 0 4px;
+}
+
+.usage-time {
+  font-size: 11px;
+  color: #c0c4cc;
+  line-height: 1;
 }
 
 :deep(.el-table) {

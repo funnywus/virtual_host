@@ -78,10 +78,12 @@
 
 ## DNS 记录管理
 
-针对主域名可单独管理 DNS 记录：
+针对主域名可单独管理 DNS 记录，入口为侧边栏 **DNS记录** 页面，也可从 **域名管理** 列表点击「DNS记录」跳转：
 
 - `GET /api/dns/domains/:id/dns-records` — 列表
 - `POST /api/dns/domains/:id/dns-records` — 新增
+- `PUT /api/dns/domains/:id/dns-records/:recordId` — 修改
+- `PUT /api/dns/domains/:id/dns-records/:recordId/status` — 启用/停用
 - `DELETE /api/dns/domains/:id/dns-records/:recordId` — 删除
 
 ## 到期自动处理

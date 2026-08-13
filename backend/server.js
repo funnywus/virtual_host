@@ -144,17 +144,12 @@ async function checkExpiredSubdomains() {
     }
 
     const lifecycle = require('./services/subdomain-lifecycle');
-
-    for (const sub of expiredSubs) {
-      try {
-        const result = await lifecycle.disableSubdomain(sub.id);
-        console.log(`[Expire Check] 已停用 ${sub.subdomain}.${sub.main_domain}: ${result.message}`);
-      } catch (err) {
-        console.error(`[Expire Check] 停用 ${sub.subdomain}.${sub.main_domain} 失败:`, err.message);
-      }
+    const result = await lifecycle.batchSetUseStatus(expiredSubs.map((s) => s.id), 'disabled');
+    if (result.success) {
+      console.log(`[Expire Check] 批量停用 ${result.total} 个过期子域名（并行同步，DNS 未改动）`);
+    } else {
+      console.error(`[Expire Check] 批量停用失败（已回退）: ${result.message}`);
     }
-
-    console.log(`[Expire Check] 已处理 ${expiredSubs.length} 个过期子域名（Nginx 禁用，DNS 未改动）`);
   } catch (err) {
     console.error('[Expire Check] 检查失败:', err.message);
   }

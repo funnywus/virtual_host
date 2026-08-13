@@ -4,7 +4,7 @@
 
     <header class="settings-hero">
       <div>
-        <p class="eyebrow">Control Center</p>
+        <p class="eyebrow">运维中心</p>
         <h1>系统设置</h1>
         <p class="hero-desc">证书自动续期、运维检测与系统维护集中管理</p>
       </div>
@@ -18,14 +18,18 @@
     </header>
 
     <div class="settings-shell">
-      <nav class="settings-nav">
+      <nav class="settings-nav" role="tablist" aria-label="系统设置分类" @keydown="onNavKeydown">
         <button
           v-for="tab in tabs"
           :key="tab.name"
           type="button"
+          role="tab"
           class="nav-item"
           :class="{ active: activeTab === tab.name }"
-          @click="activeTab = tab.name"
+          :aria-selected="activeTab === tab.name"
+          :aria-controls="`settings-panel-${tab.name}`"
+          :tabindex="activeTab === tab.name ? 0 : -1"
+          @click="goTab(tab.name)"
         >
           <span class="nav-label">{{ tab.label }}</span>
           <span class="nav-hint">{{ tab.hint }}</span>
@@ -34,7 +38,12 @@
 
       <main class="settings-main">
         <!-- 证书续期 -->
-        <section v-show="activeTab === 'ssl'" class="panel">
+        <section
+          v-show="activeTab === 'ssl'"
+          id="settings-panel-ssl"
+          class="panel"
+          role="tabpanel"
+        >
           <div class="auto-renew-card">
             <div class="auto-renew-main">
               <div class="auto-renew-title-row">
@@ -81,7 +90,7 @@
             </div>
             <div class="auto-renew-actions">
               <el-button type="primary" :loading="running.autoRenew" @click="runAutoRenewNow">立即检查并续期</el-button>
-              <el-button :loading="running.ssl" @click="refreshSslFromServers">同步服务器状态</el-button>
+              <el-button :loading="running.sslSync" @click="refreshSslFromServers">同步服务器状态</el-button>
               <el-button :loading="loadingSsl" @click="loadSslRenewals">刷新列表</el-button>
             </div>
           </div>
@@ -131,10 +140,15 @@
         </section>
 
         <!-- 运维检测 -->
-        <section v-show="activeTab === 'diagnose'" class="panel">
+        <section
+          v-show="activeTab === 'diagnose'"
+          id="settings-panel-diagnose"
+          class="panel"
+          role="tabpanel"
+        >
           <div class="section-intro">
             <h2>运维检测</h2>
-            <p>一键巡检过期站点、服务器、DNS、健康状态与证书。停用站点只禁 Nginx，不动 DNS。</p>
+            <p>巡检服务器、DNS、站点健康与证书。停用过期站点是独立危险操作，只禁 Nginx，不动 DNS。</p>
           </div>
 
           <div class="metric-row" v-loading="loadingStats">
@@ -144,14 +158,15 @@
             </div>
           </div>
 
-          <div class="action-grid">
-            <el-button type="primary" :loading="running.full" @click="runFull">一键全面检测</el-button>
-            <el-button :loading="running.expire" @click="runExpire">检测并停用过期</el-button>
-            <el-button :loading="running.servers" @click="runServers">服务器连通</el-button>
-            <el-button :loading="running.dns" @click="runDns">DNS 平台</el-button>
-            <el-button :loading="running.sites" @click="runSites">站点健康</el-button>
-            <el-button :loading="running.ssl" @click="runSsl">证书续期时间</el-button>
-            <el-button @click="loadStats" :loading="loadingStats">刷新统计</el-button>
+          <div class="action-toolbar">
+            <div class="action-grid">
+              <el-button type="primary" :loading="running.full" @click="runFull">一键全面检测</el-button>
+              <el-button :loading="running.servers" @click="runServers">服务器连通</el-button>
+              <el-button :loading="running.dns" @click="runDns">DNS 平台</el-button>
+              <el-button :loading="running.sites" @click="runSites">站点健康</el-button>
+              <el-button @click="loadStats" :loading="loadingStats">刷新统计</el-button>
+            </div>
+            <el-button type="danger" plain :loading="running.expire" @click="runExpire">检测并停用过期</el-button>
           </div>
 
           <div v-if="!hasAnyResult" class="empty-tip soft">
@@ -159,7 +174,7 @@
           </div>
 
           <div v-if="results.expire" class="result-block">
-            <div class="result-title">过期停用 <el-tag size="small" type="warning">{{ results.expire.disabled || 0 }}/{{ results.expire.total || 0 }}</el-tag></div>
+            <div class="result-title">过期停用 <el-tag size="small" type="warning">停用 {{ results.expire.disabled || 0 }} · 共 {{ results.expire.total || 0 }}</el-tag></div>
             <el-table v-if="results.expire.results?.length" :data="results.expire.results" size="small" stripe max-height="240" class="soft-table">
               <el-table-column prop="domain" label="域名" min-width="180" />
               <el-table-column label="结果" width="90">
@@ -171,7 +186,7 @@
           </div>
 
           <div v-if="results.servers" class="result-block">
-            <div class="result-title">服务器连通 <el-tag size="small" :type="results.servers.failed ? 'danger' : 'success'">{{ results.servers.success }}/{{ results.servers.failed }}</el-tag></div>
+            <div class="result-title">服务器连通 <el-tag size="small" :type="results.servers.failed ? 'danger' : 'success'">正常 {{ results.servers.success || 0 }} · 失败 {{ results.servers.failed || 0 }}</el-tag></div>
             <el-table :data="results.servers.results || []" size="small" stripe max-height="260" class="soft-table">
               <el-table-column prop="name" label="名称" min-width="120" />
               <el-table-column label="地址" min-width="140"><template #default="{ row }">{{ row.ip }}:{{ row.port }}</template></el-table-column>
@@ -183,7 +198,7 @@
           </div>
 
           <div v-if="results.dns" class="result-block">
-            <div class="result-title">DNS 平台 <el-tag size="small" :type="results.dns.failed ? 'danger' : 'success'">{{ results.dns.success }}/{{ results.dns.failed }}</el-tag></div>
+            <div class="result-title">DNS 平台 <el-tag size="small" :type="results.dns.failed ? 'danger' : 'success'">正常 {{ results.dns.success || 0 }} · 失败 {{ results.dns.failed || 0 }}</el-tag></div>
             <el-table v-if="results.dns.results?.length" :data="results.dns.results" size="small" stripe max-height="240" class="soft-table">
               <el-table-column prop="name" label="名称" min-width="120" />
               <el-table-column prop="platform" label="平台" width="100" />
@@ -216,7 +231,7 @@
 
           <div v-if="results.ssl" class="result-block">
             <div class="result-title">
-              证书续期时间
+              证书摘要
               <el-tag size="small" type="success">有效 {{ results.ssl.active || 0 }}</el-tag>
               <el-tag size="small" type="warning">窗口内 {{ results.ssl.renew_window || 0 }}</el-tag>
               <el-tag size="small" type="danger">过期 {{ results.ssl.expired || 0 }}</el-tag>
@@ -227,38 +242,22 @@
               · 下次 {{ results.ssl.schedule.next_check_at || '-' }}
               · {{ results.ssl.schedule.note }}
             </div>
-            <el-table v-if="results.ssl.rows?.length" :data="results.ssl.rows" size="small" stripe max-height="320" class="soft-table">
-              <el-table-column prop="domain" label="主域名" min-width="160" show-overflow-tooltip />
-              <el-table-column label="状态" width="90">
-                <template #default="{ row }">
-                  <el-tag :type="sslStatusType(row)" size="small">{{ row.ssl_status || 'none' }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="到期" width="160">
-                <template #default="{ row }">
-                  <span :class="sslExpireClass(row)">{{ row.ssl_expires || '-' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="剩余" width="110">
-                <template #default="{ row }">
-                  <span :class="sslExpireClass(row)">
-                    {{ row.remaining_days == null ? '-' : (row.remaining_days < 0 ? `已过期 ${Math.abs(row.remaining_days)} 天` : `${row.remaining_days} 天`) }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="note" label="说明" min-width="180" show-overflow-tooltip />
-            </el-table>
-            <div v-else class="result-ok">暂无主域名证书数据</div>
+            <el-button type="primary" link @click="goTab('ssl')">查看证书列表并续期</el-button>
           </div>
 
           <div v-if="lastFullAt" class="last-run">上次全面检测：{{ lastFullAt }}</div>
         </section>
 
         <!-- 维护工具 -->
-        <section v-show="activeTab === 'tools'" class="panel">
+        <section
+          v-show="activeTab === 'tools'"
+          id="settings-panel-tools"
+          class="panel"
+          role="tabpanel"
+        >
           <div class="section-intro">
             <h2>维护工具</h2>
-            <p>清理临时分片、立即处理过期站点等运维动作。</p>
+            <p>清理临时分片。停用过期站点、证书续期请到对应页面执行。</p>
           </div>
           <div class="tool-list">
             <div class="tool-item">
@@ -270,26 +269,31 @@
             </div>
             <div class="tool-item">
               <div>
-                <div class="tool-title">立即处理过期子域名</div>
-                <div class="tool-desc">禁用 Nginx，保留 DNS，便于快速恢复</div>
+                <div class="tool-title">过期站点停用</div>
+                <div class="tool-desc">禁用 Nginx，保留 DNS。在运维检测中确认后执行</div>
               </div>
-              <el-button type="danger" plain :loading="running.expire" @click="runExpire">立即执行</el-button>
+              <el-button @click="goTab('diagnose')">前往运维检测</el-button>
             </div>
             <div class="tool-item">
               <div>
-                <div class="tool-title">立即执行证书检查 / 自动续期</div>
-                <div class="tool-desc">按当前自动续期开关与提前天数执行</div>
+                <div class="tool-title">证书检查 / 自动续期</div>
+                <div class="tool-desc">按自动续期开关与提前天数执行</div>
               </div>
-              <el-button type="primary" plain :loading="running.autoRenew" @click="runAutoRenewNow">立即执行</el-button>
+              <el-button @click="goTab('ssl')">前往证书续期</el-button>
             </div>
           </div>
         </section>
 
         <!-- 备份 -->
-        <section v-show="activeTab === 'backup'" class="panel">
+        <section
+          v-show="activeTab === 'backup'"
+          id="settings-panel-backup"
+          class="panel"
+          role="tabpanel"
+        >
           <div class="section-intro">
             <h2>数据库备份</h2>
-            <p>备份文件保存在服务器 backend/backups 目录。</p>
+            <p>备份保存在服务器备份目录，可在此下载或删除。</p>
           </div>
           <div class="action-grid">
             <el-button type="primary" :loading="backing" @click="handleBackup">立即备份</el-button>
@@ -314,14 +318,20 @@
         </section>
 
         <!-- 系统信息 -->
-        <section v-show="activeTab === 'info'" class="panel">
+        <section
+          v-show="activeTab === 'info'"
+          id="settings-panel-info"
+          class="panel"
+          role="tabpanel"
+        >
           <div class="section-intro row">
             <div>
               <h2>系统信息</h2>
               <p>运行时状态与资源占用</p>
             </div>
-            <el-button size="small" @click="loadSystemInfo">刷新</el-button>
+            <el-button size="small" @click="loadSystemInfo(true)">刷新</el-button>
           </div>
+          <p v-if="systemInfoError" class="error-tip">{{ systemInfoError }}</p>
           <div class="info-grid">
             <div class="info-item" v-for="item in infoItems" :key="item.label">
               <span class="info-label">{{ item.label }}</span>
@@ -335,7 +345,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document } from '@element-plus/icons-vue'
 import api from '@/api'
@@ -347,8 +358,16 @@ const tabs = [
   { name: 'backup', label: '数据库备份', hint: '安全备份' },
   { name: 'info', label: '系统信息', hint: '运行状态' }
 ]
+const TAB_NAMES = tabs.map((t) => t.name)
 
-const activeTab = ref('ssl')
+const route = useRoute()
+const router = useRouter()
+
+const activeTab = computed(() => {
+  const tab = String(route.query.tab || '')
+  return TAB_NAMES.includes(tab) ? tab : 'ssl'
+})
+
 const backing = ref(false)
 const loadingBackups = ref(false)
 const downloadingBackup = ref('')
@@ -358,12 +377,25 @@ const loadingSsl = ref(false)
 const renewingId = ref(null)
 const lastFullAt = ref('')
 const savingSettings = ref(false)
+const systemInfoError = ref('')
+const loaded = reactive({
+  ssl: false,
+  stats: false,
+  backup: false,
+  info: false
+})
 
 const sslSettings = reactive({
   ssl_auto_renew: true,
   ssl_renew_before_days: 30,
   ssl_check_hour: 3
 })
+
+const savedSslSettings = {
+  ssl_auto_renew: true,
+  ssl_renew_before_days: 30,
+  ssl_check_hour: 3
+}
 
 const sslData = reactive({
   active: 0,
@@ -382,7 +414,8 @@ const running = reactive({
   servers: false,
   dns: false,
   sites: false,
-  ssl: false,
+  sslSync: false,
+  sslDiagnose: false,
   cleanup: false,
   autoRenew: false
 })
@@ -411,7 +444,7 @@ const results = reactive({
 })
 
 const systemInfo = reactive({
-  version: '2.0.0',
+  version: '-',
   nodeVersion: '-',
   platform: '-',
   dbType: '-',
@@ -447,7 +480,7 @@ const hasAnyResult = computed(() =>
 )
 
 const infoItems = computed(() => [
-  { label: '系统版本', value: `v${systemInfo.version || '2.0.0'}` },
+  { label: '系统版本', value: systemInfo.version ? `v${systemInfo.version}` : '-' },
   { label: 'Node.js', value: systemInfo.nodeVersion },
   { label: '平台', value: systemInfo.platform || '-' },
   { label: '数据库', value: systemInfo.dbType },
@@ -459,12 +492,68 @@ const infoItems = computed(() => [
   { label: '临时分片', value: `${systemInfo.temp?.sessions || 0} 会话 / ${formatSize(systemInfo.temp?.bytes)}` }
 ])
 
-onMounted(() => {
-  loadBackupList()
-  loadSystemInfo()
-  loadStats()
-  loadSslRenewals()
-})
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (!TAB_NAMES.includes(String(tab || ''))) {
+      router.replace({ query: { ...route.query, tab: 'ssl' } })
+      return
+    }
+    ensureTabData(String(tab))
+  },
+  { immediate: true }
+)
+
+function snapshotSslSettings() {
+  savedSslSettings.ssl_auto_renew = !!sslSettings.ssl_auto_renew
+  savedSslSettings.ssl_renew_before_days = sslSettings.ssl_renew_before_days
+  savedSslSettings.ssl_check_hour = sslSettings.ssl_check_hour
+}
+
+function restoreSslSettings() {
+  sslSettings.ssl_auto_renew = savedSslSettings.ssl_auto_renew
+  sslSettings.ssl_renew_before_days = savedSslSettings.ssl_renew_before_days
+  sslSettings.ssl_check_hour = savedSslSettings.ssl_check_hour
+}
+
+function applySslPayload(res) {
+  if (!res) return
+  Object.assign(sslData, res)
+  if (res.settings) {
+    sslSettings.ssl_auto_renew = !!res.settings.ssl_auto_renew
+    sslSettings.ssl_renew_before_days = res.settings.ssl_renew_before_days || 30
+    sslSettings.ssl_check_hour = res.settings.ssl_check_hour ?? 3
+    snapshotSslSettings()
+  }
+}
+
+async function goTab(name) {
+  if (!TAB_NAMES.includes(name)) name = 'ssl'
+  if (name === activeTab.value) return
+  await router.push({ query: { ...route.query, tab: name } })
+}
+
+function onNavKeydown(e) {
+  const dir = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1
+    : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1
+      : 0
+  if (!dir) return
+  e.preventDefault()
+  const i = tabs.findIndex((t) => t.name === activeTab.value)
+  const next = tabs[(i + dir + tabs.length) % tabs.length]
+  goTab(next.name).then(() => {
+    nextTick(() => {
+      document.querySelector('.settings-nav [role="tab"][aria-selected="true"]')?.focus()
+    })
+  })
+}
+
+function ensureTabData(tab) {
+  if (!loaded.ssl) loadSslRenewals()
+  if ((tab === 'diagnose' || tab === 'tools') && !loaded.stats) loadStats()
+  if (tab === 'backup' && !loaded.backup) loadBackupList()
+  if (tab === 'info' && !loaded.info) loadSystemInfo()
+}
 
 function sslStatusType(row) {
   if (row.urgency === 'expired' || row.ssl_status === 'failed' || row.ssl_status === 'error') return 'danger'
@@ -484,13 +573,8 @@ async function loadSslRenewals() {
   loadingSsl.value = true
   try {
     const res = await api.get('/system/ssl-renewals')
-    Object.assign(sslData, res)
-    results.ssl = res
-    if (res.settings) {
-      sslSettings.ssl_auto_renew = !!res.settings.ssl_auto_renew
-      sslSettings.ssl_renew_before_days = res.settings.ssl_renew_before_days || 30
-      sslSettings.ssl_check_hour = res.settings.ssl_check_hour ?? 3
-    }
+    applySslPayload(res)
+    loaded.ssl = true
   } catch (err) {
     ElMessage.error(err.message || '加载证书续期时间失败')
   } finally {
@@ -512,9 +596,11 @@ async function saveSslSettings() {
       ssl_renew_before_days: res.settings.ssl_renew_before_days,
       ssl_check_hour: res.settings.ssl_check_hour
     })
+    snapshotSslSettings()
     ElMessage.success(res.schedule?.message || res.message || '自动续期设置已保存')
     await loadSslRenewals()
   } catch (err) {
+    restoreSslSettings()
     ElMessage.error(err.message || '保存失败')
   } finally {
     savingSettings.value = false
@@ -522,6 +608,20 @@ async function saveSslSettings() {
 }
 
 async function runAutoRenewNow() {
+  const willRenew = !!sslSettings.ssl_auto_renew
+  try {
+    await ElMessageBox.confirm(
+      willRenew
+        ? `将检查证书，并对到期前 ${sslSettings.ssl_renew_before_days} 天内的证书执行续期。`
+        : '自动续期已关闭，本次仅检查证书状态，不会续期。',
+      willRenew ? '立即检查并续期' : '立即检查证书',
+      {
+        type: willRenew ? 'warning' : 'info',
+        confirmButtonText: willRenew ? '开始续期' : '仅检查',
+        cancelButtonText: '取消'
+      }
+    )
+  } catch { return }
   running.autoRenew = true
   try {
     const res = await api.post('/system/ssl-auto-renew/run')
@@ -535,7 +635,7 @@ async function runAutoRenewNow() {
 }
 
 async function refreshSslFromServers() {
-  running.ssl = true
+  running.sslSync = true
   try {
     const res = await api.post('/ssl/check-all')
     ElMessage.success(`已同步 ${res.checked || 0} 个域名证书状态`)
@@ -543,7 +643,7 @@ async function refreshSslFromServers() {
   } catch (err) {
     ElMessage.error(err.message || '同步失败')
   } finally {
-    running.ssl = false
+    running.sslSync = false
   }
 }
 
@@ -567,6 +667,7 @@ async function loadStats() {
   loadingStats.value = true
   try {
     Object.assign(stats, await api.get('/system/stats'))
+    loaded.stats = true
   } catch (err) {
     ElMessage.error(err.message || '加载统计失败')
   } finally {
@@ -575,6 +676,22 @@ async function loadStats() {
 }
 
 async function runExpire() {
+  if (!loaded.stats) await loadStats()
+  const count = Number(stats.expired_active) || 0
+  try {
+    await ElMessageBox.confirm(
+      count
+        ? `当前有 ${count} 个过期未停用站点。将禁用其 Nginx，DNS 记录保留，之后可再启用。`
+        : '将扫描并停用已过期仍在运行的站点（禁 Nginx，保留 DNS）。若没有这类站点则不会改动。',
+      '停用过期站点',
+      {
+        type: 'warning',
+        confirmButtonText: '确认停用',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch { return }
   running.expire = true
   try {
     results.expire = await api.post('/system/diagnose/expire')
@@ -623,17 +740,19 @@ async function runSites() {
   }
 }
 
-async function runSsl() {
-  running.ssl = true
+async function runSsl(options = {}) {
+  const silent = !!options.silent
+  running.sslDiagnose = true
   try {
     const res = await api.post('/system/diagnose/ssl')
     results.ssl = res
-    Object.assign(sslData, res)
-    ElMessage.success('证书续期时间已更新')
+    applySslPayload(res)
+    loaded.ssl = true
+    if (!silent) ElMessage.success('证书续期时间已更新')
   } catch (err) {
     ElMessage.error(err.message || 'SSL 检测失败')
   } finally {
-    running.ssl = false
+    running.sslDiagnose = false
   }
 }
 
@@ -642,12 +761,12 @@ async function runFull() {
   try {
     const res = await api.post('/system/diagnose/full')
     if (res.stats) Object.assign(stats, res.stats)
-    results.expire = res.expire
+    loaded.stats = true
     results.servers = res.servers
     results.dns = res.dns
     results.sites = res.sites
     lastFullAt.value = res.finished_at || ''
-    await runSsl()
+    await runSsl({ silent: true })
     ElMessage.success('全面检测完成')
   } catch (err) {
     ElMessage.error(err.message || '全面检测失败')
@@ -691,6 +810,7 @@ async function loadBackupList() {
   try {
     const res = await api.get('/system/backups')
     backupList.value = res.backups || []
+    loaded.backup = true
   } catch (err) {
     ElMessage.error(err.message || '加载备份失败')
   } finally {
@@ -701,7 +821,10 @@ async function loadBackupList() {
 async function downloadBackup(backup) {
   downloadingBackup.value = backup.filename
   try {
-    const blob = await api.get(`/system/backup/download/${encodeURIComponent(backup.filename)}`, { responseType: 'blob' })
+    const blob = await api.get('/system/backup/download', {
+      params: { filename: backup.filename },
+      responseType: 'blob'
+    })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -720,7 +843,7 @@ async function downloadBackup(backup) {
 async function deleteBackup(backup) {
   try {
     await ElMessageBox.confirm(`确定删除 "${backup.filename}"？`, '确认删除', { type: 'warning' })
-    await api.delete(`/system/backup/${encodeURIComponent(backup.filename)}`)
+    await api.delete('/system/backup', { params: { filename: backup.filename } })
     ElMessage.success('删除成功')
     loadBackupList()
   } catch (err) {
@@ -728,11 +851,14 @@ async function deleteBackup(backup) {
   }
 }
 
-async function loadSystemInfo() {
+async function loadSystemInfo(force = false) {
+  if (force) loaded.info = false
+  systemInfoError.value = ''
   try {
     Object.assign(systemInfo, await api.get('/system/info'))
+    loaded.info = true
   } catch (err) {
-    console.error(err)
+    systemInfoError.value = err.message || '加载系统信息失败'
   }
 }
 
@@ -749,8 +875,6 @@ function formatSize(bytes) {
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap');
-
 .settings-page {
   --ink: #1c2430;
   --muted: #6b7280;
@@ -760,11 +884,21 @@ function formatSize(bytes) {
   --accent-soft: #ccfbf1;
   --warn: #b45309;
   --danger: #b91c1c;
+  --page-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
   position: relative;
   min-height: calc(100vh - 120px);
   padding: 8px 4px 28px;
-  font-family: 'IBM Plex Sans', 'PingFang SC', sans-serif;
+  font-family: var(--page-font);
   color: var(--ink);
+}
+
+.settings-page :deep(.el-button--primary) {
+  --el-button-bg-color: var(--accent);
+  --el-button-border-color: var(--accent);
+  --el-button-hover-bg-color: #0d9488;
+  --el-button-hover-border-color: #0d9488;
+  --el-button-active-bg-color: #0f766e;
+  --el-button-active-border-color: #0f766e;
 }
 
 .settings-bg {
@@ -805,7 +939,7 @@ function formatSize(bytes) {
 
 .settings-hero h1 {
   margin: 0;
-  font-family: 'Sora', 'IBM Plex Sans', sans-serif;
+  font-family: var(--page-font);
   font-size: 30px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -888,6 +1022,10 @@ function formatSize(bytes) {
 }
 
 .nav-item:hover { background: rgba(15, 118, 110, 0.06); }
+.nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .nav-item.active {
   background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(14, 116, 144, 0.08));
   box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
@@ -895,7 +1033,7 @@ function formatSize(bytes) {
 
 .nav-label {
   display: block;
-  font-family: 'Sora', sans-serif;
+  font-family: var(--page-font);
   font-size: 14px;
   font-weight: 600;
   color: var(--ink);
@@ -923,7 +1061,7 @@ function formatSize(bytes) {
 .auto-renew-title-row h2,
 .table-card-head h3 {
   margin: 0;
-  font-family: 'Sora', sans-serif;
+  font-family: var(--page-font);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -1020,7 +1158,7 @@ function formatSize(bytes) {
 .metric.muted { background: #f8fafc; }
 
 .metric-val {
-  font-family: 'Sora', sans-serif;
+  font-family: var(--page-font);
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -1030,6 +1168,14 @@ function formatSize(bytes) {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.action-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .action-grid {
@@ -1119,9 +1265,27 @@ function formatSize(bytes) {
 .expire-warning { color: var(--warn); font-weight: 600; }
 .expire-danger { color: var(--danger); font-weight: 600; }
 
+.error-tip {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: var(--danger);
+  font-size: 13px;
+}
+
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-hero,
+  .settings-shell,
+  .metric {
+    animation: none;
+    transition: none;
+  }
 }
 
 @media (max-width: 960px) {
@@ -1135,6 +1299,9 @@ function formatSize(bytes) {
   .auto-renew-card { grid-template-columns: 1fr; }
   .settings-hero { flex-direction: column; align-items: flex-start; }
   .info-grid { grid-template-columns: 1fr; }
-  .tool-item, .action-grid, .auto-renew-actions { flex-direction: column; align-items: stretch; }
+  .tool-item,
+  .action-grid,
+  .action-toolbar,
+  .auto-renew-actions { flex-direction: column; align-items: stretch; }
 }
 </style>

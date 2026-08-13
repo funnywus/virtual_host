@@ -13,10 +13,28 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+/** 同主机 log_format 下发缓存，避免批建每站重复写 */
+const trafficFormatEnsured = new Map(); // hostKey -> expireAt
+const TRAFFIC_FORMAT_TTL_MS = 30 * 60 * 1000;
+
+function sshHostKey(sshService) {
+  const s = sshService?.server || sshService?.poolConfig?.() || {};
+  return `${s.ip || ''}:${s.port || 22}:${s.username || ''}`;
+}
+
 /** 在服务器写入全局 log_format（http 上下文 include 的独立文件） */
 async function ensureTrafficLogFormat(sshService) {
+  const key = sshHostKey(sshService);
+  const until = trafficFormatEnsured.get(key);
+  if (until && until > Date.now()) {
+    return { success: true, cached: true };
+  }
   const cmd = `printf %s ${shellQuote(TRAFFIC_LOG_FORMAT_CONTENT)} | sudo tee ${shellQuote(TRAFFIC_LOG_FORMAT_FILE)} >/dev/null`;
-  return sshService.exec(cmd, 15000);
+  const result = await sshService.exec(cmd, 15000);
+  if (result.success) {
+    trafficFormatEnsured.set(key, Date.now() + TRAFFIC_FORMAT_TTL_MS);
+  }
+  return result;
 }
 
 function accessLogLine(domain) {

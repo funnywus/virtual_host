@@ -85,7 +85,7 @@
       </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
-          <el-button type="primary" size="small" @click="openDnsRecordsDialog(row)">DNS记录</el-button>
+          <el-button type="primary" size="small" @click="viewDnsRecords(row)">DNS记录</el-button>
           <el-button type="warning" size="small" @click="openSslDialog(row)">SSL</el-button>
           <el-dropdown trigger="click" style="margin-left:8px">
             <el-button size="small">更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
@@ -254,115 +254,6 @@
       </template>
     </el-dialog>
 
-    <!-- DNS记录对话框 -->
-    <el-dialog v-model="dnsRecordsDialogVisible" :title="'DNS解析记录 - ' + (currentDomain?.domain || '')" width="900px" append-to-body top="5vh">
-      <div style="margin-bottom:15px;display:flex;justify-content:space-between;align-items:center">
-        <div style="display:flex;gap:10px;align-items:center">
-          <el-tag type="info">{{ dnsRecords.platform === 'tencent' ? '腾讯云' : '阿里云' }}</el-tag>
-          <span style="color:#909399">共 {{ filteredDnsRecords.length }} 条记录</span>
-        </div>
-        <div style="display:flex;gap:10px">
-          <el-input 
-            v-model="dnsSearchKeyword" 
-            placeholder="搜索主机记录、记录值..." 
-            clearable 
-            style="width:220px" 
-            size="small"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-button type="primary" size="small" @click="loadDnsRecords(true)" :loading="loadingDnsRecords">获取最新DNS</el-button>
-          <el-button type="primary" size="small" @click="openAddDnsRecordDialog">添加记录</el-button>
-        </div>
-      </div>
-      <el-table :data="paginatedDnsRecords" stripe v-loading="loadingDnsRecords" max-height="500">
-        <el-table-column prop="name" label="主机记录" width="120" />
-        <el-table-column label="完整域名" min-width="220">
-          <template #default="{ row }">
-            <span>{{ getDnsFullDomain(row.name) }}</span>
-            <el-button type="primary" link size="small" @click="copyDnsFullDomain(row)">复制</el-button>
-          </template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="80" />
-        <el-table-column prop="value" label="记录值" min-width="180" show-overflow-tooltip />
-        <el-table-column label="服务器" width="120">
-          <template #default="{ row }">
-            <span v-if="row.type === 'A'">{{ getServerNameByIp(row.value) || '-' }}</span>
-            <span v-else style="color:#999">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="ttl" label="TTL" width="80" />
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'danger'" size="small">
-              {{ row.status === 'active' ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" size="small" @click="openEditDnsRecordDialog(row)">修改</el-button>
-            <el-button v-if="row.status === 'active'" type="warning" size="small" @click="toggleDnsRecordStatus(row, 'DISABLE')">停用</el-button>
-            <el-button v-else type="success" size="small" @click="toggleDnsRecordStatus(row, 'ENABLE')">启用</el-button>
-            <el-button type="danger" size="small" @click="deleteDnsRecord(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div style="margin-top:15px;display:flex;justify-content:flex-end">
-        <el-pagination
-          v-model:current-page="dnsCurrentPage"
-          v-model:page-size="dnsPageSize"
-          :page-sizes="[10, 20, 50, 100]"
-          :total="filteredDnsRecords.length"
-          layout="total, sizes, prev, pager, next"
-          @size-change="dnsCurrentPage = 1"
-        />
-      </div>
-    </el-dialog>
-
-    <!-- 添加/修改DNS记录对话框 -->
-    <AppDialog
-      v-model="dnsRecordDialogVisible"
-      :title="editingDnsRecordId ? '修改DNS记录' : '添加DNS记录'"
-      width="450px"
-      :loading="savingDnsRecord"
-      :confirm-text="editingDnsRecordId ? '保存' : '添加'"
-      @confirm="saveDnsRecord"
-    >
-      <el-form :model="dnsRecordForm" label-width="100px">
-        <el-form-item label="主机记录">
-          <el-input v-model="dnsRecordForm.name" placeholder="例如: www, @, *" />
-        </el-form-item>
-        <el-form-item label="记录类型">
-          <el-select v-model="dnsRecordForm.type" style="width:100%" @change="onDnsTypeChange">
-            <el-option label="A" value="A" />
-            <el-option label="CNAME" value="CNAME" />
-            <el-option label="TXT" value="TXT" />
-            <el-option label="MX" value="MX" />
-            <el-option label="AAAA" value="AAAA" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="服务器" v-if="dnsRecordForm.type === 'A'">
-          <el-select v-model="dnsRecordForm.server_id" placeholder="选择服务器" clearable style="width:100%" @change="onDnsServerChange">
-            <el-option v-for="s in availableServers" :key="s.id" :label="`${s.name} (${s.ip})${s.is_default === 1 ? ' (默认)' : ''}`" :value="s.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="记录值">
-          <el-input v-model="dnsRecordForm.value" placeholder="IP地址或目标域名" />
-        </el-form-item>
-        <el-form-item label="TTL">
-          <el-select v-model="dnsRecordForm.ttl" style="width:100%">
-            <el-option label="1分钟" :value="60" />
-            <el-option label="10分钟" :value="600" />
-            <el-option label="30分钟" :value="1800" />
-            <el-option label="1小时" :value="3600" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-    </AppDialog>
-
     <!-- 批量发布证书对话框 -->
     <el-dialog v-model="batchPublishDialogVisible" title="批量发布证书" width="700px" append-to-body top="5vh">
       <div style="max-height:65vh;overflow-y:auto">
@@ -428,7 +319,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, ArrowDown, Search, Plus, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { useDataStore } from '@/stores/data'
-import { formatSslDays, getSslDaysType, copyText } from '@/utils'
+import { formatSslDays, getSslDaysType } from '@/utils'
 import { getDomainFilterableTags, serverHasAnyTag } from '@/utils/server-tag-filter'
 import api from '@/api'
 import SslDialog from '@/components/SslDialog.vue'
@@ -438,19 +329,13 @@ const dataStore = useDataStore()
 
 const dialogVisible = ref(false)
 const sslDialogVisible = ref(false)
-const dnsRecordsDialogVisible = ref(false)
-const dnsRecordDialogVisible = ref(false)
 const saving = ref(false)
 const loading = ref(false)
 const refreshingSsl = ref(false)
-const loadingDnsRecords = ref(false)
-const savingDnsRecord = ref(false)
-const editingDnsRecordId = ref(null)
 const currentDomain = ref(null)
 const searchKeyword = ref('')
 const filterTag = ref('')
 const filterStatus = ref('')
-const dnsSearchKeyword = ref('')
 const form = reactive({ id: null, domain: '', aliyun_config_id: null, tagList: [], expire_at: null })
 const selectedDomains = ref([])
 const batchSslDialogVisible = ref(false)
@@ -504,11 +389,6 @@ const batchSslProgress = computed(() => {
   return Math.min(100, Math.round((currentBatchTask.value.done / currentBatchTask.value.total) * 100))
 })
 
-const dnsRecords = reactive({ platform: '', records: [] })
-const dnsRecordForm = reactive({ name: '', type: 'A', value: '', ttl: 600, server_id: null })
-const dnsCurrentPage = ref(1)
-const dnsPageSize = ref(10)
-
 // 批量发布证书
 const batchPublishDialogVisible = ref(false)
 const batchPublishing = ref(false)
@@ -519,36 +399,6 @@ const batchPublishForm = reactive({
 })
 
 const availableServers = computed(() => dataStore.servers.filter(s => s.status !== 'disabled'))
-
-function getDefaultAvailableServer() {
-  return availableServers.value.find(s => s.is_default === 1) || availableServers.value[0] || null
-}
-
-const filteredDnsRecords = computed(() => {
-  let records = dnsRecords.records
-  
-  // 搜索过滤
-  if (dnsSearchKeyword.value) {
-    const kw = dnsSearchKeyword.value.toLowerCase()
-    records = records.filter(r => 
-      r.name?.toLowerCase().includes(kw) ||
-      r.value?.toLowerCase().includes(kw) ||
-      r.type?.toLowerCase().includes(kw)
-    )
-  }
-  
-  return records
-})
-
-const paginatedDnsRecords = computed(() => {
-  const start = (dnsCurrentPage.value - 1) * dnsPageSize.value
-  return filteredDnsRecords.value.slice(start, start + dnsPageSize.value)
-})
-
-function getServerNameByIp(ip) {
-  const server = dataStore.servers.find(s => s.ip === ip)
-  return server?.name || ''
-}
 
 const filteredDomains = computed(() => {
   let list = dataStore.domains
@@ -664,6 +514,10 @@ function openSslDialog(row) {
 
 function viewSubdomains(row) {
   router.push({ path: '/admin-jm/subdomains', query: { domain_id: row.id } })
+}
+
+function viewDnsRecords(row) {
+  router.push({ path: '/admin-jm/dns', query: { domain_id: row.id } })
 }
 
 async function handleSave() {
@@ -1065,137 +919,6 @@ async function startBatchSsl() {
   }
 }
 
-// DNS记录相关
-function getDnsFullDomain(name) {
-  const domain = currentDomain.value?.domain
-  if (!domain) return ''
-  if (!name || name === '@') return domain
-  return `${name}.${domain}`
-}
-
-function copyDnsFullDomain(row) {
-  copyText(getDnsFullDomain(row.name))
-}
-
-async function openDnsRecordsDialog(row) {
-  currentDomain.value = row
-  dnsRecords.platform = ''
-  dnsRecords.records = []
-  dnsRecordsDialogVisible.value = true
-  await loadDnsRecords()
-}
-
-async function loadDnsRecords(showSuccess = false) {
-  if (!currentDomain.value) return
-  loadingDnsRecords.value = true
-  try {
-    const res = await api.get(`/dns/domains/${currentDomain.value.id}/dns-records`)
-    dnsRecords.platform = res.platform
-    dnsRecords.records = res.records
-    if (showSuccess) {
-      ElMessage.success(`已获取最新 DNS，共 ${res.records?.length || 0} 条记录`)
-    }
-  } catch (e) {
-    ElMessage.error(e.message)
-  } finally {
-    loadingDnsRecords.value = false
-  }
-}
-
-function openAddDnsRecordDialog() {
-  editingDnsRecordId.value = null
-  const defaultServer = getDefaultAvailableServer()
-  Object.assign(dnsRecordForm, { 
-    name: '', 
-    type: 'A', 
-    value: defaultServer?.ip || '', 
-    ttl: 600,
-    server_id: defaultServer?.id || null
-  })
-  dnsRecordDialogVisible.value = true
-}
-
-function openEditDnsRecordDialog(row) {
-  editingDnsRecordId.value = row.id
-  const server = row.type === 'A' ? dataStore.servers.find(s => s.ip === row.value) : null
-  Object.assign(dnsRecordForm, {
-    name: row.name,
-    type: row.type,
-    value: row.value,
-    ttl: row.ttl || 600,
-    server_id: server?.id || null
-  })
-  dnsRecordDialogVisible.value = true
-}
-
-function onDnsServerChange() {
-  const server = dataStore.servers.find(s => s.id === dnsRecordForm.server_id)
-  if (server) {
-    dnsRecordForm.value = server.ip
-  }
-}
-
-function onDnsTypeChange() {
-  if (dnsRecordForm.type === 'A') {
-    const defaultServer = getDefaultAvailableServer()
-    dnsRecordForm.server_id = defaultServer?.id || null
-    dnsRecordForm.value = defaultServer?.ip || ''
-  } else {
-    dnsRecordForm.server_id = null
-    dnsRecordForm.value = ''
-  }
-}
-
-async function saveDnsRecord() {
-  if (!dnsRecordForm.name || !dnsRecordForm.value) {
-    ElMessage.warning('请填写主机记录和记录值')
-    return
-  }
-  savingDnsRecord.value = true
-  try {
-    const payload = {
-      name: dnsRecordForm.name,
-      type: dnsRecordForm.type,
-      value: dnsRecordForm.value,
-      ttl: dnsRecordForm.ttl
-    }
-    if (editingDnsRecordId.value) {
-      await api.put(`/dns/domains/${currentDomain.value.id}/dns-records/${editingDnsRecordId.value}`, payload)
-      ElMessage.success('修改成功')
-    } else {
-      await api.post(`/dns/domains/${currentDomain.value.id}/dns-records`, payload)
-      ElMessage.success('添加成功')
-    }
-    dnsRecordDialogVisible.value = false
-    loadDnsRecords()
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  } finally {
-    savingDnsRecord.value = false
-  }
-}
-
-async function deleteDnsRecord(row) {
-  await ElMessageBox.confirm(`确定删除记录 "${row.name}" ?`, '提示')
-  try {
-    await api.delete(`/dns/domains/${currentDomain.value.id}/dns-records/${row.id}`)
-    ElMessage.success('删除成功')
-    loadDnsRecords()
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
-}
-
-async function toggleDnsRecordStatus(row, status) {
-  try {
-    await api.put(`/dns/domains/${currentDomain.value.id}/dns-records/${row.id}/status`, { status })
-    ElMessage.success(status === 'ENABLE' ? '已启用' : '已停用')
-    loadDnsRecords()
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
-}
-
 // 批量发布证书相关
 const batchPublishTargetDomains = computed(() => selectedDomains.value.length > 0 ? selectedDomains.value : filteredDomains.value)
 
@@ -1557,11 +1280,6 @@ function getExpireDaysText(expireAt) {
 
   :deep(.el-form-item__label) {
     font-size: 13px;
-  }
-
-  /* DNS记录对话框优化 */
-  :deep(.el-table__fixed-right) {
-    right: 0 !important;
   }
 }
 
