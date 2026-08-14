@@ -2,10 +2,10 @@
   "ssl_auto_renew": true,
   "ssl_renew_before_days": 30,
   "ssl_check_hour": 3,
-  "last_ssl_check_at": "2026-08-14 00:10:27",
-  "last_ssl_renew_at": "2026-08-14 00:10:33",
+  "last_ssl_check_at": "2026-08-14 08:44:30",
+  "last_ssl_renew_at": "2026-08-14 08:44:37",
   "last_ssl_renew_summary": {
-    "at": "2026-08-14 00:10:33",
+    "at": "2026-08-14 08:44:37",
     "candidates": 2,
     "renewed": 0,
     "failed": 2
