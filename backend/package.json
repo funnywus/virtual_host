@@ -7,6 +7,7 @@
     "start": "node --max-old-space-size=2048 server.js",
     "dev": "nodemon --max-old-space-size=2048 server.js",
     "kill-port": "node scripts/kill-port.js",
+    "restart:bt": "node scripts/restart-bt-nodejs.js",
     "create-admin": "node scripts/init-admin.js"
   },
   "nodemonConfig": {
