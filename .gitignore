@@ -39,3 +39,10 @@ yarn.lock
 
 # Deploy secrets
 deploy.config
+
+# Local databases and dumps (may contain credentials)
+backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+data/*.db
+backend/scripts/output.sql
