@@ -1,8 +1,26 @@
 import { message, Modal } from 'antd'
 
-export function copyText(text, label = '') {
-  navigator.clipboard.writeText(text)
-  message.success(label ? `${label}已复制` : '已复制')
+export async function copyText(text, label = '') {
+  const value = String(text ?? '')
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+    } else {
+      const el = document.createElement('textarea')
+      el.value = value
+      el.setAttribute('readonly', '')
+      el.style.position = 'fixed'
+      el.style.left = '-9999px'
+      document.body.appendChild(el)
+      el.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(el)
+      if (!ok) throw new Error('copy failed')
+    }
+    message.success(label ? `${label}已复制` : '已复制')
+  } catch {
+    message.error('复制失败，请手动复制')
+  }
 }
 
 export function formatUploadSize(bytes) {

@@ -255,7 +255,10 @@ export default function FileManager({ open, server, onClose }) {
     try {
       const filePath = joinPath(currentPath, file.name)
       const res = await api.post(`/servers/${server.id}/files/read-binary`, { path: filePath })
-      const blob = new Blob([Uint8Array.from(atob(res.content), (c) => c.charCodeAt(0))])
+      const binary = atob(res.content || '')
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      const blob = new Blob([bytes])
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

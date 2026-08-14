@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { Button, Checkbox, Form, Input, message } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { useUserStore } from '@/stores/user'
@@ -13,6 +13,7 @@ import './Login.css'
 export default function Login() {
   const navigate = useNavigate()
   const login = useUserStore((s) => s.login)
+  const token = useUserStore((s) => s.token)
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [rememberPassword, setRememberPassword] = useState(false)
@@ -31,6 +32,8 @@ export default function Login() {
       cancelled = true
     }
   }, [form])
+
+  if (token) return <Navigate to="/subdomains" replace />
 
   function onRememberChange(checked) {
     setRememberPassword(checked)
