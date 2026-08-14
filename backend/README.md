@@ -1,6 +1,6 @@
 # 虚拟主机管理系统
 
-基于 Node.js + SQLite + Vue 3 + Element Plus 的虚拟主机管理系统。
+基于 Node.js + SQLite 的虚拟主机管理系统后端。管理后台在 `admin/`（React），公开上传页在 `frontend/`（Vue）。
 
 ## 功能
 

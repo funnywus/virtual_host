@@ -1,6 +1,6 @@
 # 虚拟主机管理系统
 
-基于 Node.js + Vue 3 + Element Plus 的虚拟主机管理系统，支持服务器管理、域名解析、SSL证书、FTP文件管理等功能。
+基于 Node.js + React（管理后台）+ Vue（公开上传页）的虚拟主机管理系统，支持服务器管理、域名解析、SSL证书、FTP文件管理等功能。
 
 ## ✨ 主要功能
 
@@ -375,13 +375,14 @@ echo "部署完成！"
 - JWT (身份认证)
 - Multer (文件上传)
 
-**前端**:
-- Vue 3 + Composition API
-- Element Plus (UI组件)
-- Vue Router (路由)
-- Pinia (状态管理)
-- Monaco Editor (代码编辑)
+**管理后台** (`admin/`):
+- React 18 + Ant Design 5
+- React Router + Zustand + TanStack Query
 - Xterm.js (终端模拟)
+
+**公开上传页** (`frontend/`):
+- Vue 3 + Element Plus
+- Monaco Editor (代码编辑)
 
 ### 目录结构
 
