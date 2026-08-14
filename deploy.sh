@@ -14,7 +14,7 @@ usage() {
 用法: ./deploy.sh [选项]
 
 选项:
-  --static-only    只构建并上传 frontend → backend/public
+  --static-only    只构建并上传 frontend + admin → backend/public
   --skip-build     跳过前端构建（使用已有 backend/public）
   --skip-restart   上传后不重启远端服务
   --dry-run        只显示将要执行的操作，不实际上传
@@ -191,7 +191,7 @@ echo "========================================="
 # ---------- 1. 构建前端到 backend/public ----------
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo ""
-  echo "📦 [1/4] 构建前端 → backend/public ..."
+  echo "📦 [1/4] 构建上传页 + 管理后台 → backend/public ..."
   if [[ ! -d "$ROOT_DIR/frontend/node_modules" ]]; then
     (cd "$ROOT_DIR/frontend" && npm install)
   fi
@@ -200,12 +200,24 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
     echo "❌ 构建失败：未找到 backend/public/index.html"
     exit 1
   fi
-  echo "✅ 前端已输出到 backend/public"
+  if [[ ! -d "$ROOT_DIR/admin/node_modules" ]]; then
+    (cd "$ROOT_DIR/admin" && npm install)
+  fi
+  (cd "$ROOT_DIR/admin" && npm run build)
+  if [[ ! -f "$ROOT_DIR/backend/public/admin-jm/index.html" ]]; then
+    echo "❌ 构建失败：未找到 backend/public/admin-jm/index.html"
+    exit 1
+  fi
+  echo "✅ 上传页已输出到 backend/public，管理后台已输出到 backend/public/admin-jm"
 else
   echo ""
   echo "⏭  [1/4] 跳过构建，使用现有 backend/public"
   if [[ ! -f "$ROOT_DIR/backend/public/index.html" ]]; then
     echo "❌ 缺少 backend/public/index.html，请先构建或去掉 --skip-build"
+    exit 1
+  fi
+  if [[ ! -f "$ROOT_DIR/backend/public/admin-jm/index.html" ]]; then
+    echo "❌ 缺少 backend/public/admin-jm/index.html，请先构建或去掉 --skip-build"
     exit 1
   fi
 fi

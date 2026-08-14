@@ -1,0 +1,91 @@
+.terminal-container {
+  background: #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.terminal-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #404040;
+}
+
+.terminal-server-info {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-wrapper {
+  height: 400px;
+  padding: 10px;
+  background: #1e1e1e;
+}
+
+.terminal-command {
+  padding: 10px 15px;
+  background: #2d2d2d;
+  border-top: 1px solid #404040;
+}
+
+.terminal-command .ant-input-affix-wrapper,
+.terminal-command .ant-input {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-color: #404040;
+}
+
+.terminal-command .ant-input-affix-wrapper-disabled,
+.terminal-command .ant-input-disabled {
+  background: #1e1e1e;
+  color: #8c8c8c;
+}
+
+.terminal-command .ant-input-prefix {
+  color: #0dbc79;
+}
+
+.terminal-command .ant-input::placeholder {
+  color: #8c8c8c;
+}
+
+@media (max-width: 768px) {
+  .terminal-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .terminal-server-info {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .terminal-toolbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .terminal-wrapper {
+    height: 300px;
+    padding: 8px;
+  }
+
+  .terminal-command {
+    padding: 8px 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .terminal-wrapper {
+    height: 250px;
+  }
+}

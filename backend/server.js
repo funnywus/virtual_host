@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 require('dotenv').config();
@@ -157,9 +158,23 @@ async function checkExpiredSubdomains() {
 
 const { initSslSchedule } = require('./services/ssl-schedule');
 
-// 前端路由
+const publicDir = path.join(__dirname, 'public');
+const adminIndex = path.join(publicDir, 'admin-jm', 'index.html');
+const uploadIndex = path.join(publicDir, 'index.html');
+
+app.get('/login', (req, res) => {
+  res.redirect(302, '/admin-jm/login');
+});
+
+app.get(/^\/admin-jm(\/.*)?$/, (req, res, next) => {
+  if (fs.existsSync(adminIndex)) {
+    return res.sendFile(adminIndex);
+  }
+  next();
+});
+
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(uploadIndex);
 });
 
 const PORT = process.env.PORT || 3000;

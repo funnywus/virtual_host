@@ -90,19 +90,23 @@ npm start
 ```bash
 cd ../frontend
 npm install
+npm run dev          # 上传页 http://localhost:5173/
 
-# 开发模式
-npm run dev
+cd ../admin
+npm install
+npm run dev          # 管理后台 http://localhost:5174/admin-jm/login
 
-# 构建生产版本
-npm run build
+# 生产构建（顺序：先 Vue 再 React）
+cd ../frontend && npm run build
+cd ../admin && npm run build
 ```
 
 ### 访问系统
 
 - 后端API: http://localhost:3000
-- 前端界面: http://localhost:5173 (开发模式)
-- 管理后台: http://localhost:3000 (生产模式)
+- 上传页: http://localhost:5173/ （开发）
+- 管理后台: http://localhost:5174/admin-jm/login （开发）
+- 生产模式由后端同端口托管 `/` 与 `/admin-jm`
 
 ## 📦 FTP 批量上传优化方案
 
@@ -392,16 +396,14 @@ echo "部署完成！"
 │   ├── data/               # 数据文件
 │   └── server.js           # 入口文件
 │
-├── frontend/               # 前端应用
+├── admin/                  # React 管理后台（/admin-jm）
+│
+├── frontend/               # Vue 公开上传页（/）
 │   ├── src/
-│   │   ├── api/           # API接口
-│   │   ├── components/    # 组件
-│   │   ├── layouts/       # 布局
-│   │   ├── router/        # 路由
-│   │   ├── stores/        # 状态管理
-│   │   ├── utils/         # 工具函数
-│   │   └── views/         # 页面
-│   └── vite.config.js     # Vite配置
+│   │   ├── views/Upload.vue
+│   │   ├── utils/         # 分片上传、直传
+│   │   └── styles/
+│   └── vite.config.js
 │
 └── README.md              # 项目文档
 ```
