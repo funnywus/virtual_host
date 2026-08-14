@@ -18,8 +18,10 @@ DEPLOY_PASSWORD='your_server_password'
 DEPLOY_PATH=/www/wwwroot/me/virtual_host/backend
 
 # 远端重启命令（deploy 用，勿写前台 bt_start.sh，否则 SSH 会挂住）
-# 宝塔「Node 项目」启动文件请选 bt_start.sh；部署重启用仓库脚本，面板状态会一起更新：
-DEPLOY_RESTART_CMD="cd /www/wwwroot/me/virtual_host/backend && node scripts/restart-bt-nodejs.js --cwd"
+# 宝塔「Node 项目」启动文件请选 bt_start.sh；部署重启用仓库脚本，面板状态会一起更新。
+# 必须在项目目录外执行，否则重启时会把当前 SSH 会话一起杀掉。
+# 同机有多个 Node 项目时请写面板里的项目名。
+DEPLOY_RESTART_CMD="cd /tmp && node /www/wwwroot/me/virtual_host/scripts/restart-bt-nodejs.js virtual_host"
 
 # 是否同步后端业务代码（1=同步；0=只同步前端静态资源 public/）
 DEPLOY_SYNC_BACKEND=1

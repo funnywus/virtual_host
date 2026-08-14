@@ -3,6 +3,8 @@
  * 独立脚本：重启宝塔面板「Node 项目」
  *
  * 必须在宝塔服务器本机执行（建议 root）。零 npm 依赖，仅用 Node 内置模块。
+ * 不要在项目目录内通过 SSH 前台调用：宝塔停进程时会把当前会话一起杀掉。
+ * 建议: cd /tmp && node /path/to/scripts/restart-bt-nodejs.js <项目名>
  *
  * 用法:
  *   node restart-bt-nodejs.js <项目名>
@@ -216,19 +218,28 @@ function projectLabel(p) {
   return { name, cwd, run, port };
 }
 
+function resolveProjectPath(raw) {
+  try {
+    return fs.realpathSync(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function matchByCwd(projects) {
   const cwd = fs.realpathSync(process.cwd());
-  const hits = projects.filter((p) => {
+  const scored = [];
+  for (const p of projects) {
     const info = projectLabel(p);
-    if (!info.cwd) return false;
-    try {
-      const projectPath = fs.realpathSync(info.cwd);
-      return cwd === projectPath || cwd.startsWith(projectPath + path.sep) || projectPath.startsWith(cwd + path.sep);
-    } catch {
-      return cwd === info.cwd || cwd.startsWith(info.cwd + path.sep);
+    if (!info.cwd) continue;
+    const projectPath = resolveProjectPath(info.cwd);
+    if (cwd === projectPath || cwd.startsWith(projectPath + path.sep)) {
+      scored.push({ p, len: projectPath.length });
     }
-  });
-  return hits;
+  }
+  if (!scored.length) return [];
+  const maxLen = Math.max(...scored.map((s) => s.len));
+  return scored.filter((s) => s.len === maxLen).map((s) => s.p);
 }
 
 function restartViaPython(projectName) {
